@@ -5,12 +5,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 import chainlit as cl
 from langchain_core.messages import AIMessage, ToolMessage
 from graph import build_graph
+from langgraph.errors import GraphRecursionError
 
-agent = build_graph()
+
+#agent = build_graph()
 
 
 @cl.on_chat_start
 async def on_chat_start():
+    agent = build_graph()  # one graph instance par session
     cl.user_session.set("agent", agent)
     await cl.Message(content="👋 Posez-moi une question sur la base de données.").send()
 
@@ -20,16 +23,21 @@ async def on_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     final_response = ""
 
-    async with cl.Step(name="🔍 SQL Agent", type="run"):
-        async for step in agent.astream(
-            {"messages": [{"role": "user", "content": message.content}]},
-            stream_mode="values"
-        ):
-            last_msg = step["messages"][-1]
-            await _handle_step(last_msg)
+    try:
+        async with cl.Step(name="🔍 SQL Agent", type="run"):
+            async for step in agent.astream(
+                {"messages": [{"role": "user", "content": message.content}]},
+                stream_mode="values"
+            ):
+                last_msg = step["messages"][-1]
+                await _handle_step(last_msg)
 
-            if isinstance(last_msg, AIMessage) and last_msg.content and not last_msg.tool_calls:
-                final_response = last_msg.content
+                if isinstance(last_msg, AIMessage) and last_msg.content and not last_msg.tool_calls:
+                    final_response = last_msg.content
+    
+    except GraphRecursionError:
+        await cl.Message(content="Je n'ai pas réussi à générer une requête valide après plusieurs tentatives.").send()
+        return
 
     if final_response:
         response_msg = cl.Message(content="")

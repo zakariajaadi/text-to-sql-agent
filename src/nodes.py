@@ -14,8 +14,14 @@ list_tables_tool = _tools["list_tables"]
 get_schema_tool  = _tools["get_schema"]
 run_query_tool   = _tools["run_query"]
 
-get_schema_node = ToolNode([get_schema_tool], name="get_schema")
-run_query_node  = ToolNode([run_query_tool],  name="run_query")
+get_schema_node = ToolNode([get_schema_tool],
+                           name="get_schema",
+                           handle_tool_errors=True
+)
+run_query_node  = ToolNode([run_query_tool],
+                            name="run_query",
+                            handle_tool_errors=True
+)
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
@@ -104,7 +110,19 @@ def check_query(state: MessagesState) -> dict:
     # Check the sql query
     response = llm_with_tools.invoke(messages)
 
-    # Reuse the id from the previous message (generate_query's AIMessage)
-    # so the ToolNode can correctly match this tool call to what's in the state
-    response.id = state["messages"][-1].id
-    return {"messages": [response]}
+    # Get checked query
+    checked_query = response.tool_calls[0]["args"]["query"]
+
+    # Rebuild an AIMessage with the checked query reusing the original tool_call id
+    # so the ToolNode can match this result back to the call that triggered it.
+    corrected_message = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": run_query_tool.name,
+            "args": {"query": checked_query},
+            "id": tool_call["id"],   
+            "type": "tool_call",
+        }]
+    )
+
+    return {"messages": [corrected_message]}

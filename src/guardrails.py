@@ -1,6 +1,18 @@
+import sqlparse
+from sqlparse.tokens import Keyword, DML
 
 
 def is_safe_query(query: str) -> bool:
-    forbidden = ["INSERT", "UPDATE", "DELETE", "DROP", "TRUNCATE", "ALTER", "CREATE"]
-    query_upper = query.upper()
-    return not any(keyword in query_upper for keyword in forbidden)
+    """Return True only if the query is a single SELECT statement."""
+    statements = sqlparse.parse(query.strip())
+
+    # Reject empty or multi-statement queries
+    if not statements or len(statements) > 1:
+        return False
+
+    # Walk tokens and check the first meaningful keyword is SELECT
+    for token in statements[0].flatten():
+        if token.ttype in (DML, Keyword):
+            return token.normalized.upper() == "SELECT"
+
+    return False
