@@ -1,0 +1,16 @@
+# config.yaml
+llm:
+  prefix: "google_genai"
+  model: "gemini-2.5-flash"
+  temperature: 0
+
+database:
+  name : "Chinook"
+  dialect: "sqlite"
+
+agent:
+  top_k: 5
+  dialect: "sqlite"
+
+langsmith:
+  tracing: true
