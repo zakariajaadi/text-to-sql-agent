@@ -1,5 +1,5 @@
 from typing import Literal
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 from state import AgentState
 
@@ -12,7 +12,7 @@ from prompts import (GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT,
                      CLASSIFY_QUESTION_PROMPT, PLAN_SQL_PROMPT,
                      FORMAT_ANSWER_PROMPT)
 from loguru import logger
-from utils import get_last_cycle
+from utils import get_last_cycle, extract_schema_message
 from models import QuestionComplexity
 # ── Tools setup ───────────────────────────────────────────────────────────────
 _tools = get_tools(llm=model,db=db)
@@ -69,6 +69,7 @@ def call_get_schema(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
+
 def assess_question_complexity(state: AgentState) -> dict: 
 
     # LLM with structured output
@@ -102,17 +103,7 @@ def plan_query_generation(state: AgentState) -> dict:
 
 def generate_query(state: AgentState) -> dict:
     """
-    LLM-driven node — generates a SQL query or formulates the final answer.
-    
-    This node is invoked twice during a standard execution:
-      
-      - First pass: the LLM has the schema but no query results yet.
-        It generates a SQL query and returns an AIMessage with a tool call
-        to `sql_db_query`. The conditional edge routes to check_query.
-      
-      - Second pass: the LLM receives the query results from run_query.
-        It formulates the final natural language answer with no tool call.
-        The conditional edge routes to END.
+    LLM-driven node — generates a SQL query
 
     """
     llm_with_tools = model.bind_tools([run_query_tool],tool_choice="any")
@@ -125,46 +116,47 @@ def generate_query(state: AgentState) -> dict:
 def check_query(state: AgentState) -> dict:
     """
     LLM-driven node — reviews and corrects the generated SQL query before execution.
-
-    Extracts the raw SQL query from the last AIMessage's tool call args.
+    Injects the DB schema from state so the LLM can catch semantic errors (wrong FK, 
+    wrong column names) in addition to syntactic ones.
     """
 
-    # Retrieve the SQL query from the last AIMessage in state from tool_calls
+    # Retrieve the SQL query from the last AIMessage's tool call
     tool_call = state["messages"][-1].tool_calls[0]
     query = tool_call["args"]["query"]
-    
-    # Guardrails
+
+    # Guardrail
     if not is_safe_query(query):
         raise ValueError(f"Unsafe query detected: {query}")
-    
-    # No need for the full conversation history, only the sql query wrapped in human message
+
+    # Extract the ToolMessage containing the schema from state
+    schema_msg = extract_schema_message(state["messages"])
+    schema_content = schema_msg.content if schema_msg else "Schema not available."
+
+
     messages = [
-        SystemMessage(content=CHECK_QUERY_PROMPT),
+        SystemMessage(content=CHECK_QUERY_PROMPT.format(schema=schema_content)),
         HumanMessage(content=query)
     ]
-    
-    # Force the LLM to always return a tool call to run_query (no free-text response allowed)
+
     llm_with_tools = model.bind_tools([run_query_tool], tool_choice="any")
-    
-    # Check the sql query
     response = llm_with_tools.invoke(messages)
 
-    # Get checked query
     checked_query = response.tool_calls[0]["args"]["query"]
 
-    # Rebuild an AIMessage with the checked query reusing the original tool_call id
-    # so the ToolNode can match this result back to the call that triggered it.
     corrected_message = AIMessage(
         content="",
         tool_calls=[{
             "name": run_query_tool.name,
             "args": {"query": checked_query},
-            "id": tool_call["id"],   
+            "id": tool_call["id"],
             "type": "tool_call",
         }]
     )
 
     return {"messages": [corrected_message]}
+
+
+
 
 def format_answer(state: AgentState) -> dict:
     """
@@ -174,3 +166,14 @@ def format_answer(state: AgentState) -> dict:
     messages = [SystemMessage(content=FORMAT_ANSWER_PROMPT)] + state["messages"]
     response = model.invoke(messages)
     return {"messages": [response]}
+
+def route_after_run_query(state: AgentState) -> Literal["generate_query", "format_answer"]:
+    """Route to generate_query on SQL error, format_answer on success."""
+    
+    last_message = state["messages"][-1]
+    
+    if isinstance(last_message, ToolMessage) and last_message.status == "error":
+        logger.debug("SQL error detected, retrying query generation")
+        return "generate_query"
+    
+    return "format_answer"

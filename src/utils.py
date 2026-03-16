@@ -1,6 +1,5 @@
 from pathlib import Path
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
-
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 
 def save_graph_png(agent) -> Path:
     output_path = Path(__file__).resolve().parents[1] / "assets" / "graph.png"
@@ -19,6 +18,18 @@ def get_last_cycle(messages: list) -> list:
         if isinstance(messages[i], HumanMessage):
             return messages[i + 1:]  # everything after the last user question
     return []
+
+def extract_schema_message(messages: list) -> ToolMessage | None:
+    """
+    Scan state messages and return the ToolMessage produced by get_schema.
+    Returns the last one found (in case of multi-turn conversations).
+    """
+    result = None
+    for msg in messages:
+        if isinstance(msg, ToolMessage) and msg.name == "sql_db_schema":
+            result = msg
+    return result
+
 
 """
 def generate_query(state: AgentState) -> dict:

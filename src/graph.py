@@ -1,20 +1,19 @@
 from typing import Literal
 from langgraph.graph import END, START, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
 from state import AgentState
 
 
 from nodes import (
     list_tables, call_get_schema, get_schema_node,
-    generate_query, check_query, run_query_node,
+    generate_query, check_query, route_after_run_query, run_query_node,
     assess_question_complexity, plan_query_generation, 
-    format_answer, route_question_by_complexity
+    format_answer, route_question_by_complexity,
+    route_after_run_query
 )
 
 
 
 def build_graph():
-    checkpointer = MemorySaver()
     builder = StateGraph(AgentState)
 
     builder.add_node(list_tables)
@@ -35,10 +34,10 @@ def build_graph():
     builder.add_edge("plan_query_generation",     "generate_query")
     builder.add_edge("generate_query",            "check_query") 
     builder.add_edge("check_query",               "run_query")
-    builder.add_edge("run_query",                 "format_answer")
+    builder.add_conditional_edges("run_query", route_after_run_query) 
     builder.add_edge("format_answer",             END)
 
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile()
 
 if __name__=="__main__":
    agent = build_graph()

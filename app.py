@@ -9,11 +9,21 @@ from langgraph.errors import GraphRecursionError
 from nodes import list_tables_tool, get_schema_tool, run_query_tool
 from loguru import logger
 
+import uuid
+from config import model
+from condense_question import condense_question_chain
+
+
 
 @cl.on_chat_start
 async def on_chat_start():
     agent = build_graph()
+    condense_chain = condense_question_chain(model)
+    
     cl.user_session.set("agent", agent)
+    cl.user_session.set("condense_chain", condense_chain)
+    cl.user_session.set("human_history", [])
+    
     await cl.Message(content="👋 Posez-moi une question sur la base de données.").send()
 
 
@@ -24,21 +34,41 @@ async def on_message(message: cl.Message):
     Orchestrates the LangGraph execution with real-time streaming and visual steps.
     """
     agent = cl.user_session.get("agent")
+    condense_chain = cl.user_session.get("condense_chain")
     seen_msg_ids = set()
     response_msg = None
 
     # Reset the streaming flag for this new message
     cl.user_session.set("answer_streamed", False)
 
+    # Condense follow-up question into a standalone question
+    history = cl.user_session.get("human_history", [])
+    standalone_question = (
+        await condense_chain.ainvoke({
+            "question": message.content,
+            "chat_history": history
+        })
+        if history
+        else message.content
+    )
+
+    logger.debug(f"standalone_question: {standalone_question}")
+
+
+    # Update history with the original question (before condensation)
+    history.append(HumanMessage(content=message.content))
+    cl.user_session.set("human_history", history)
+
     try:
+        # Fresh thread_id at each invocation — no state accumulation between questions
         config = {
             "recursion_limit": 15,
-            "configurable": {"thread_id": cl.context.session.id}
+            "configurable": {"thread_id": str(uuid.uuid4())}
         }
 
         async with cl.Step(name="🔍 SQL Agent", type="run"):
             async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=message.content)]},
+                {"messages": [HumanMessage(content=standalone_question)]},  # condensed question
                 config=config,
                 version="v2"
             ):
@@ -79,7 +109,6 @@ async def on_message(message: cl.Message):
 
     if response_msg:
         await response_msg.update()
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
