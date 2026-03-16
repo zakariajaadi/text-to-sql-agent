@@ -1,5 +1,8 @@
 from typing import Literal
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+from state import AgentState
+
 
 from nodes import (
     list_tables, call_get_schema, get_schema_node,
@@ -7,7 +10,7 @@ from nodes import (
 )
 
 
-def should_continue(state: MessagesState) -> Literal["check_query", "__end__"]:
+def should_continue(state: AgentState) -> Literal["check_query", END]:
     last_message = state["messages"][-1]
     if not last_message.tool_calls:
         return END
@@ -15,7 +18,8 @@ def should_continue(state: MessagesState) -> Literal["check_query", "__end__"]:
 
 
 def build_graph():
-    builder = StateGraph(MessagesState)
+    checkpointer = MemorySaver()
+    builder = StateGraph(AgentState)
 
     builder.add_node(list_tables)
     builder.add_node(call_get_schema)
@@ -31,8 +35,8 @@ def build_graph():
     builder.add_conditional_edges("generate_query", should_continue)
     builder.add_edge("check_query",     "run_query")
     builder.add_edge("run_query",       "generate_query")
-
-    return builder.compile()
+    
+    return builder.compile(checkpointer=checkpointer)
 
 
 if __name__=="__main__":

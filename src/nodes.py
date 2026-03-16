@@ -1,11 +1,12 @@
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
-from langgraph.graph import MessagesState
+from state import AgentState
 
 from config import model, db
 from guardrails import is_safe_query
 from tools import get_tools
 from prompts import GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT
+from loguru import logger
 
 # ── Tools setup ───────────────────────────────────────────────────────────────
 _tools = get_tools(llm=model,db=db)
@@ -25,7 +26,7 @@ run_query_node  = ToolNode([run_query_tool],
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
-def list_tables(state: MessagesState) -> dict:
+def list_tables(state: AgentState) -> dict:
     """
     Deterministic node: retrieves all available tables without invoking the LLM.
     
@@ -43,26 +44,26 @@ def list_tables(state: MessagesState) -> dict:
     # Simulate the AIMessage a LLM would have sent to trigger the tool call (AI Message + tool call)
     tool_call_message = AIMessage(content="", tool_calls=[tool_call])
 
-    # Actually execute the tool, returns a ToolMessage with tool_call_id set
+    # Actually execute the tool, returns a ToolMessage with tool_call_id set and response
     tool_message = list_tables_tool.invoke(tool_call)
-
-    # Simulate a Human-readable summary for downstream nodes (e.g. select_relevant_tables)
-    response = AIMessage(f"Tables disponibles : {tool_message.content}")
-    return {"messages": [tool_call_message, tool_message, response]}
+    
+    return {"messages": [tool_call_message, tool_message]}
 
 
-def call_get_schema(state: MessagesState) -> dict:
+def call_get_schema(state: AgentState) -> dict:
     """
     LLM-driven node : selects the tables relevant to the user's question.
     
     Forces the LLM to make a tool call `sql_db_schema` on the tables it deems relevant.
     """
+
     llm_with_tools = model.bind_tools([get_schema_tool], tool_choice="any")
     response = llm_with_tools.invoke(state["messages"])
+
     return {"messages": [response]}
 
 
-def generate_query(state: MessagesState) -> dict:
+def generate_query(state: AgentState) -> dict:
     """
     LLM-driven node — generates a SQL query or formulates the final answer.
     
@@ -83,7 +84,7 @@ def generate_query(state: MessagesState) -> dict:
     return {"messages": [response]}
 
 
-def check_query(state: MessagesState) -> dict:
+def check_query(state: AgentState) -> dict:
     """
     LLM-driven node — reviews and corrects the generated SQL query before execution.
 

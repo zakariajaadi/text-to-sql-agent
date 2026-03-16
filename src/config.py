@@ -19,6 +19,12 @@ class LLMConfig:
     model: str
     temperature: float
 
+    def build(self):
+        return init_chat_model(
+            f"{self.prefix}:{self.model}",
+            temperature=self.temperature
+        )
+
 
 @dataclass
 class DatabaseConfig:
@@ -29,8 +35,11 @@ class DatabaseConfig:
     def __post_init__(self):
         
         if self.dialect == "sqlite" :
-            self.uri = f"sqlite:///{BASE_DIR / 'data' / self.name}"
+            name = self.name if self.name.endswith(".db") else f"{self.name}.db"
+            self.uri = f"sqlite:///{BASE_DIR / 'data' / name}"
 
+    def build(self):
+        return SQLDatabase.from_uri(self.uri)
 
 @dataclass
 class AgentConfig:
@@ -49,6 +58,7 @@ class AppConfig:
     database: DatabaseConfig
     agent: AgentConfig
     langsmith: LangSmithConfig
+
 
 
 def load_config() -> AppConfig:

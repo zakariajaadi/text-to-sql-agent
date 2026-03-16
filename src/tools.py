@@ -29,10 +29,12 @@ def get_tools(llm: BaseChatModel, db: SQLDatabase) -> dict:
 
 
 if __name__ == "__main__":
-    tools = get_tools()
+    from config import model,db  
+    tools = get_tools(model,db)
+    print(tools["list_tables"].name)
     
-    for name, tool in tools.items():
+    """for name, tool in tools.items():
         print(f"\n{'='*40}")
         print(f"Tool: {name}")
         print(f"Description: {tool.description}")
-        pprint(tool.args_schema.model_json_schema()["properties"])
+        pprint(tool.args_schema.model_json_schema()["properties"])"""
