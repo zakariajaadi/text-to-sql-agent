@@ -1,13 +1,17 @@
+from typing import Literal
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langgraph.prebuilt import ToolNode
 from state import AgentState
 
+from langgraph.graph import END
+
 from config import model, db
 from guardrails import is_safe_query
 from tools import get_tools
-from prompts import GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT
+from prompts import GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT, CLASSIFY_QUESTION_PROMPT, PLAN_SQL_PROMPT
 from loguru import logger
-
+from utils import get_last_cycle
+from models import QuestionComplexity
 # ── Tools setup ───────────────────────────────────────────────────────────────
 _tools = get_tools(llm=model,db=db)
 
@@ -63,6 +67,37 @@ def call_get_schema(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
+def assess_question_complexity(state: AgentState) -> dict: 
+
+    # LLM with structured output
+    structured_llm= model.with_structured_output(QuestionComplexity)
+    
+    # Assess complexity
+    messages=[SystemMessage(content=CLASSIFY_QUESTION_PROMPT),*state["messages"]]
+    response= structured_llm.invoke(messages)
+    logger.debug(f"query complexity = {response.question_complexity}")
+    # return complexity
+    return {"question_complexity":response.question_complexity}
+
+def route_question_by_complexity(state: AgentState) -> Literal["generate_query","plan_query_generation",END]:
+    question_complexity=state["question_complexity"]
+
+    if question_complexity == "out_of_scope":
+        return END
+    
+    elif question_complexity == "complex":
+        return "plan_query_generation"
+    else:
+        return "generate_query"
+
+
+def plan_query_generation(state: AgentState) -> dict: 
+
+    messages=[SystemMessage(content=PLAN_SQL_PROMPT),*state["messages"]]
+    response= model.invoke(messages)
+    return {"messages":[response]}
+
+
 def generate_query(state: AgentState) -> dict:
     """
     LLM-driven node — generates a SQL query or formulates the final answer.
@@ -82,6 +117,7 @@ def generate_query(state: AgentState) -> dict:
     messages = [SystemMessage(content=GENERATE_QUERY_PROMPT)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
+
 
 
 def check_query(state: AgentState) -> dict:
