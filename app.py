@@ -52,9 +52,6 @@ async def on_message(message: cl.Message):
         else message.content
     )
 
-    logger.debug(f"standalone_question: {standalone_question}")
-
-
     # Update history with the original question (before condensation)
     history.append(HumanMessage(content=message.content))
     cl.user_session.set("human_history", history)

@@ -14,7 +14,10 @@ from prompts import (GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT,
 from loguru import logger
 from utils import get_last_cycle, extract_schema_message
 from models import QuestionComplexity
+
+
 # ── Tools setup ───────────────────────────────────────────────────────────────
+
 _tools = get_tools(llm=model,db=db)
 
 list_tables_tool = _tools["list_tables"]
@@ -79,6 +82,7 @@ def assess_question_complexity(state: AgentState) -> dict:
     messages=[SystemMessage(content=CLASSIFY_QUESTION_PROMPT),*state["messages"]]
     response= structured_llm.invoke(messages)
     logger.debug(f"query complexity = {response.question_complexity}")
+    
     # return complexity
     return {"question_complexity":response.question_complexity}
 
@@ -166,6 +170,7 @@ def format_answer(state: AgentState) -> dict:
     messages = [SystemMessage(content=FORMAT_ANSWER_PROMPT)] + state["messages"]
     response = model.invoke(messages)
     return {"messages": [response]}
+    
 
 def route_after_run_query(state: AgentState) -> Literal["generate_query", "format_answer"]:
     """Route to generate_query on SQL error, format_answer on success."""
