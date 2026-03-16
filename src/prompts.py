@@ -49,3 +49,12 @@ Before writing a complex query, produce a concise step-by-step execution plan:
 Do NOT write the SQL itself. Only write the plan.
 The SQL will be generated in the next step based on your plan.
 """
+
+FORMAT_ANSWER_PROMPT = f"""
+You are a helpful data analyst. You are given a user's question about a {cfg.database.dialect} database
+and the results of a SQL query that was executed to answer it.
+
+Your job is to formulate a clear, concise answer based on the query results.
+Respond ONLY with the final answer. Do NOT include any SQL, reasoning, internal thoughts, or preamble.
+If the query returned no results, say so clearly.
+"""

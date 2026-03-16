@@ -8,7 +8,9 @@ from langgraph.graph import END
 from config import model, db
 from guardrails import is_safe_query
 from tools import get_tools
-from prompts import GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT, CLASSIFY_QUESTION_PROMPT, PLAN_SQL_PROMPT
+from prompts import (GENERATE_QUERY_PROMPT, CHECK_QUERY_PROMPT,
+                     CLASSIFY_QUESTION_PROMPT, PLAN_SQL_PROMPT,
+                     FORMAT_ANSWER_PROMPT)
 from loguru import logger
 from utils import get_last_cycle
 from models import QuestionComplexity
@@ -113,7 +115,7 @@ def generate_query(state: AgentState) -> dict:
         The conditional edge routes to END.
 
     """
-    llm_with_tools = model.bind_tools([run_query_tool])
+    llm_with_tools = model.bind_tools([run_query_tool],tool_choice="any")
     messages = [SystemMessage(content=GENERATE_QUERY_PROMPT)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
@@ -163,3 +165,12 @@ def check_query(state: AgentState) -> dict:
     )
 
     return {"messages": [corrected_message]}
+
+def format_answer(state: AgentState) -> dict:
+    """
+    LLM-driven node — formulates the final natural language answer
+    from the SQL query results. No tools bound, pure text output.
+    """
+    messages = [SystemMessage(content=FORMAT_ANSWER_PROMPT)] + state["messages"]
+    response = model.invoke(messages)
+    return {"messages": [response]}
