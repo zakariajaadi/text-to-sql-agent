@@ -1,5 +1,7 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
-from typing import Literal 
+
 
 class QuestionComplexity(BaseModel):
     question_complexity: Literal["simple", "complex", "out_of_scope"] = Field(

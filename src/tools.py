@@ -1,10 +1,8 @@
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
-from langgraph.prebuilt import ToolNode
-from langchain_core.language_models import BaseChatModel
 from langchain_community.utilities import SQLDatabase
+from langchain_core.language_models import BaseChatModel
 
-
-from pprint import pprint
+from config import db, model
 
 
 def get_tools(llm: BaseChatModel, db: SQLDatabase) -> dict:
@@ -26,10 +24,18 @@ def get_tools(llm: BaseChatModel, db: SQLDatabase) -> dict:
         "run_query":   next(t for t in tools if t.name == "sql_db_query"),
     }
 
+# ── Tools setup ───────────────────────────────────────────────────────────────
+
+_tools = get_tools(llm=model,db=db)
+
+list_tables_tool = _tools["list_tables"]
+get_schema_tool  = _tools["get_schema"]
+run_query_tool   = _tools["run_query"]
+
 
 
 if __name__ == "__main__":
-    from config import model,db  
+    from config import db, model
     tools = get_tools(model,db)
     print(tools["list_tables"].name)
     

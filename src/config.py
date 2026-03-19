@@ -1,13 +1,10 @@
 from dataclasses import dataclass
 from pathlib import Path
-from dotenv import load_dotenv
-from omegaconf import OmegaConf
 
+from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_community.utilities import SQLDatabase
-
-
-
+from omegaconf import OmegaConf
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv()

@@ -1,6 +1,5 @@
 from config import cfg
 
-
 # ── Node: generate_query ──────────────────────────────────────────────────────
 # Used by: generate_query node (LLM bound to run_query tool, tool_choice="any")
 # Input context: SystemMessage + full state messages (includes schema, tables, plan if complex)
@@ -40,7 +39,7 @@ You are an expert SQL reviewer working with a {cfg.database.dialect} database.
 You are given the database schema and a query to review before execution.
 
 ## Task
-Your task is to audit the query  against the database schema and the user's original question,
+Your task is to audit the query against the database schema AND the user's original question,
 then either fix it or approve it as-is.
 
 ## Database schema:
@@ -85,7 +84,7 @@ Your job is to classify the user's question into one of three categories:
 3. If you are unsure between simple and complex, choose **complex** (safer to over-plan than under-plan).
 4. If the schema contains no table or column even loosely related to the question, choose **out_of_scope**.
 """
-
+    
 
 # ── Node: plan_query_generation ───────────────────────────────────────────────
 # Used by: plan_query_generation node (plain LLM invoke, no tools)
@@ -127,34 +126,19 @@ Your job is to transform these results into a natural, conversational response.
 
 ## STRICT CONSTRAINTS:
 - Output ONLY the natural language answer.
+- Always respond in the same language as the user's question.
 - NEVER mention SQL, the query, or your internal reasoning.
 - Do not repeat the user's question.
 - Use a professional yet friendly tone.
 - If results are empty, inform the user politely that no data was found.
+
+## HANDLING SPECIAL CASES:
+- If results are empty, inform the user politely that no data was found.
+- If results contain an error message, inform the user politely that the query could not be completed.
+- If no query was executed (out of scope), inform the user politely that their question cannot be answered from the available data.
 
 ## FORMATTING RULES:
 - If the result contains multiple items, use a clean Markdown list.
 - Use currency symbols (e.g., $) or units if appropriate based on the column names.
 - Keep it concise.
 """
-
-# ── Chain: condense_question ──────────────────────────────────────────────────
-# Used by: app.py on_message handler (before graph invocation)
-# Input context: PromptTemplate with {chat_history} and {question}
-# Expected output: str (standalone reformulated question via StrOutputParser)
-
-CONDENSE_QUESTION_PROMPT = """\
-Given the conversation history and the following question, can you rephrase the user's \
-question in its original language so that it is self-sufficient. You are presented \
-with a conversation that may contain some spelling mistakes and grammatical errors, \
-but your goal is to understand the underlying question. Make sure to avoid the use of \
-unclear pronouns.
-
-If the question is already self-sufficient, return the original question. If it seem \
-the user is authorizing the chatbot to answer without specific context, make sure to \
-reflect that in the rephrased question.
-
-Chat history: {chat_history}
-
-Question: {question}
-""" 

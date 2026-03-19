@@ -1,5 +1,5 @@
 import sqlparse
-from sqlparse.tokens import Keyword, DML
+from sqlparse.tokens import DML, Keyword
 
 
 def is_safe_query(query: str) -> bool:

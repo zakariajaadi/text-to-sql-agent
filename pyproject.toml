@@ -11,9 +11,16 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langchain-google-genai>=4.2.1",
     "langgraph>=1.1.2",
+    "langsmith>=0.7.17",
     "loguru>=0.7.3",
     "omegaconf>=2.3.0",
+    "pandas>=3.0.1",
     "python-dotenv>=1.2.2",
     "requests>=2.32.5",
     "sqlparse>=0.5.5",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
 ]
