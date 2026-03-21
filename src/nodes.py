@@ -1,14 +1,12 @@
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import END
 from langgraph.prebuilt import ToolNode
 from loguru import logger
 
 from config import model
 from guardrails import is_safe_query
 from prompts import (
-    CHECK_QUERY_PROMPT,
     CLASSIFY_QUESTION_PROMPT,
     FORMAT_ANSWER_PROMPT,
     GENERATE_QUERY_PROMPT,
@@ -17,7 +15,7 @@ from prompts import (
 from schemas import QuestionComplexity
 from state import AgentState
 from tools import get_schema_tool, list_tables_tool, run_query_tool
-from utils import extract_schema_message,get_last_cycle
+from utils import get_last_cycle
 
 # ── Tool Nodes ────────────────────────────────────────────────────────────────
 
@@ -68,7 +66,6 @@ def relevant_tables(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
-
 def question_complexity(state: AgentState) -> dict: 
 
     # LLM with structured output
@@ -98,7 +95,7 @@ def plan_query_generation(state: AgentState) -> dict:
 
     messages=[SystemMessage(content=PLAN_SQL_PROMPT),*state["messages"]]
     response= model.invoke(messages)
-    return {"messages":[response]}
+    return {"query_plan": response.content}
 
 
 def generate_query(state: AgentState) -> dict:
@@ -107,74 +104,59 @@ def generate_query(state: AgentState) -> dict:
 
     """
     llm_with_tools = model.bind_tools([run_query_tool],tool_choice="any")
-    messages = [SystemMessage(content=GENERATE_QUERY_PROMPT)] + state["messages"]
+
+    # If plan
+    system_prompt = GENERATE_QUERY_PROMPT
+    if state.get("query_plan"):
+        system_prompt += f"\n\n## Execution Plan\nFollow this plan:\n{state['query_plan']}"
+    
+    # No Plan
+    messages = [SystemMessage(content=system_prompt)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
 
-def route_after_generate_query(state: AgentState) -> Literal["check_query", "run_query"]:
-    """Go to check_query only for complex questions, skip directly to run_query for simple."""
-    if state["question_complexity"] == "complex":
-        return "check_query"
-    return "run_query"
 
-
-
-
-def check_query(state: AgentState) -> dict:
-    """
-    LLM-driven node — reviews and corrects the generated SQL query before execution.
-    Injects the DB schema and the original user question so the LLM can catch both
-    syntactic errors (wrong columns, bad JOINs) and semantic ones (query doesn't
-    answer what was asked).
-
-    Uses the same message ID as the upstream generate_query AIMessage so that
-    MessagesState replaces it.
-
-    Minimal context: Last schema, Last Question, SQL query
-    """
-
-    # Retrieve the SQL query from the last AIMessage's tool call
-    last_ai_message = state["messages"][-1]
-    tool_call = last_ai_message.tool_calls[0]
+def safe_run_query(state: AgentState) -> dict:
+    """Wrapper Node for run_query_node ToolNode.
+    
+    Guardrailed query execution: safety check → syntexe check → execute."""
+    
+    last_ai = state["messages"][-1]
+    tool_call = last_ai.tool_calls[0]
     query = tool_call["args"]["query"]
 
-    # Guardrail
+    # 1. Guardrail
     if not is_safe_query(query):
-        raise ValueError(f"Unsafe query detected: {query}")
+        raise ValueError(f"Unsafe query blocked: {query}")
 
-    # Extract the ToolMessage containing the tables schema from state
-    schema_msg = extract_schema_message(state["messages"])
-    schema_content = schema_msg.content if schema_msg else "Schema not available."
+    # 2. EXPLAIN — validate structure without executing
+    from config import db
+    try:
+        db.run(f"EXPLAIN {query}")
+    except Exception as e:
+        # Return error as ToolMessage so retry loop can handle it
+        return {"messages": [ToolMessage(
+            content=f"Query validation failed (EXPLAIN): {e}",
+            name=run_query_tool.name,
+            tool_call_id=tool_call["id"],
+            status="error",
+        )]}
 
-    # Extract the user last question
-    original_question = next((m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), "")
+    # 3. Execute
+    return run_query_node.invoke(state)
 
-    messages = [
-        SystemMessage(content=CHECK_QUERY_PROMPT.format(schema=schema_content)),
-        HumanMessage(content=f"User question: {original_question}\n\nSQL query to review:\n{query}")
-    ]
-
-    llm_with_tools = model.bind_tools([run_query_tool], tool_choice="any")
-    response = llm_with_tools.invoke(messages)
-
-    checked_query = response.tool_calls[0]["args"]["query"]
-
-    # Reuse the original AIMessage's id so MessagesState replaces
-    # the generate_query message 
-    corrected_message = AIMessage(
-        content="",
-        id=last_ai_message.id,
-        tool_calls=[{
-            "name": run_query_tool.name,
-            "args": {"query": checked_query},
-            "id": tool_call["id"],
-            "type": "tool_call",
-        }]
-    )
-
-    return {"messages": [corrected_message]}
-
-
+def route_after_run_query(state: AgentState) -> Literal["generate_query", "format_answer"]:
+    """Route to generate_query on SQL error, format_answer on success."""
+    
+    last_message = state["messages"][-1]
+    
+    if isinstance(last_message, ToolMessage) and last_message.status == "error":
+        if state["remaining_steps"] <= 3: # avoid infinite loop
+            logger.warning("Not enough steps remaining, aborting.")
+            return "format_answer"
+        return "generate_query"
+    
+    return "format_answer"
 
 def format_answer(state: AgentState) -> dict:
     """
@@ -220,15 +202,3 @@ def format_answer(state: AgentState) -> dict:
 
     return {"messages": [response]}
 
-def route_after_run_query(state: AgentState) -> Literal["generate_query", "format_answer"]:
-    """Route to generate_query on SQL error, format_answer on success."""
-    
-    last_message = state["messages"][-1]
-    
-    if isinstance(last_message, ToolMessage) and last_message.status == "error":
-        if state["remaining_steps"] <= 3: # avoid infinite loop
-            logger.warning("Not enough steps remaining, aborting.")
-            return "format_answer"
-        return "generate_query"
-    
-    return "format_answer"

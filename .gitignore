@@ -15,3 +15,5 @@ data/
 assets/
 .chainlit/
 .files/
+
+src/_*.py

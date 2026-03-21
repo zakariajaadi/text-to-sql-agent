@@ -64,8 +64,8 @@ def normalize_chunk_content(content) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         )
     return content if isinstance(content, str) else ""
-
-
+ 
+ 
 async def process_node_output(event: dict, seen_msg_ids: set) -> None:
     """
     Extract and handle new messages from a LangGraph node output.
@@ -76,14 +76,21 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
         return
 
     output = event["data"].get("output", {})
-    # ── Special case: assess_question_complexity returns structured data, not messages
+
+    # ── Special case: question_complexity returns structured data, not messages
     if node_name == "question_complexity" and "question_complexity" in output:
         complexity = output["question_complexity"]
         emoji = {"simple": "🟢", "complex": "🟠", "out_of_scope": "🔴"}.get(complexity, "⚪")
         async with cl.Step(name=f"{emoji} Complexity: {complexity}", type="run") as s:
             s.output = f"Question classified as **{complexity}**"
         return
-    
+
+    # ── Special case: plan_query_generation stores plan in state field, not messages
+    if node_name == "plan_query_generation" and "query_plan" in output:
+        async with cl.Step(name="📝 Query plan", type="run") as s:
+            s.output = output["query_plan"]
+        return
+
     # Standard message-based processing
     if not isinstance(output, dict) or "messages" not in output:
         return
@@ -93,11 +100,11 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
         if msg_id not in seen_msg_ids:
             seen_msg_ids.add(msg_id)
             await handle_step(msg, node_name)
-
-
+ 
 async def handle_step(msg, node_name: str = "") -> None:
     """
-    Route a single message to the appropriate Chainlit UI step based on its type and origin node.
+    Route a single message to the appropriate Chainlit UI step
+    based on its type and origin node.
 
     Message flow:
       AIMessage(tool_calls)  → LLM is requesting a tool execution
@@ -116,46 +123,37 @@ async def handle_step(msg, node_name: str = "") -> None:
         tool_args = msg.tool_calls[0]["args"]
 
         if tool_name == get_schema_tool.name:
-            # Show which tables the LLM selected for schema retrieval
             async with cl.Step(name="🗂️ Fetching schema", type="tool") as s:
                 s.input = str(tool_args)
 
         elif tool_name == run_query_tool.name:
-            if node_name == "generate_query":
-                # Raw SQL produced by the generation node (simple path: no verification follows)
-                async with cl.Step(name="⚙️ Generated SQL", type="run") as s:
-                    s.output = f"```sql\n{tool_args.get('query', '')}\n```"
-            elif node_name == "check_query":
-                # SQL after review and correction (complex path only)
-                async with cl.Step(name="✅ Verified SQL", type="run") as s:
-                    s.output = f"```sql\n{tool_args.get('query', '')}\n```"
+            async with cl.Step(name="⚙️ Generated SQL", type="run") as s:
+                s.output = f"```sql\n{tool_args.get('query', '')}\n```"
 
     # ── Tool execution results ─────────────────────────────────────────────────
     elif isinstance(msg, ToolMessage):
         if msg.name == get_schema_tool.name:
-            # Truncate schema to avoid flooding the UI
             async with cl.Step(name="🗂️ Schema retrieved", type="tool") as s:
                 s.output = msg.content[:500]
 
         elif msg.name == run_query_tool.name:
-            async with cl.Step(name="📊 Query results", type="tool") as s:
-                s.output = msg.content
+            if msg.status == "error":
+                async with cl.Step(name="❌ Query validation failed", type="tool") as s:
+                    s.output = msg.content
+            else:
+                async with cl.Step(name="📊 Query results", type="tool") as s:
+                    s.output = msg.content
 
-    # ── Plain LLM output: query plan or final answer ───────────────────────────
+    # ── Plain LLM output: final answer only ────────────────────────────────────
+    # Note: plan_query_generation is handled upstream in process_node_output
     elif isinstance(msg, AIMessage) and not msg.tool_calls and msg.content:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
 
-        if node_name == "plan_query_generation":
-            # Step-by-step plan produced before complex query generation
-            async with cl.Step(name="📝 Query plan", type="run") as s:
-                s.output = content
-
-        elif node_name == "format_answer":
-            # Fallback: display final answer if token streaming didn't fire
+        if node_name == "format_answer":
             if not cl.user_session.get("answer_streamed"):
                 await cl.Message(content=content).send()
-
-
+ 
+ 
 def get_node_step_title(node_name: str) -> str:
     """
     Return a human-readable step title for the given LangGraph node name.
@@ -169,7 +167,5 @@ def get_node_step_title(node_name: str) -> str:
     "question_complexity":   "🧠 Assessing complexity...",
     "plan_query_generation": "📝 Planning query...",
     "generate_query":        "⚙️ Generating SQL...",
-    "check_query":           "✅ Verifying SQL...",
     "format_answer":         "✍️ Formatting answer...",
 }.get(node_name, "")
-

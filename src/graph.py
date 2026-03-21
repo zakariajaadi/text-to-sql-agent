@@ -2,7 +2,6 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from nodes import (
-    check_query,
     format_answer,
     generate_query,
     get_schema_node,
@@ -10,10 +9,9 @@ from nodes import (
     plan_query_generation,
     question_complexity,
     relevant_tables,
-    route_after_generate_query,
     route_after_run_query,
     route_question_by_complexity,
-    run_query_node,
+    safe_run_query
 )
 from state import AgentState
 
@@ -27,8 +25,7 @@ def build_graph():
     builder.add_node(question_complexity)
     builder.add_node(plan_query_generation)
     builder.add_node(generate_query)
-    builder.add_node(check_query)
-    builder.add_node(run_query_node, "run_query")
+    builder.add_node("run_query",safe_run_query)
     builder.add_node(format_answer)
 
     builder.add_edge(START,                       "list_tables")
@@ -37,9 +34,7 @@ def build_graph():
     builder.add_edge("get_schema",                "question_complexity")
     builder.add_conditional_edges("question_complexity", route_question_by_complexity)
     builder.add_edge("plan_query_generation",     "generate_query")
-    #builder.add_edge("generate_query", "check_query")
-    builder.add_conditional_edges("generate_query", route_after_generate_query)
-    builder.add_edge("check_query",               "run_query")
+    builder.add_edge("generate_query",            "run_query")
     builder.add_conditional_edges("run_query", route_after_run_query, {
                                   "generate_query": "generate_query",  
                                   "format_answer": "format_answer"                               
