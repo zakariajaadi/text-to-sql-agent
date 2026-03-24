@@ -1,13 +1,37 @@
 from config import cfg
 
+
+# ── Node: retrieve_schema (LLM re-ranking step) ──────────────────────────────
+
+RERANK_TABLES_PROMPT = f"""
+You are an expert database architect working with a {cfg.database.dialect} database.
+
+## TASK
+Given a user question and a list of candidate table schemas, select ONLY the tables 
+needed to answer the question. Think about the full chain of JOINs required.
+
+## STRICT RULES
+1. Include all tables in the JOIN path, even intermediate/bridge tables.
+2. For aggregation queries, include the most granular fact table, not summary tables.
+3. Use foreign key relationships in the schemas to identify the complete JOIN chain.
+4. Return ONLY the relevant table names.
+
+## CANDIDATE SCHEMAS:
+{{schemas}}
+"""
+
 # ── Node: assess_question_complexity ──────────────────────────────────────────
 # Used by: assess_question_complexity node (LLM with structured output → QuestionComplexity)
 # Input context: SystemMessage + full state messages
 # Expected output: QuestionComplexity(question_complexity=..., reason=...)
 
-CLASSIFY_QUESTION_PROMPT = """
+CLASSIFY_QUESTION_PROMPT = f"""
 You are a Lead Data Architect routing SQL requests.
 You have access to the full database schema retrieved in this conversation.
+
+## Database Schema:
+{{schema}}
+
 
 ## TASK
 Your job is to classify the user's question into one of three categories:
@@ -32,6 +56,9 @@ Your job is to classify the user's question into one of three categories:
 
 PLAN_SQL_PROMPT = f"""
 You are an expert SQL Architect working with a {cfg.database.dialect} database.
+
+## Database Schema:
+{{schema}}
 
 ## TASK
 Your task is to produce a concise step-by-step execution plan before writing a complex query.
@@ -58,6 +85,9 @@ Your task is to produce a concise step-by-step execution plan before writing a c
 GENERATE_QUERY_PROMPT = f"""
 You are an expert SQL data analyst interacting with a {cfg.database.dialect} database.
 
+## Database Schema:
+{{schema}}
+
 ## TASK
 Your task is to translate the user's natural language question into a syntactically correct SQL query.
 
@@ -65,7 +95,7 @@ Your task is to translate the user's natural language question into a syntactica
 
 1. ONLY use tables and columns present in the database schema. Never hallucinate entity names.
 2. Never use SELECT *. Only select columns necessary to answer the question.
-3. Always limit results to {cfg.agent.top_k} rows maximum.
+3. Always limit results to {cfg.database.limit} rows maximum.
 4. Never use DML or DDL statements (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
 5. For case-insensitive text matching, use LOWER(column) LIKE LOWER('%value%').
 6. When the question involves ranking or ordering, always include an explicit ORDER BY clause.
@@ -112,3 +142,5 @@ Your job is to transform these results into a natural, conversational response.
     - Never use generic terms as "units", "items", "quantities", or "values" in the final response.
 - Keep it concise.
 """
+
+

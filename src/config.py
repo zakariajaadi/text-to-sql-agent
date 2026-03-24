@@ -3,6 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain.embeddings import init_embeddings
 from langchain_community.utilities import SQLDatabase
 from omegaconf import OmegaConf
 
@@ -12,13 +13,12 @@ load_dotenv()
 
 @dataclass
 class LLMConfig:
-    prefix: str
     model: str
     temperature: float
 
     def build(self):
         return init_chat_model(
-            f"{self.prefix}:{self.model}",
+            self.model,
             temperature=self.temperature
         )
 
@@ -27,6 +27,7 @@ class LLMConfig:
 class DatabaseConfig:
     name: str
     dialect:str
+    limit: int = 5
     uri: str = "" 
 
     def __post_init__(self):
@@ -39,10 +40,15 @@ class DatabaseConfig:
         return SQLDatabase.from_uri(self.uri)
 
 @dataclass
-class AgentConfig:
+class RetrievalConfig:
+    embedding_model: str
+    persist_directory: str
+    schemas_directory: str
     top_k: int
-    dialect: str
 
+    def __post_init__(self):
+        self.persist_directory = str(BASE_DIR / self.persist_directory)
+        self.schemas_directory = str(BASE_DIR / self.schemas_directory)
 
 @dataclass
 class LangSmithConfig:
@@ -53,7 +59,7 @@ class LangSmithConfig:
 class AppConfig:
     llm: LLMConfig
     database: DatabaseConfig
-    agent: AgentConfig
+    retrieval: RetrievalConfig
     langsmith: LangSmithConfig
 
 
@@ -65,7 +71,7 @@ def load_config() -> AppConfig:
     return AppConfig(
         llm=LLMConfig(**cfg.llm),
         database=DatabaseConfig(**cfg.database),
-        agent=AgentConfig(**cfg.agent),
+        retrieval=RetrievalConfig(**cfg.retrieval),
         langsmith=LangSmithConfig(**cfg.langsmith),
     )
 
@@ -73,8 +79,11 @@ def load_config() -> AppConfig:
 cfg = load_config()
 
 model = init_chat_model(
-    f"{cfg.llm.prefix}:{cfg.llm.model}",
+    cfg.llm.model,
     temperature=cfg.llm.temperature
 )
+
+embedding_model = init_embeddings(cfg.retrieval.embedding_model)
+
 
 db = SQLDatabase.from_uri(cfg.database.uri)

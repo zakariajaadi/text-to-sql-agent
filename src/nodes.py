@@ -11,68 +11,97 @@ from prompts import (
     FORMAT_ANSWER_PROMPT,
     GENERATE_QUERY_PROMPT,
     PLAN_SQL_PROMPT,
+    RERANK_TABLES_PROMPT
 )
-from schemas import QuestionComplexity
+from schemas import QuestionComplexity, SelectedTables
 from state import AgentState
 from tools import get_schema_tool, list_tables_tool, run_query_tool
 from utils import get_last_cycle
 
+
+from schema_retrieval.retriever import get_schema_retriever
+
+# ── Retiever ────────────────────────────────────────────────────────────────
+
+
+_schema_retriever = get_schema_retriever(k=8)
+
 # ── Tool Nodes ────────────────────────────────────────────────────────────────
 
-get_schema_node = ToolNode([get_schema_tool],
-                           name="get_schema",
-                           handle_tool_errors=True
-)
 run_query_node  = ToolNode([run_query_tool],
                             name="run_query",
                             handle_tool_errors=True)
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
-def list_tables(state: AgentState) -> dict:
+def retrieve_schema(state: AgentState) -> dict:
     """
-    Deterministic node: retrieves all available tables without invoking the LLM.
-    
-    Manually constructs and executes the `sql_db_list_tables` tool call, bypassing
-    the LLM entirely. 
+    Deterministic node — broad vector search for candidate table schemas.
+    First stage of the two-step schema selection (retrieve → rerank).
     """
+    question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+        ""
+    )
 
-    tool_call = {
-        "name": list_tables_tool.name,
-        "args": {},
-        "id": "list_tables_call",
-        "type": "tool_call",
-    }
+    # Vector similarity search against the schema index
+    docs = _schema_retriever.invoke(question)
 
-    # Simulate the AIMessage a LLM would have sent to trigger the tool call (AI Message + tool call)
-    tool_call_message = AIMessage(content="", tool_calls=[tool_call])
+    # Build a dict {table_name: DDL} for downstream LLM re-ranking
+    candidates = {doc.metadata["table_name"]: doc.page_content for doc in docs}
 
-    # Actually execute the tool, returns a ToolMessage with tool_call_id set and response
-    tool_message = list_tables_tool.invoke(tool_call)
-    
-    return {"messages": [tool_call_message, tool_message]}
+    return {"candidate_schemas": candidates}
 
 
-def relevant_tables(state: AgentState) -> dict:
+def rerank_tables(state: AgentState) -> dict:
     """
-    LLM-driven node : selects the tables relevant to the user's question.
-    
-    Forces the LLM to make a tool call `sql_db_schema` on the tables it deems relevant.
+    LLM-driven node — narrows candidates to only the tables needed.
+    Second stage: reasons about FK chains that embeddings can't capture
+    (e.g., Genre → Track → InvoiceLine for a revenue question).
     """
+    question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+        ""
+    )
+    candidates = state["candidate_schemas"]
 
-    llm_with_tools = model.bind_tools([get_schema_tool], tool_choice="any")
-    response = llm_with_tools.invoke(state["messages"])
+    # Format all candidate schemas for the LLM prompt
+    schemas_text = "\n\n".join(
+        f"### {name}\n{ddl}" for name, ddl in candidates.items()
+    )
 
-    return {"messages": [response]}
+    # LLM structured output: returns table names + reasoning
+    structured_llm = model.with_structured_output(SelectedTables)
+    response = structured_llm.invoke([
+        SystemMessage(content=RERANK_TABLES_PROMPT.format(schemas=schemas_text)),
+        HumanMessage(content=question),
+    ])
 
+    logger.debug(f"LLM re-ranking: {response.tables} — {response.reason}")
+
+    # Keep only the DDLs for tables the LLM selected
+    selected = [candidates[t] for t in response.tables if t in candidates]
+
+    # Fallback: if LLM returned no valid tables (hallucinated names, etc.),
+    # pass all candidates through rather than failing silently
+    if not selected:
+        logger.warning("LLM re-ranking returned no valid tables, using all candidates.")
+        selected = list(candidates.values())
+
+    return {"retrieved_schema": "\n\n".join(selected)}
 
 def question_complexity(state: AgentState) -> dict: 
+
+    schema = state["retrieved_schema"]
 
     # LLM with structured output
     structured_llm= model.with_structured_output(QuestionComplexity)
     
     # Assess complexity
-    messages=[SystemMessage(content=CLASSIFY_QUESTION_PROMPT),*state["messages"]]
+    messages=[
+        SystemMessage(content=CLASSIFY_QUESTION_PROMPT.format(schema=schema)),
+        *state["messages"]
+    ]
     response= structured_llm.invoke(messages)
     logger.debug(f"query complexity = {response.question_complexity}")
     
@@ -92,8 +121,11 @@ def route_question_by_complexity(state: AgentState) -> Literal["generate_query",
 
 
 def plan_query_generation(state: AgentState) -> dict: 
-
-    messages=[SystemMessage(content=PLAN_SQL_PROMPT),*state["messages"]]
+    schema = state["retrieved_schema"]
+    messages = [
+        SystemMessage(content=PLAN_SQL_PROMPT.format(schema=schema)),
+        *state["messages"],
+    ]
     response= model.invoke(messages)
     return {"query_plan": response.content}
 
@@ -103,10 +135,12 @@ def generate_query(state: AgentState) -> dict:
     LLM-driven node — generates a SQL query
 
     """
+    schema = state["retrieved_schema"]
     llm_with_tools = model.bind_tools([run_query_tool],tool_choice="any")
+    
+    system_prompt = GENERATE_QUERY_PROMPT.format(schema=schema)
 
     # If plan
-    system_prompt = GENERATE_QUERY_PROMPT
     if state.get("query_plan"):
         system_prompt += f"\n\n## Execution Plan\nFollow this plan:\n{state['query_plan']}"
     

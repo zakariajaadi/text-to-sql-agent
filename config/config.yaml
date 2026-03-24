@@ -1,16 +1,18 @@
 # config.yaml
 llm:
-  prefix: "google_genai"
-  model: "gemini-2.5-flash"
+  model: "google_genai:gemini-2.5-flash"
   temperature: 0
 
 database:
   name : "Chinook"
   dialect: "sqlite"
+  limit: 5
 
-agent:
-  top_k: 5
-  dialect: "sqlite"
+retrieval:
+  embedding_model: "google_genai:gemini-embedding-001"
+  persist_directory: "data/chroma_schema"
+  schemas_directory: "data/schemas"
+  top_k: 8
 
 langsmith:
   tracing: true
