@@ -1,36 +1,22 @@
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.prebuilt import ToolNode
 from loguru import logger
 
-from config import model
-from guardrails import is_safe_query
+from config import cfg, model
 from prompts import (
-    CLASSIFY_QUESTION_PROMPT,
     FORMAT_ANSWER_PROMPT,
-    GENERATE_QUERY_PROMPT,
-    PLAN_SQL_PROMPT,
-    RERANK_TABLES_PROMPT
+    RERANK_TABLES_PROMPT,
+    SCOPE_CHECK_PROMPT,
+    SQL_CODER_PROMPT,
+    SQL_VALIDATOR_FEEDBACK
 )
-from schemas import QuestionComplexity, SelectedTables
-from state import AgentState
-from tools import get_schema_tool, list_tables_tool, run_query_tool
-from utils import get_last_cycle
-
-
 from schema_retrieval.retriever import get_schema_retriever
-
-# ── Retiever ────────────────────────────────────────────────────────────────
-
-
-_schema_retriever = get_schema_retriever(k=8)
-
-# ── Tool Nodes ────────────────────────────────────────────────────────────────
-
-run_query_node  = ToolNode([run_query_tool],
-                            name="run_query",
-                            handle_tool_errors=True)
+from schemas import QuestionScope, SelectedTables
+from state import AgentState
+from tools import get_schema_tool, run_query_tool
+from utils import extract_sql,get_last_cycle
+from guardrails import is_safe_query
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
@@ -43,9 +29,11 @@ def retrieve_schema(state: AgentState) -> dict:
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
         ""
     )
+    
+    schema_retriever = get_schema_retriever(k=cfg.retrieval.top_k)
 
     # Vector similarity search against the schema index
-    docs = _schema_retriever.invoke(question)
+    docs = schema_retriever.invoke(question)
 
     # Build a dict {table_name: DDL} for downstream LLM re-ranking
     candidates = {doc.metadata["table_name"]: doc.page_content for doc in docs}
@@ -90,112 +78,131 @@ def rerank_tables(state: AgentState) -> dict:
 
     return {"retrieved_schema": "\n\n".join(selected)}
 
-def question_complexity(state: AgentState) -> dict: 
-
+def check_scope(state: AgentState) -> dict: 
+    """Deterministic gate — filters out questions unrelated to the database."""
+    
+    # Fetch schema from state 
     schema = state["retrieved_schema"]
 
     # LLM with structured output
-    structured_llm= model.with_structured_output(QuestionComplexity)
+    structured_llm= model.with_structured_output(QuestionScope)
     
-    # Assess complexity
+    # Check question scope
     messages=[
-        SystemMessage(content=CLASSIFY_QUESTION_PROMPT.format(schema=schema)),
+        SystemMessage(content=SCOPE_CHECK_PROMPT.format(schema=schema)),
         *state["messages"]
     ]
     response= structured_llm.invoke(messages)
-    logger.debug(f"query complexity = {response.question_complexity}")
-    
-    # return complexity
-    return {"question_complexity":response.question_complexity}
+    logger.debug(f"Scope check: in_scope={response.is_in_scope} — {response.reason}")
 
-def route_question_by_complexity(state: AgentState) -> Literal["generate_query","plan_query_generation","format_answer"]:
-    question_complexity=state["question_complexity"]
+    # return scope 
+    return {"is_in_scope": response.is_in_scope}
 
-    if question_complexity == "out_of_scope":
-        return "format_answer"
+def route_by_scope(state: AgentState) -> Literal["sql_coder","format_answer"]:
+    if state["is_in_scope"]:
+        return "sql_coder"
+    return "format_answer"
+
+
+# ── SQL Coder ─────────────────────────────────────────────────────────────────
+
+def sql_coder(state: AgentState) -> dict:
+    """
+    LLM node — generates SQL without executing.
+    Receives schema and question, optionally validation feedback on retry.
+    Outputs raw SQL into state['generated_query'].
+    """
+    # Fetch tables schema
+    schema = state["retrieved_schema"]
+
+    # Fetch user question
+    question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+        ""
+    )
     
-    elif question_complexity == "complex":
-        return "plan_query_generation"
+    # Format prompt with tables schemas
+    system_prompt = SQL_CODER_PROMPT.format(schema=schema)
+
+    # Build user message: question + feedback if retry
+    feedback = state.get("validation_feedback", "")
+    if feedback:
+        user_content = f"{feedback}\n\nOriginal question: {question}"
     else:
-        return "generate_query"
+        user_content = question
+    
+    # Generate SQL
+    response = model.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_content)])
 
+    # Extract raw SQL from the response
+    query = extract_sql(response.content)
+   
+    return {"generated_query": query}
+  
 
-def plan_query_generation(state: AgentState) -> dict: 
-    schema = state["retrieved_schema"]
-    messages = [
-        SystemMessage(content=PLAN_SQL_PROMPT.format(schema=schema)),
-        *state["messages"],
-    ]
-    response= model.invoke(messages)
-    return {"query_plan": response.content}
-
-
-def generate_query(state: AgentState) -> dict:
+def sql_validator(state: AgentState) -> dict:
     """
-    LLM-driven node — generates a SQL query
-
+    Deterministic node — validates and executes the generated SQL.
+    Three checks: guardrail → EXPLAIN → execute.
+    On failure: writes structured feedback for sql_coder.
+    On success: injects the query result into messages for format_answer.
     """
-    schema = state["retrieved_schema"]
-    llm_with_tools = model.bind_tools([run_query_tool],tool_choice="any")
-    
-    system_prompt = GENERATE_QUERY_PROMPT.format(schema=schema)
+    # Fetch generated query from state
+    query = state["generated_query"]
 
-    # If plan
-    if state.get("query_plan"):
-        system_prompt += f"\n\n## Execution Plan\nFollow this plan:\n{state['query_plan']}"
-    
-    # No Plan
-    messages = [SystemMessage(content=system_prompt)] + state["messages"]
-    response = llm_with_tools.invoke(messages)
-    return {"messages": [response]}
-
-
-def safe_run_query(state: AgentState) -> dict:
-    """Wrapper Node for run_query_node ToolNode.
-    
-    Guardrailed query execution: safety check → syntexe check → execute."""
-    
-    last_ai = state["messages"][-1]
-    tool_call = last_ai.tool_calls[0]
-    query = tool_call["args"]["query"]
-
-    # 1. Guardrail
+    # 1. Guardrail — only SELECT allowed
     if not is_safe_query(query):
-        raise ValueError(f"Unsafe query blocked: {query}")
+        return {
+            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
+                query=query,
+                error="BLOCKED: Only SELECT queries are allowed. DML/DDL detected.",
+                extra_context="",
+            )
+        }
 
-    # 2. EXPLAIN — validate structure without executing
-    from config import db
-    try:
-        db.run(f"EXPLAIN {query}")
-    except Exception as e:
-        # Return error as ToolMessage so retry loop can handle it
-        return {"messages": [ToolMessage(
-            content=f"Query validation failed (EXPLAIN): {e}",
-            name=run_query_tool.name,
-            tool_call_id=tool_call["id"],
-            status="error",
-        )]}
+    # 2. Execute sql query via tool
+    tool_call = {
+        "name": run_query_tool.name,
+        "args": {"query": query},
+        "id": "sql_validator_call",
+        "type": "tool_call",
+    }
 
-    # 3. Execute
-    return run_query_node.invoke(state)
+    ai_msg = AIMessage(content="", tool_calls=[tool_call])
+    tool_msg = run_query_tool.invoke(tool_call)
 
-def route_after_run_query(state: AgentState) -> Literal["generate_query", "format_answer"]:
-    """Route to generate_query on SQL error, format_answer on success."""
+    # on failure return feedback to sql coder 
+    if tool_msg.status == "error":
+        return {
+            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
+                query=query,
+                error=f"Execution error: {tool_msg.content}",
+                extra_context="",
+            )
+        }
     
-    last_message = state["messages"][-1]
+    # on success, clear feedback and inject result into messages (AI msg + tool msg)
+    return {
+        "messages": [ai_msg, tool_msg],
+        "validation_feedback": "",  # clear feedback on success
+    }
+
+
+def route_after_validation(state: AgentState) -> Literal["sql_coder", "format_answer"]:
+    """Route back to coder on failure, to format_answer on success."""
+    feedback = state.get("validation_feedback", "")
     
-    if isinstance(last_message, ToolMessage) and last_message.status == "error":
-        if state["remaining_steps"] <= 3: # avoid infinite loop
+    if feedback:
+        if state["remaining_steps"] <= 3:
             logger.warning("Not enough steps remaining, aborting.")
             return "format_answer"
-        return "generate_query"
+        return "sql_coder"
     
     return "format_answer"
 
 def format_answer(state: AgentState) -> dict:
     """
     LLM-driven node — single exit point for all user-facing responses.
-
     Handles success (question + SQL + results), errors (failed query),
     and out-of-scope (no query executed). Scoped to the current turn
     via get_last_cycle to avoid leaking previous turns' data.

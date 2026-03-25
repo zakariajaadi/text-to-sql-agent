@@ -1,7 +1,11 @@
 from config import cfg
+from tools import get_schema_tool
 
 
 # ── Node: retrieve_schema (LLM re-ranking step) ──────────────────────────────
+# Used by: rerank_tables node
+# Input context: SystemMessage + full state messages
+# Expected output: QuestionScope(is_in_scope=..., reason=...)
 
 RERANK_TABLES_PROMPT = f"""
 You are an expert database architect working with a {cfg.database.dialect} database.
@@ -20,92 +24,84 @@ needed to answer the question. Think about the full chain of JOINs required.
 {{schemas}}
 """
 
-# ── Node: assess_question_complexity ──────────────────────────────────────────
-# Used by: assess_question_complexity node (LLM with structured output → QuestionComplexity)
+# ── Node: check_scope ──────────────────────────────────────────
+# Used by: check_scope node (LLM with structured output → QuestionScope)
 # Input context: SystemMessage + full state messages
-# Expected output: QuestionComplexity(question_complexity=..., reason=...)
+# Expected output: QuestionScope(is_in_scope=..., reason=...)
 
-CLASSIFY_QUESTION_PROMPT = f"""
-You are a Lead Data Architect routing SQL requests.
-You have access to the full database schema retrieved in this conversation.
-
-## Database Schema:
-{{schema}}
-
+SCOPE_CHECK_PROMPT = f"""
+You are a database expert working with a {cfg.database.dialect} database.
 
 ## TASK
-Your job is to classify the user's question into one of three categories:
-- 'simple'       : requires 1-2 tables, basic filtering or aggregation.
-- 'complex'      : requires 3+ tables, subqueries, window functions, or advanced aggregations.
-- 'out_of_scope' : cannot be answered from the available schema.
-
-
-## STRICT RULES : 
-1. Base your decision on the schema already present in the conversation history.
-2. Do not guess or assume tables that are not in the schema.
-3. If you are unsure between simple and complex, choose **complex** (safer to over-plan than under-plan).
-4. If the schema contains no table or column even loosely related to the question, choose **out_of_scope**.
-"""
-    
-
-# ── Node: plan_query_generation ───────────────────────────────────────────────
-# Used by: plan_query_generation node (plain LLM invoke, no tools)
-# Input context: SystemMessage + full state messages
-# Expected output: AIMessage with a text plan (no SQL)
-
-
-PLAN_SQL_PROMPT = f"""
-You are an expert SQL Architect working with a {cfg.database.dialect} database.
-
-## Database Schema:
-{{schema}}
-
-## TASK
-Your task is to produce a concise step-by-step execution plan before writing a complex query.
-
-## PLAN STRUCTURE
-1. **Tables**: List every table involved and its role in the query.
-2. **Joins**: Specify each join with the exact foreign-key columns (e.g., Invoice.CustomerId = Customer.CustomerId).
-3. **Filters**: Describe WHERE conditions needed to satisfy the question's constraints.
-4. **Aggregations**: Note any GROUP BY, HAVING, window functions, or subqueries.
-5. **Edge Cases**: Flag potential pitfalls (NULLs, duplicates, empty results).
- 
-## STRICT CONSTRAINTS
-- Reference ONLY tables and columns present in the schema from this conversation.
-- Do NOT write SQL — only the plan. The SQL will be generated in the next step.
-"""
-
-
-# ── Node: generate_query ──────────────────────────────────────────────────────
-# Used by: generate_query node (LLM bound to run_query tool, tool_choice="any")
-# Input context: SystemMessage + full state messages (includes schema, tables, plan if complex)
-# Expected output: AIMessage with a single tool_call to run_query
-
-
-GENERATE_QUERY_PROMPT = f"""
-You are an expert SQL data analyst interacting with a {cfg.database.dialect} database.
-
-## Database Schema:
-{{schema}}
-
-## TASK
-Your task is to translate the user's natural language question into a syntactically correct SQL query.
+Determine if the user's question can be answered using the schema above.
 
 ## STRICT RULES
+1. Return is_in_scope=True if any combination of tables could answer the question.
+2. Return is_in_scope=False if no table or column relates to the question.
 
-1. ONLY use tables and columns present in the database schema. Never hallucinate entity names.
-2. Never use SELECT *. Only select columns necessary to answer the question.
-3. Always limit results to {cfg.database.limit} rows maximum.
-4. Never use DML or DDL statements (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
-5. For case-insensitive text matching, use LOWER(column) LIKE LOWER('%value%').
-6. When the question involves ranking or ordering, always include an explicit ORDER BY clause.
-7. Prefer LEFT JOIN over INNER JOIN when the question implies "all items, even those without matches.
+## DATABASE SCHEMA :
+{{schema}}
+"""
+    
+# ── Node: sql_coder ───────────────────────────────────────────────────────────
+# Used by: sql_coder node (LLM, no tools)
+# Input: schema, question, validation_feedback (if retry)
+# Output: SQL query as text
+
+SQL_CODER_PROMPT = f"""
+You are an expert SQL query writer working with a {cfg.database.dialect} database.
+
+## TASK
+Write a SQL query that answers the user's question. 
+You ONLY write SQL — you never execute it.
+
+## STRATEGY
+1. Analyze the question and identify the required tables and joins.
+2. For simple questions, write the query directly.
+3. For complex questions, plan the steps then write the final query.
+4. Output ONLY the raw SQL query, nothing else.
+
+## SQL RULES
+1. ONLY use tables and columns from the schema below.
+2. Never use SELECT *. Only select necessary columns.
+3. Always LIMIT results to {cfg.database.limit} rows maximum.
+4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
+5. For text matching, use LOWER(column) LIKE LOWER('%value%').
+6. When the question involves ranking, ordering, or "top N", always include ORDER BY.
+7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE.
+8. Always qualify column names with table aliases to avoid ambiguity.
+9. Use LEFT JOIN when the question implies "all items, even those without matches."
+10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
+
 
 ## ERROR RECOVERY
+If you receive feedback from a failed previous attempt:
+1. Read the error message carefully.
+2. Identify the root cause (wrong column, missing table, syntax error).
+3. Fix ONLY the issue — do not rewrite the entire query unnecessarily.
+4. Never repeat the same mistake.
 
-If a previous query attempt failed, the error message is in the conversation.
-Analyze the root cause, fix it, and regenerate a corrected query. 
-Do not repeat the same mistake.
+## DATABASE SCHEMA
+{{schema}}
+"""
+
+# ── Node: sql_validator ───────────────────────────────────────────────────────
+# Used by: sql_validator node (deterministic + optional schema retrieval)
+# Input: generated_query from sql_coder
+# Output: query result on success, validation_feedback on failure
+
+SQL_VALIDATOR_FEEDBACK = """
+The query you generated failed validation.
+
+## FAILED QUERY
+{query}
+
+## ERROR
+{error}
+
+## INSTRUCTIONS
+Analyze the error and rewrite the query. Do NOT repeat the same mistake.
+{extra_context}
 """
 
 # ── Node: format_answer ──────────────────────────────────────────────────────

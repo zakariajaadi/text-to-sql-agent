@@ -1,18 +1,11 @@
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
-# Structured output for node
-class QuestionComplexity(BaseModel):
-    question_complexity: Literal["simple", "complex", "out_of_scope"] = Field(
-        description=(
-            "'out_of_scope' if the question cannot be answered from the schema. "
-            "'simple' if it requires 1-2 tables and basic filtering. "
-            "'complex' if it requires 3+ tables, advanced aggregations, or subqueries."
-        )
+class QuestionScope(BaseModel):
+    is_in_scope: bool = Field(
+        description="True if the question can be answered from the database schema, False otherwise."
     )
-    reason: str = Field(description="Explain why this category was chosen.")
+    reason: str = Field(description="Brief explanation.")
 
 # Structured output for node
 class SelectedTables(BaseModel):

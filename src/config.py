@@ -11,6 +11,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv()
 
 
+# =============================================================================
+# Config Data Classes
+# =============================================================================
+
 @dataclass
 class LLMConfig:
     model: str
@@ -50,6 +54,9 @@ class RetrievalConfig:
         self.persist_directory = str(BASE_DIR / self.persist_directory)
         self.schemas_directory = str(BASE_DIR / self.schemas_directory)
 
+    def build(self):
+        return init_embeddings(self.embedding_model)
+
 @dataclass
 class LangSmithConfig:
     tracing: bool
@@ -63,6 +70,9 @@ class AppConfig:
     langsmith: LangSmithConfig
 
 
+# =============================================================================
+# Load config logic using OmegaConf
+# =============================================================================
 
 def load_config() -> AppConfig:
     config_path = BASE_DIR / "config" / "config.yaml"
@@ -76,14 +86,18 @@ def load_config() -> AppConfig:
     )
 
 
+# =============================================================================
+# Init config and different singletons
+# =============================================================================
+
+# Config object
 cfg = load_config()
 
-model = init_chat_model(
-    cfg.llm.model,
-    temperature=cfg.llm.temperature
-)
+# LLM 
+model = cfg.llm.build()
 
-embedding_model = init_embeddings(cfg.retrieval.embedding_model)
+# Embedding model
+embedding_model = cfg.retrieval.build()
 
-
-db = SQLDatabase.from_uri(cfg.database.uri)
+# Database
+db = cfg.database.build()

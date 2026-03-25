@@ -14,7 +14,7 @@ from langchain_community.utilities import SQLDatabase
 from langchain_core.documents import Document
 from loguru import logger
 
-from config import cfg, embeddings
+from config import cfg, embedding_model
 from schema_retrieval.vector_store import VectorStoreManager
 
 
@@ -31,7 +31,7 @@ class SchemaIndexer:
         self.db = SQLDatabase.from_uri(cfg.database.uri)
         self.schemas_dir = Path(cfg.schema_retrieval.schemas_directory)
         self.vsm = VectorStoreManager(
-            embedding_model=embeddings,
+            embedding_model=embedding_model,
             persist_directory=cfg.schema_retrieval.persist_directory,
         )
 
