@@ -3,10 +3,20 @@ llm:
   model: "google_genai:gemini-2.5-flash"
   temperature: 0
 
-database:
-  name : "Chinook"
-  dialect: "sqlite"
-  limit: 5
+llm_fast:
+  model: "google_genai:gemini-3.1-flash-lite-preview"
+  temperature: 0
+
+databases:
+  - name: "Chinook"
+    dialect: "sqlite"
+    description: "music store, artists, albums, tracks, invoices, customers, playlists"
+    limit: 5
+
+  - name: "Northwind"
+    dialect: "sqlite"
+    description: "e-commerce, orders, products, suppliers, employees, shippers, categories"
+    limit: 5
 
 retrieval:
   embedding_model: "google_genai:gemini-embedding-001"

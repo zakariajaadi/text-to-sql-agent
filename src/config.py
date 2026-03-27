@@ -31,6 +31,7 @@ class LLMConfig:
 class DatabaseConfig:
     name: str
     dialect:str
+    description: str
     limit: int = 5
     uri: str = "" 
 
@@ -65,10 +66,17 @@ class LangSmithConfig:
 @dataclass
 class AppConfig:
     llm: LLMConfig
-    database: DatabaseConfig
+    llm_fast: LLMConfig
+    databases: list[DatabaseConfig]
     retrieval: RetrievalConfig
     langsmith: LangSmithConfig
-
+    
+    def get_db(self, name: str) -> DatabaseConfig:
+        """Quick access to DatabaseConfig by name."""
+        for db in self.databases:
+            if db.name == name:
+                return db
+        raise ValueError(f"Database '{name}' not found in config.")
 
 # =============================================================================
 # Load config logic using OmegaConf
@@ -80,7 +88,8 @@ def load_config() -> AppConfig:
 
     return AppConfig(
         llm=LLMConfig(**cfg.llm),
-        database=DatabaseConfig(**cfg.database),
+        llm_fast=LLMConfig(**cfg.llm_fast),
+        databases=[DatabaseConfig(**db) for db in cfg.databases], 
         retrieval=RetrievalConfig(**cfg.retrieval),
         langsmith=LangSmithConfig(**cfg.langsmith),
     )
@@ -96,8 +105,29 @@ cfg = load_config()
 # LLM 
 model = cfg.llm.build()
 
+# Fast LLM — for low-complexity nodes (rerank_tables, check_scope)
+fast_model = cfg.llm_fast.build()
+
 # Embedding model
 embedding_model = cfg.retrieval.build()
 
-# Database
-db = cfg.database.build()
+# Registry for SQLDatabase instances 
+# Used by tools.py to construct tools by db
+db_registry: dict[str, SQLDatabase] = {
+    db_cfg.name: db_cfg.build()
+    for db_cfg in cfg.databases
+}
+
+# Derived from databases config — computed once at startup
+
+# {db_name: [keywords]} for deterministic keyword routing
+domain_rules: dict[str, list[str]] = {
+    db.name: db.description.lower().split(", ")
+    for db in cfg.databases
+}
+
+# {db_name: embedding_vector} for semantic similarity routing
+db_embeddings: dict[str, list[float]] = {
+    db.name: embedding_model.embed_query(db.description)
+    for db in cfg.databases
+}

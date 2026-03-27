@@ -12,7 +12,6 @@ wheels/
 
 .env
 data/
-assets/
 .chainlit/
 .files/
 

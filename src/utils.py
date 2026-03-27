@@ -1,38 +1,45 @@
+# src/utils.py
+
 from pathlib import Path
 
 import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.runnables.graph_mermaid import draw_mermaid_png
+from loguru import logger
 
-from tools import get_schema_tool, run_query_tool
+from config import embedding_model
+from tools import get_run_query_tool
 
 # =============================================================================
 # Graph
 # Used by: graph.py
 # =============================================================================
 
-def save_graph_png(agent) -> Path:
+
+def save_graph_png(agent, orientation: str = "LR") -> Path:
+
     output_path = Path(__file__).resolve().parents[1] / "assets" / "graph.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
+    mermaid_str = agent.get_graph().draw_mermaid().replace("graph TD", f"graph {orientation}")
+
     with open(output_path, "wb") as f:
-        f.write(agent.get_graph().draw_mermaid_png())
-    
+        f.write(draw_mermaid_png(mermaid_syntax=mermaid_str))
+
     print(f"Graph PNG saved at: {output_path}")
     return output_path
-
 
 # =============================================================================
 # LangChain
 # Used by: nodes.py (check_query, generate_query)
 # =============================================================================
 
-
 def get_last_cycle(messages: list) -> list:
     """Return technical messages from the last cycle (after the last user question)."""
     for i in range(len(messages) - 1, -1, -1):
         if isinstance(messages[i], HumanMessage):
-            return messages[i + 1:]  # everything after the last user question
+            return messages[i + 1:]
     return []
 
 def extract_sql(text: str) -> str:
@@ -42,14 +49,15 @@ def extract_sql(text: str) -> str:
         query = query.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     return query
 
-def extract_schema_message(messages: list) -> ToolMessage | None:
+def extract_schema_message(messages: list, db_name: str) -> ToolMessage | None:
     """
-    Scan state messages and return the ToolMessage produced by get_schema.
+    Scan state messages and return the ToolMessage produced by get_schema for a given db.
     Returns the last one found (in case of multi-turn conversations).
     """
+    schema_tool = get_run_query_tool(db_name)
     result = None
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.name == get_schema_tool.name:
+        if isinstance(msg, ToolMessage) and msg.name == schema_tool.name:
             result = msg
     return result
 
@@ -83,6 +91,13 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
 
     output = event["data"].get("output", {})
 
+    # ── route_database: show selected database ──
+    if node_name == "route_database" and "selected_db" in output:
+        selected = output["selected_db"]
+        async with cl.Step(name=f"🗄️ Database: {selected}", type="run") as s:
+            s.output = f"Routing to **{selected}**"
+        return
+
     # ── retrieve_schema: show candidate tables ──
     if node_name == "retrieve_schema" and "candidate_schemas" in output:
         candidates = output["candidate_schemas"]
@@ -91,7 +106,7 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
             s.output = f"Retrieved {len(candidates)} tables: {tables}"
         return
 
-    # ── rerank_tables: show selected tables ──
+    # ── rerank_tables: show selected tables + scope decision ──
     if node_name == "rerank_tables" and "retrieved_schema" in output:
         schema = output["retrieved_schema"]
         table_names = [
@@ -99,17 +114,10 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
             for line in schema.split("\n")
             if line.strip().startswith("CREATE TABLE")
         ]
-        async with cl.Step(name="🎯 Tables selected", type="run") as s:
-            s.output = ", ".join(table_names)
-        return
-
-    # ── check_scope: show scope decision ──
-    if node_name == "check_scope" and "is_in_scope" in output:
-        in_scope = output["is_in_scope"]
+        in_scope = output.get("is_in_scope", True)
         emoji = "🟢" if in_scope else "🔴"
-        label = "in scope" if in_scope else "out of scope"
-        async with cl.Step(name=f"{emoji} Scope: {label}", type="run") as s:
-            s.output = f"Question classified as **{label}**"
+        async with cl.Step(name=f"{emoji} Tables selected", type="run") as s:
+            s.output = ", ".join(table_names)
         return
 
     # ── sql_coder: show generated SQL ──
@@ -145,7 +153,7 @@ async def handle_step(msg, node_name: str = "") -> None:
     """
 
     # ── sql_validator success: show query result ──
-    if isinstance(msg, ToolMessage) and msg.name == run_query_tool.name:
+    if isinstance(msg, ToolMessage):
         async with cl.Step(name="📊 Query results", type="tool") as s:
             s.output = msg.content
 
@@ -160,10 +168,61 @@ async def handle_step(msg, node_name: str = "") -> None:
 
 def get_node_step_title(node_name: str) -> str:
     return {
+        "route_database":   "🗄️ Routing database...",
         "retrieve_schema":  "🔍 Retrieving candidates...",
         "rerank_tables":    "🎯 Selecting tables...",
-        "check_scope":      "🧠 Checking scope...",
         "sql_coder":        "⚙️ Writing SQL...",
         "sql_validator":    "✅ Validating & executing...",
         "format_answer":    "✍️ Formatting answer...",
     }.get(node_name, "")
+
+# =============================================================================
+# Database routing
+# Used by: nodes.py (route_database)
+# =============================================================================
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two embedding vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na  = sum(x ** 2 for x in a) ** 0.5
+    nb  = sum(x ** 2 for x in b) ** 0.5
+    return dot / (na * nb + 1e-9)
+
+
+def select_database(question: str, domain_rules: dict, db_embeddings: dict) -> str:
+    """
+    Select the target database for a given question.
+
+    Two-pass strategy (no LLM involved):
+        Pass 1 — keyword rules (<1ms):
+            Match question tokens against domain_rules keywords.
+            Returns immediately on first match.
+        Pass 2 — embedding similarity (~30ms):
+            Embed the question and compute cosine similarity against
+            pre-computed db_embeddings. Returns the highest-scoring database.
+
+    Args:
+        question:      Raw user question.
+        domain_rules:  {db_name: [keywords]} built from config descriptions.
+        db_embeddings: {db_name: embedding_vector} pre-computed at startup.
+
+    Returns:
+        The name of the selected database.
+    """
+    q = question.lower()
+
+    # Pass 1 — keyword rules
+    for db_name, keywords in domain_rules.items():
+        if any(kw in q for kw in keywords):
+            logger.debug(f"[select_database] Rules match → {db_name}")
+            return db_name
+
+    # Pass 2 — embedding similarity (fallback for ambiguous questions)
+    q_emb  = embedding_model.embed_query(question)
+    scores = {
+        name: _cosine_similarity(q_emb, emb)
+        for name, emb in db_embeddings.items()
+    }
+    best = max(scores, key=scores.get)
+    logger.debug(f"[select_database] Embedding match → {best} (scores={scores})")
+    return best

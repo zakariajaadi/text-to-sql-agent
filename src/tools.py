@@ -1,61 +1,66 @@
 from typing import Dict
-
+from loguru import logger 
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 
-from config import db, model
+from config import cfg, db_registry, model
 
 
 
-def get_tools(llm: BaseChatModel, db: SQLDatabase) -> Dict[str, BaseTool]:
-    """
-    Returns the 3 required tools (2 standard LangChain tools + 1 custom safe query tool)
-    as a flat list ready for a LangChain Agent.
-    """
+# =============================================================================
+# Factory  — constructs the 3 tools per database
+# =============================================================================
+
+def _build_tools(llm: BaseChatModel, db: SQLDatabase) -> dict[str, BaseTool]:
     toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-    toolkit_tools = toolkit.get_tools()
-    
-    # 1. Extract native tools 
-    list_tables_tool = next(t for t in toolkit_tools if t.name == "sql_db_list_tables")
-    get_schema_tool = next(t for t in toolkit_tools if t.name == "sql_db_schema")
-    run_query_tool = next(t for t in toolkit_tools if t.name == "sql_db_query")
-
-    
-    # 2. Create personalized run query tool
-    
+    tools   = toolkit.get_tools()
 
     return {
-        "list_tables": list_tables_tool,
-        "get_schema":  get_schema_tool,
-        "run_query":   run_query_tool,
+        "list_tables": next(t for t in tools if t.name == "sql_db_list_tables"),
+        "get_schema":  next(t for t in tools if t.name == "sql_db_schema"),
+        "run_query":   next(t for t in tools if t.name == "sql_db_query"),
     }
 
 
 # =============================================================================
-# Tools init 
+# Registry — one entry per db, created on startup
 # =============================================================================
 
-_tools_dict = get_tools(llm=model,db=db)
+_tools_registry: dict[str, dict[str, BaseTool]] = {
+    db_name: _build_tools(llm=model, db=db_instance)
+    for db_name, db_instance in db_registry.items()
+}
 
-list_tables_tool = _tools_dict["list_tables"]
-get_schema_tool  = _tools_dict["get_schema"]
-run_query_tool   = _tools_dict["run_query"]
+logger.info(f"Tools registry initialized for: {list(_tools_registry.keys())}")
 
+
+# =============================================================================
+# Accesseurs publics — utilisés par nodes.py
+# =============================================================================
+
+def get_run_query_tool(db_name: str) -> BaseTool:
+    return _tools_registry[db_name]["run_query"]
+
+def get_schema_tool_for(db_name: str) -> BaseTool:
+    return _tools_registry[db_name]["get_schema"]
+
+def get_list_tables_tool(db_name: str) -> BaseTool:
+    return _tools_registry[db_name]["list_tables"]
+
+
+# =============================================================================
+# Vérification au démarrage
+# =============================================================================
 
 if __name__ == "__main__":
     from pprint import pprint
 
-    print(f"✅ Successfully initialized {len(_tools_dict)} tools.")
-
-    for key, tool_obj in _tools_dict.items():
+    for db_name, tools in _tools_registry.items():
         print(f"\n{'='*40}")
-        print(f"Dict Key: {key}")
-        print(f"Tool Name: {tool_obj.name}")
-        print(f"Description: {tool_obj.description}")
-        try:
-            pprint(tool_obj.args_schema.model_json_schema()["properties"])
-        except Exception:
-            print(f"Args: {tool_obj.args}")
+        print(f"Database: {db_name}")
+        for key, tool in tools.items():
+            print(f"  {key}: {tool.name}")
+

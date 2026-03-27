@@ -3,6 +3,7 @@ from langgraph.managed import RemainingSteps
 
 
 class AgentState(MessagesState):
+     selected_db: str
      is_in_scope: bool                  
      candidate_schemas: dict[str, str]  # table_name → DDL (output of node retrieve_schema)
      retrieved_schema: str              # Filtred DDL (output of node rerank_tables)

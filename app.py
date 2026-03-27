@@ -3,7 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-import uuid
+#import uuid
 
 import chainlit as cl
 from langchain_core.messages import HumanMessage
@@ -19,8 +19,7 @@ async def on_chat_start():
     agent = build_graph()
 
     cl.user_session.set("agent", agent)
-    cl.user_session.set("thread_id", str(uuid.uuid4()))
-
+    # cl.user_session.set("thread_id", str(uuid.uuid4()))
     await cl.Message(content="👋 Posez-moi une question sur la base de données.").send()
 
 
@@ -39,10 +38,13 @@ async def on_message(message: cl.Message):
 
     try:
         # thread_id per session — LangGraph accumulates state across turns
-        config = {
-            "recursion_limit": 15,
-            "configurable": {"thread_id": cl.user_session.get("thread_id")}
-        }
+        #config = {
+        #    "recursion_limit": 15,
+        #    "configurable": {"thread_id": cl.user_session.get("thread_id")}
+        #}
+
+        config = {"recursion_limit": 15}
+
 
         async with cl.Step(name="🤖 SQL Agent", type="run") as agent_step:
             async for event in agent.astream_events(
