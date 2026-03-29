@@ -10,12 +10,12 @@ llm_fast:
 databases:
   - name: "Chinook"
     dialect: "sqlite"
-    description: "music store, artists, albums, tracks, invoices, customers, playlists"
+    description: ${db_descriptions.Chinook}
     limit: 5
 
   - name: "Northwind"
     dialect: "sqlite"
-    description: "e-commerce, orders, products, suppliers, employees, shippers, categories"
+    description: ${db_descriptions.Northwind}
     limit: 5
 
 retrieval:
@@ -26,3 +26,9 @@ retrieval:
 
 langsmith:
   tracing: true
+
+cache:
+  enabled: true
+  redis_url: "redis://redis:6379"
+  distance_threshold: 0.10
+  ttl: 86400 # 24h 

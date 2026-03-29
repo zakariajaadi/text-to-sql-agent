@@ -1,10 +1,13 @@
 # src/utils.py
 
+from functools import wraps
 from pathlib import Path
+from typing import Any, Callable, Dict, List
 
 import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.outputs import Generation
 from langchain_core.runnables.graph_mermaid import draw_mermaid_png
 from loguru import logger
 
@@ -194,9 +197,10 @@ def select_database(question: str, domain_rules: dict, db_embeddings: dict) -> s
     Select the target database for a given question.
 
     Two-pass strategy (no LLM involved):
-        Pass 1 — keyword rules (<1ms):
-            Match question tokens against domain_rules keywords.
-            Returns immediately on first match.
+        Pass 1 — keyword scoring (<1ms):
+            Count matching keywords per database.
+            Returns the highest-scoring database if there is a clear winner.
+            Falls through to pass 2 on tie.
         Pass 2 — embedding similarity (~30ms):
             Embed the question and compute cosine similarity against
             pre-computed db_embeddings. Returns the highest-scoring database.
@@ -211,18 +215,162 @@ def select_database(question: str, domain_rules: dict, db_embeddings: dict) -> s
     """
     q = question.lower()
 
-    # Pass 1 — keyword rules
-    for db_name, keywords in domain_rules.items():
-        if any(kw in q for kw in keywords):
-            logger.debug(f"[select_database] Rules match → {db_name}")
-            return db_name
-
-    # Pass 2 — embedding similarity (fallback for ambiguous questions)
-    q_emb  = embedding_model.embed_query(question)
+    # Pass 1 — keyword scoring
     scores = {
+        db_name: sum(1 for kw in keywords if kw in q)
+        for db_name, keywords in domain_rules.items()
+    }
+
+    best_score = max(scores.values())
+
+    if best_score > 0:
+        # Check for tie — if multiple databases have the same score, fall through
+        winners = [db for db, score in scores.items() if score == best_score]
+        if len(winners) == 1:
+            logger.debug(f"[select_database] Keyword match → {winners[0]} (scores={scores})")
+            return winners[0]
+
+    # Pass 2 — embedding similarity (tie or no keyword match)
+    q_emb  = embedding_model.embed_query(question)
+    emb_scores = {
         name: _cosine_similarity(q_emb, emb)
         for name, emb in db_embeddings.items()
     }
-    best = max(scores, key=scores.get)
-    logger.debug(f"[select_database] Embedding match → {best} (scores={scores})")
+    best = max(emb_scores, key=emb_scores.get)
+    logger.debug(f"[select_database] Embedding match → {best} (scores={emb_scores})")
     return best
+
+# =============================================================================
+# FK expnading
+# Used by: nodes.py (rerank_tables)
+# =============================================================================
+
+def expand_fk(selected: list[str], fk_graph: dict[str, list[str]]) -> list[str]:
+    """
+    Add bridge tables that connect pairs of already-selected tables via FK.
+
+    LLMs systematically miss fact and bridge tables not explicitly named in the
+    question. Two-pass expansion recovers them without flooding the context
+    with all FK-linked tables:
+        Pass 1 — direct neighbors of each selected table.
+        Pass 2 — bridge tables shared between two selected tables.
+    """
+    expanded = set(selected)
+
+    # Pass 1 — direct FK neighbors
+    for table in selected:
+        for neighbor in fk_graph.get(table, []):
+            expanded.add(neighbor)
+
+    # Pass 2 — bridge tables (common FK neighbors between pairs)
+    for i, table_a in enumerate(selected):
+        for table_b in selected[i + 1:]:
+            neighbors_a = set(fk_graph.get(table_a, []))
+            neighbors_b = set(fk_graph.get(table_b, []))
+            expanded.update(neighbors_a & neighbors_b)
+
+    return list(expanded)
+
+
+# =============================================================================
+# LangGraph Node Decorator: Semantic Caching Middleware
+# Used by: src/nodes.py (sql_coder, format_answer)
+# =============================================================================
+def extract_text_content(val: Any) -> str:
+    """
+    Recursively extracts plain text from various LangChain/LLM output formats.
+    Handles:
+      - Lists of messages (takes the last one).
+      - LangChain Message objects (AIMessage, ToolMessage).
+      - Gemini-style content blocks (list of dicts with 'text').
+      - Standard dictionaries or raw strings.
+    """
+    if not val:
+        return ""
+
+    # 1. If it's a list (like state['messages']), recurse on the last element
+    if isinstance(val, list):
+        return extract_text_content(val[-1])
+    
+    # 2. Extract content from Message objects (if present)
+    content = getattr(val, "content", val)
+    
+    # 3. Handle Gemini-style content blocks: [{'text': '...'}, {'text': '...'}]
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content 
+            if isinstance(block, dict)
+        ).strip()
+    
+    # 4. Handle dictionary returns (e.g., {'text': '...'})
+    if isinstance(content, dict):
+        return content.get("text", str(content))
+    
+    # 5. Fallback to string representation
+    return str(content)
+
+def cached_node(key_fn: Callable[[Dict], str], 
+                return_key: str, 
+                cache_only_first_attempt: bool = True):
+    """
+    A universal decorator for LangGraph nodes to handle selective semantic caching.
+    Automatically handles conversion between raw strings and LangChain Message objects.
+    
+    Args:
+        key_fn: function(state) -> str, builds the unique cache key.
+        return_key: The state key to read from/write to (e.g., 'generated_query' or 'messages').
+        cache_only_first_attempt: If True, skips caching if 'validation_feedback' is present.
+    """
+    def decorator(fn: Callable):
+        @wraps(fn)
+        def wrapper(state: Dict, *args, **kwargs):
+            # Import inside wrapper to avoid circular imports
+            from config import llm_cache
+
+            # Bypass caching if cache is not initialized or disabled
+            if llm_cache is None:
+                return fn(state, *args, **kwargs)
+
+            # 1. Generate unique key for this specific node execution
+            cache_key = key_fn(state)
+            
+            # 2. Semantic Lookup in Redis (using function name as namespace)
+            cached = llm_cache.lookup(cache_key, llm_string=fn.__name__)
+            
+            if cached and len(cached) > 0:
+                logger.debug(f"[{fn.__name__}] Semantic Cache Hit: {cache_key}")
+                cached_text = cached[0].text
+                
+                # Smart Return: Wrap in AIMessage list if the state expects 'messages'
+                if return_key == "messages":
+                    from langchain_core.messages import AIMessage
+                    return {return_key: [AIMessage(content=cached_text)]}
+                
+                # Otherwise return as raw data (string/query)
+                return {return_key: cached_text}
+
+            # 3. Cache Miss: Execute the actual node function
+            result = fn(state, *args, **kwargs)
+            
+            # 4. Extract Value for Storage using our robust utility
+            val_to_store = extract_text_content(result.get(return_key, ""))
+
+            # 5. Selective Cache Update
+            # We avoid caching "corrected" attempts (retries) to prevent storing 
+            # edge-case fixes as the primary semantic answer for future queries.
+            is_retry = bool(state.get("validation_feedback"))
+            should_cache = not (cache_only_first_attempt and is_retry)
+            
+            if should_cache and val_to_store:
+                from langchain_core.outputs import Generation
+                llm_cache.update(
+                    cache_key, 
+                    llm_string=fn.__name__, 
+                    return_val=[Generation(text=val_to_store)]
+                )
+                logger.debug(f"[{fn.__name__}] Cache Updated: {cache_key}")
+
+            return result
+        return wrapper
+    return decorator
+

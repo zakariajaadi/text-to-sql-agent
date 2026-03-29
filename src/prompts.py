@@ -168,3 +168,62 @@ Your job is to transform these results into a natural, conversational response.
     - Never use generic terms as "units", "items", "quantities", or "values" in the final response.
 - Keep it concise.
 """
+
+# ── Offline: schema_indexer._enrich ──────────────────────────────────────────
+# Used by: SchemaIndexer.extract() — runs once at indexing time, not at query time
+# Input context: DDL + sample rows for a single table, full table list for the database
+# Expected output: original DDL prepended with a business description comment block
+
+SCHEMA_DESCRIPTION_PROMPT = """
+You are a database documentation expert.
+
+Given the DDL and sample rows of a database table, write a concise business description.
+
+## TASK 
+Add a comment block at the TOP of the DDL, following this exact structure:
+-- Description: <what this table represents in business terms>
+-- Business role: <what business process it supports>
+-- Common joins: <tables from the database context it's typically joined with and why>
+-- Key columns: <most important columns and what they represent>
+
+## RULES
+- Be concise — max 2 lines per field
+- Infer from column names and sample data, do not invent
+- Only reference tables that exist in the list above for Common joins
+- Output ONLY the comment block + the original DDL, nothing else
+
+## DATABASE CONTEXT
+Database: {db_name}
+All tables in this database: {all_tables}
+
+## DDL
+{ddl}
+"""
+
+# ── Offline: schema_indexer.describe ─────────────────────────────────────────
+# Used by: SchemaIndexer.describe() — runs once at indexing time, not at query time
+# Input context: all enriched DDL files for a single database
+# Expected output: a comma-separated description of the database for routing
+
+DB_DESCRIPTION_PROMPT = """
+You are a database documentation expert.
+
+Given the enriched schemas of all tables in a database, write a concise description
+of the database as a whole.
+
+## OUTPUT FORMAT
+A single comma-separated list of keywords describing:
+- The business domain (e.g. music store, e-commerce)
+- The main entities (e.g. artists, albums, customers)
+- The main processes (e.g. invoicing, order management)
+
+## RULES
+- Max 15 keywords
+- No full sentences — keywords only
+- Output ONLY the comma-separated list, nothing else
+
+## DATABASE: {db_name}
+
+## SCHEMAS
+{schemas}
+"""

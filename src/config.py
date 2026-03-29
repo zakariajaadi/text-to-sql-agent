@@ -1,3 +1,6 @@
+import os
+import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -5,10 +8,37 @@ from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_community.utilities import SQLDatabase
+from langchain_redis import RedisSemanticCache
+from loguru import logger
 from omegaconf import OmegaConf
+from sqlalchemy import inspect as sa_inspect
+
+from schema_retrieval.vector_store import VectorStoreManager
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-load_dotenv()
+
+if os.getenv("ENV", "dev") == "dev":
+    load_dotenv()
+
+
+# Set loggings level
+logging.getLogger("chainlit").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("google_genai").setLevel(logging.WARNING)
+logging.getLogger("redisvl").setLevel(logging.WARNING)
+
+
+# Configure loguro logging
+logger.remove() 
+logger.add(
+    sys.stderr, 
+    colorize=True,  # Force colors for docker
+    level="DEBUG",    
+    enqueue=True,
+    filter=lambda record: "Translation file" not in record["message"],
+    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"   
+)
 
 
 # =============================================================================
@@ -62,6 +92,12 @@ class RetrievalConfig:
 class LangSmithConfig:
     tracing: bool
 
+@dataclass
+class CacheConfig:
+    enabled: bool
+    redis_url: str
+    distance_threshold: float
+    ttl: int
 
 @dataclass
 class AppConfig:
@@ -70,6 +106,8 @@ class AppConfig:
     databases: list[DatabaseConfig]
     retrieval: RetrievalConfig
     langsmith: LangSmithConfig
+    cache: CacheConfig
+
     
     def get_db(self, name: str) -> DatabaseConfig:
         """Quick access to DatabaseConfig by name."""
@@ -84,7 +122,15 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     config_path = BASE_DIR / "config" / "config.yaml"
+    desc_path   = BASE_DIR / "config" / "db_descriptions.yaml"
+    
+    # Load config files
     cfg = OmegaConf.load(config_path)
+    desc = OmegaConf.load(desc_path) if desc_path.exists() else OmegaConf.create()
+
+    # Inject descriptions into config before resolving interpolations
+    cfg  = OmegaConf.merge(cfg, {"db_descriptions": desc})
+    OmegaConf.resolve(cfg)
 
     return AppConfig(
         llm=LLMConfig(**cfg.llm),
@@ -92,42 +138,125 @@ def load_config() -> AppConfig:
         databases=[DatabaseConfig(**db) for db in cfg.databases], 
         retrieval=RetrievalConfig(**cfg.retrieval),
         langsmith=LangSmithConfig(**cfg.langsmith),
+        cache=CacheConfig(**cfg.cache),
+
     )
 
 
+def build_schema_store() -> dict[str, dict[str, str]]:
+    """Load all enriched DDLs from Chroma into memory at startup."""
+    vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
+    store = vsm.get_store()
+
+    result = {}
+    for db_cfg in cfg.databases:
+        docs = store.get(where={"db_name": {"$eq": db_cfg.name}})
+        result[db_cfg.name] = {
+            meta["table_name"]: doc
+            for meta, doc in zip(docs["metadatas"], docs["documents"])
+        }
+    return result
+
+
+def build_fk_graph(db: SQLDatabase) -> dict[str, list[str]]:
+    """
+    Build a bidirectional FK graph using SQLAlchemy reflection.
+    If A references B via FK, both graph[A] contains B and graph[B] contains A.
+    Bidirectionality ensures fact tables are reachable from dimension tables and vice versa.
+    """
+    fk_graph: dict[str, set[str]] = {}
+    inspector = sa_inspect(db._engine)
+    tables    = db.get_usable_table_names()
+
+    for table in tables:
+        if table not in fk_graph:
+            fk_graph[table] = set()
+
+        for fk in inspector.get_foreign_keys(table):
+            target = fk["referred_table"]
+            if target in tables:
+                fk_graph[table].add(target)
+                if target not in fk_graph:
+                    fk_graph[target] = set()
+                fk_graph[target].add(table)
+
+    return {k: list(v) for k, v in fk_graph.items()}
+
 # =============================================================================
-# Init config and different singletons
+# Init config and singletons
 # =============================================================================
 
-# Config object
-cfg = load_config()
-
-# LLM 
-model = cfg.llm.build()
-
-# Fast LLM — for low-complexity nodes (rerank_tables, check_scope)
-fast_model = cfg.llm_fast.build()
-
-# Embedding model
+cfg             = load_config()
+model           = cfg.llm.build()
+fast_model      = cfg.llm_fast.build()
 embedding_model = cfg.retrieval.build()
 
-# Registry for SQLDatabase instances 
-# Used by tools.py to construct tools by db
+logger.debug(f"Initialized LLM: {cfg.llm.model} | Fast LLM: {cfg.llm_fast.model}.")
+logger.debug(f"Initialized Embedding Model: {cfg.retrieval.embedding_model}")
+
+# Semantic cache — caches LLM responses for semantically similar questions
+llm_cache: RedisSemanticCache | None = (
+    RedisSemanticCache(
+        embeddings=embedding_model,
+        redis_url=cfg.cache.redis_url,
+        distance_threshold=cfg.cache.distance_threshold,
+        ttl=cfg.cache.ttl,
+    )
+    if cfg.cache.enabled
+    else None
+)
+
+logger.debug(f"Semantic cache {'enabled — Redis: ' + cfg.cache.redis_url if llm_cache else 'disabled'}")
+  
+# Database registry  
 db_registry: dict[str, SQLDatabase] = {
     db_cfg.name: db_cfg.build()
     for db_cfg in cfg.databases
 }
 
-# Derived from databases config — computed once at startup
+logger.debug(f"Initialized databases: {list(db_registry.keys())}.")
 
-# {db_name: [keywords]} for deterministic keyword routing
+# =============================================================================
+# Derived from config — computed once at startup
+# =============================================================================
+
+# {db_name: [keywords]} — pass 1 of deterministic database routing
 domain_rules: dict[str, list[str]] = {
     db.name: db.description.lower().split(", ")
     for db in cfg.databases
 }
 
-# {db_name: embedding_vector} for semantic similarity routing
+# {db_name: embedding_vector} — pass 2 of database routing (semantic similarity fallback)
 db_embeddings: dict[str, list[float]] = {
     db.name: embedding_model.embed_query(db.description)
     for db in cfg.databases
 }
+
+# Bidirectional FK graph — used by expand_fk in rerank_tables
+fk_graphs: dict[str, dict[str, list[str]]] = {
+    db_cfg.name: build_fk_graph(db_registry[db_cfg.name])
+    for db_cfg in cfg.databases
+}
+
+# Enriched DDLs loaded once at startup — avoids disk I/O at query time
+schema_store = build_schema_store()
+
+
+
+if __name__ == "__main__":
+    #from loguru import logger
+    #logger.debug(f"FK graph Orders: {fk_graphs["Northwind"].get('Orders', [])}")
+    #logger.debug(f"FK graph Customers: {fk_graphs["Northwind"].get('Customers', [])}")
+
+
+    vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
+    store = vsm.get_store()
+
+    result = store.get(where={
+    "$and": [
+        {"table_name": {"$eq": "Orders"}},
+        {"db_name":    {"$eq": "Northwind"}},
+    ]
+    })
+    print(result["documents"][0])
+

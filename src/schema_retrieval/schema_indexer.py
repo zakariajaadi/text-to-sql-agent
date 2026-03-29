@@ -1,26 +1,19 @@
 # src/schema_retrieval/schema_indexer.py
 
 """
-Offline pipeline for schema indexing across multiple databases.
-
-All schemas are stored in a single shared Chroma vector store.
-Each document carries a 'db_name' metadata field that enables
-per-database filtering at retrieval time.
-
 Two-step process:
-    1. extract — DB → DDL files under data/schemas/<db_name>/
-    2. index   — DDL files → Chroma (shared store, filtered by db_name)
+    1. index    — DB → enriched DDL via LLM → Chroma 
+    2. describe — Chroma schemas → database-level description → db_descriptions.yaml
 
 CLI usage:
-    # Index all databases defined in config.yaml
+    # Full pipeline (index + describe) for all databases
     python -m schema_retrieval.schema_indexer
 
-    # Index a specific database only
+    # Full pipeline for a specific database only
     python -m schema_retrieval.schema_indexer --db Chinook
 
-    # Run only the extract or index step
-    python -m schema_retrieval.schema_indexer extract --db Northwind
-    python -m schema_retrieval.schema_indexer index  --db Northwind
+    # Run describe step only
+    python -m schema_retrieval.schema_indexer describe --db Northwind
 """
 
 import sys
@@ -28,9 +21,13 @@ from pathlib import Path
 
 from langchain_community.utilities import SQLDatabase
 from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
+from omegaconf import OmegaConf
 
-from config import cfg, embedding_model
+from config import BASE_DIR, cfg, embedding_model
+from prompts import DB_DESCRIPTION_PROMPT, SCHEMA_DESCRIPTION_PROMPT
 from schema_retrieval.vector_store import VectorStoreManager
 
 
@@ -68,61 +65,76 @@ class SchemaIndexer:
             persist_directory=cfg.retrieval.persist_directory,
         )
 
-    def extract(self):
+    def extract(self) -> list[Document]:
         """
-        Extract DDL and sample rows for each table into individual .sql files.
-
-        Files are saved under data/schemas/<db_name>/<table_name>.sql.
-        The two-step design (extract then index) allows manual inspection
-        and enrichment of schema files before embedding — useful for adding
-        business descriptions or documenting common join patterns.
+        Extract and enrich DDL for each table.
+        Returns documents ready for indexing — no disk write.
         """
-        self.schemas_dir.mkdir(parents=True, exist_ok=True)
+        tables         = self.db.get_usable_table_names()
+        all_tables_str = ", ".join(tables)
+        documents      = []
 
-        tables = self.db.get_usable_table_names()
         for table in tables:
-            # get_table_info returns DDL + 3 sample rows by default
             ddl      = self.db.get_table_info(table_names=[table]).strip()
-            filepath = self.schemas_dir / f"{table}.sql"
-            filepath.write_text(ddl, encoding="utf-8")
-            logger.info(f"[{self.db_name}] Extracted: {filepath.name}")
+            enriched = self._enrich_chain(ddl, all_tables_str)
+            documents.append(Document(
+                page_content=enriched,
+                metadata={"table_name": table, "db_name": self.db_name},
+            ))
+            logger.info(f"[{self.db_name}] Extracted: {table}")
 
-        logger.info(f"[{self.db_name}] {len(tables)} schemas saved to {self.schemas_dir}")
+        return documents
 
-    def index(self):
-        """
-        Read extracted .sql files and embed them into the shared Chroma store.
 
-        Each document carries two metadata fields:
-            - table_name: used downstream by rerank_tables to identify tables.
-            - db_name:    used by the retriever to filter by database.
-
-        Raises a warning and exits early if no .sql files are found —
-        run extract() first.
-        """
-        files = sorted(self.schemas_dir.glob("*.sql"))
-        if not files:
-            logger.warning(f"[{self.db_name}] No .sql files found. Run 'extract' first.")
-            return
-
-        documents = [
-            Document(
-                page_content=f.read_text(encoding="utf-8"),
-                metadata={
-                    "table_name": f.stem,
-                    "db_name":    self.db_name,
-                },
-            )
-            for f in files
-        ]
-
+    def index(self, documents: list[Document]):
+        """Embed documents into the shared Chroma store."""
         self.vsm.get_store().add_documents(documents)
         logger.info(f"[{self.db_name}] Indexed {len(documents)} schemas to Chroma.")
 
+
+    def describe(self):
+        """Generate a database-level description from Chroma schemas."""
+        from config import fast_model
+
+        # Load schemas from Chroma instead of disk
+        store = self.vsm.get_store()
+        docs  = store.get(where={"db_name": {"$eq": self.db_name}})
+        all_schemas = "\n\n".join(docs["documents"])
+
+        prompt      = ChatPromptTemplate.from_messages([("human", DB_DESCRIPTION_PROMPT)])
+        chain       = prompt | fast_model | StrOutputParser()
+        description = chain.invoke({"db_name": self.db_name, "schemas": all_schemas})
+
+        desc_path        = BASE_DIR / "config" / "db_descriptions.yaml"
+        existing         = OmegaConf.load(desc_path) if desc_path.exists() else OmegaConf.create()
+        existing[self.db_name] = description.strip()
+        OmegaConf.save(existing, desc_path)
+
+        logger.info(f"[{self.db_name}] Database description written to {desc_path.name}")
+
+
     def run(self):
-        """Run the full pipeline: extract then index."""
-        self.extract()
-        self.index()
+        """Run the full pipeline: extract → index → describe."""
+        documents = self.extract()
+        self.index(documents)
+        self.describe()
+
+    # helpers 
+    def _enrich_chain(self, ddl: str, all_tables: str) -> str:
+        from config import fast_model
+         
+        # Build chain
+        prompt = ChatPromptTemplate.from_messages([
+            ("human", SCHEMA_DESCRIPTION_PROMPT),
+        ])  
+        chain = prompt | fast_model | StrOutputParser()
+        
+        # return enrichement 
+        return chain.invoke({
+            "db_name":    self.db_name,
+            "all_tables": all_tables,
+            "ddl":        ddl,
+        })
 
 
 # =============================================================================
@@ -134,10 +146,9 @@ def main():
     CLI entry point supporting optional --db flag and command selection.
 
     Examples:
-        python -m schema_retrieval.schema_indexer              # all dbs, full run
-        python -m schema_retrieval.schema_indexer --db Chinook # one db, full run
-        python -m schema_retrieval.schema_indexer extract      # all dbs, extract only
-        python -m schema_retrieval.schema_indexer index --db Northwind
+        python -m schema_retrieval.schema_indexer              # all dbs, full pipeline
+        python -m schema_retrieval.schema_indexer --db Chinook # one db, full pipeline
+        python -m schema_retrieval.schema_indexer describe --db Northwind
     """
     args    = sys.argv[1:]
     command = "all"
@@ -159,10 +170,8 @@ def main():
 
     for name in targets:
         indexer = SchemaIndexer(name)
-        if command == "extract":
-            indexer.extract()
-        elif command == "index":
-            indexer.index()
+        if command == "describe":
+            indexer.describe()
         else:
             indexer.run()
 

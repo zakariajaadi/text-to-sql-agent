@@ -1,10 +1,20 @@
 # src/nodes.py
 
+from pathlib import Path
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
+from config import (
+    cfg,
+    db_embeddings,
+    domain_rules,
+    fast_model,
+    fk_graphs,
+    model,
+    schema_store,
+)
 from guardrails import is_safe_query
 from prompts import (
     FORMAT_ANSWER_PROMPT,
@@ -16,9 +26,7 @@ from schema_retrieval.retriever import get_schema_retriever
 from schemas import RankedTablesAndScope
 from state import AgentState
 from tools import get_run_query_tool
-from utils import extract_sql, get_last_cycle, select_database
-from config import cfg, db_embeddings, domain_rules, fast_model, model
-
+from utils import cached_node, expand_fk, extract_sql, get_last_cycle, select_database
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
@@ -37,7 +45,11 @@ def route_database(state: AgentState) -> dict:
         db_embeddings=db_embeddings,
     )
 
-    return {"selected_db": selected}
+    return {
+        "selected_db":         selected,
+        "generated_query":     "",   # reset for the new turn
+        "validation_feedback": "",   # reset for the new turn
+    }
 
 
 def retrieve_schema(state: AgentState) -> dict:
@@ -69,22 +81,29 @@ def retrieve_schema(state: AgentState) -> dict:
 def rerank_tables(state: AgentState) -> dict:
     """
     LLM-driven node — narrows candidates to only the tables needed
-    and checks if the question is in scope. Single LLM call replacing
-    the former rerank_tables + check_scope two-node sequence.
+    and checks if the question is in scope.
+
+    Three-pass table resolution after LLM selection:
+        Pass 1 — load LLM-selected tables missing from vector retrieval (via DDL semantic reasoning)
+        Pass 2 — FK expansion to recover bridge/fact tables
+        Pass 3 — load FK-expanded tables missing from candidates (schema store)
     """
+    # Fetch user question
     question = next(
         (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
         ""
     )
-    candidates = state["candidate_schemas"]
-    db_cfg     = cfg.get_db(state["selected_db"])
- 
-    # Format all candidate schemas for the LLM prompt
+
+    # Work on a copy — candidates may be extended with store-loaded schemas
+    candidates = state["candidate_schemas"].copy()
+    db_name    = state["selected_db"]
+    db_cfg     = cfg.get_db(db_name)
+
+    # ── 1. LLM reranking: table selection + scope check ───────────────────────
     schemas_text = "\n\n".join(
         f"### {name}\n{ddl}" for name, ddl in candidates.items()
     )
- 
-    # Single LLM call: table selection + scope check
+
     structured_llm = fast_model.with_structured_output(RankedTablesAndScope)
     response = structured_llm.invoke([
         SystemMessage(content=RERANK_TABLES_PROMPT.format(
@@ -93,20 +112,46 @@ def rerank_tables(state: AgentState) -> dict:
         )),
         HumanMessage(content=question),
     ])
- 
+
     logger.debug(f"rerank_tables: {response.tables} | in_scope={response.is_in_scope} — {response.reason}")
- 
-    # Keep only the DDLs for tables the LLM selected
-    selected = [candidates[t] for t in response.tables if t in candidates]
- 
-    # Fallback: if LLM returned no valid tables, pass all candidates through
+
+    # ── 2. Load LLM-selected tables missing from candidates ───────────────────
+    # LLM may select tables known via schema descriptions but not returned by Chroma
+    for table in list(response.tables):
+        if table not in candidates and table in schema_store[db_name]:
+            candidates[table] = schema_store[db_name][table]
+            logger.debug(f"[rerank_tables] Loaded LLM-selected table from store: {table}")
+
+    selected_names = [t for t in response.tables if t in candidates]
+
+    if not selected_names:
+        logger.warning("LLM returned no valid tables — fallback to all candidates.")
+        return {
+            "retrieved_schema": "\n\n".join(candidates.values()),
+            "is_in_scope":      response.is_in_scope,
+        }
+
+    # ── 3. FK expansion — recover bridge/fact tables ──────────────────────────
+    expanded_names = expand_fk(selected_names, fk_graphs[db_name])
+    logger.debug(f"rerank_tables: FK expansion {selected_names} → {expanded_names}")
+
+    # ── 4. Load FK-expanded tables missing from candidates ────────────────────
+    for table in expanded_names:
+        if table not in candidates and table in schema_store[db_name]:
+            candidates[table] = schema_store[db_name][table]
+            logger.debug(f"[rerank_tables] FK-expanded from store: {table}")
+
+    # ── 5. Build final schema — preserve LLM order, deduplicate ──────────────
+    final_tables = list(dict.fromkeys(selected_names + expanded_names))
+    selected     = [candidates[t] for t in final_tables if t in candidates]
+
     if not selected:
-        logger.warning("LLM re-ranking returned no valid tables, using all candidates.")
+        logger.warning("No valid tables after FK expansion — fallback to all candidates.")
         selected = list(candidates.values())
- 
+
     return {
         "retrieved_schema": "\n\n".join(selected),
-        "is_in_scope": response.is_in_scope,
+        "is_in_scope":      response.is_in_scope,
     }
 
 
@@ -115,7 +160,10 @@ def route_by_scope(state: AgentState) -> Literal["in_scope", "out_of_scope"]:
         return "in_scope"
     return "out_of_scope"
 
-
+@cached_node(
+    key_fn=lambda state: f"{state['selected_db']}:{next((m.content for m in reversed(state['messages']) if isinstance(m, HumanMessage)), '')}",
+    return_key="generated_query"
+)
 def sql_coder(state: AgentState) -> dict:
     """
     LLM node — generates SQL without executing.
@@ -224,50 +272,42 @@ def route_after_validation(state: AgentState) -> Literal["error", "success"]:
  
     return "success"
 
+
+@cached_node(
+    key_fn=lambda state: f"{state['selected_db']}:{next((m.content for m in reversed(state['messages']) if isinstance(m, HumanMessage)), '')}",
+    return_key="messages",
+    cache_only_first_attempt=False
+)
 def format_answer(state: AgentState) -> dict:
     """
     LLM-driven node — single exit point for all user-facing responses.
     Handles success (question + SQL + results), errors (failed query),
     and out-of-scope (no query executed). Scoped to the current turn
     via get_last_cycle to avoid leaking previous turns' data.
-
-    Minimal context: last question, executed SQL (if any), query results (if any).
-    The run_query_tool is resolved via selected_db to match tool message names
-    correctly across databases.
     """
-    messages = state["messages"]
-    turn     = get_last_cycle(messages)  # messages after the last HumanMessage
     db_cfg   = cfg.get_db(state["selected_db"])
-
-    # Get last question (get_last_cycle excludes HumanMessage)
+    messages = state["messages"]
+    
+    # Get last question 
     question = next(
         (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
     )
-
-    # Resolve tool name for the selected database
-    run_query = get_run_query_tool(state["selected_db"])
-
-    # Last SQL tool_call in this turn (absent for out-of-scope questions)
-    query = next(
-        (m.tool_calls[0]["args"]["query"] for m in reversed(turn)
-         if isinstance(m, AIMessage) and m.tool_calls
-         and m.tool_calls[0]["name"] == run_query.name),
-        "No query executed — question is out of scope for this database."
-    )
-
-    # Last SQL result in this turn (absent for out-of-scope or if query was never run)
+    
+    # Fetch query (empty if out of scope)
+    query = state.get("generated_query") or ""
+    
+    # Fetch query result ("No results" if no query was executed)
     result = next(
-        (m.content for m in reversed(turn)
-         if isinstance(m, ToolMessage) and m.name == run_query.name),
+        (m.content for m in reversed(messages) if isinstance(m, ToolMessage)),
         "No results."
-    )
-
-    # Dialect injected so the LLM formats the answer appropriately per database
+    ) if query else "No results."
+    
+    # Format answer
     response = fast_model.invoke([
         SystemMessage(content=FORMAT_ANSWER_PROMPT.format(dialect=db_cfg.dialect)),
         HumanMessage(content=(
             f"Question: {question}\n\n"
-            f"Executed SQL:\n{query}\n\n"
+            f"Executed SQL:\n{query or 'No query executed — question is out of scope.'}\n\n"
             f"Results: {result}"
         )),
     ])

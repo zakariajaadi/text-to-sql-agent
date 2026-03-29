@@ -1,0 +1,28 @@
+services:
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: chainlit-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src        # bind mount — live reload
+      - ./data:/app/data      # databases + chroma
+      - ./config:/app/config  # config.yaml + db_descriptions.yaml
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
