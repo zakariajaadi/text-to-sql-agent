@@ -1,4 +1,3 @@
-from typing import Dict
 from loguru import logger 
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
@@ -6,7 +5,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 
-from config import cfg, db_registry, model
+from config import db_registry, model
 
 
 
@@ -34,7 +33,7 @@ _tools_registry: dict[str, dict[str, BaseTool]] = {
     for db_name, db_instance in db_registry.items()
 }
 
-logger.info(f"Tools registry initialized for: {list(_tools_registry.keys())}")
+logger.debug(f"Tools registry initialized for: {list(_tools_registry.keys())}")
 
 
 # =============================================================================
@@ -56,7 +55,6 @@ def get_list_tables_tool(db_name: str) -> BaseTool:
 # =============================================================================
 
 if __name__ == "__main__":
-    from pprint import pprint
 
     for db_name, tools in _tools_registry.items():
         print(f"\n{'='*40}")

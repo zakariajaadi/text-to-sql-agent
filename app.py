@@ -3,8 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-#import uuid
-
+import uuid
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
@@ -12,6 +11,12 @@ from loguru import logger
 
 from graph import build_graph
 from utils import get_node_step_title, normalize_chunk_content, process_node_output
+from langsmith import Client
+from config import cfg 
+
+
+ls_client = Client()
+
 
 
 @cl.on_chat_start
@@ -19,7 +24,8 @@ async def on_chat_start():
     agent = build_graph()
 
     cl.user_session.set("agent", agent)
-    # cl.user_session.set("thread_id", str(uuid.uuid4()))
+    if cfg.memory.enabled:
+        cl.user_session.set("thread_id", str(uuid.uuid4()))
     await cl.Message(content="👋 Posez-moi une question sur la base de données.").send()
 
 
@@ -32,18 +38,18 @@ async def on_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     seen_msg_ids = set()
     response_msg = None
+    run_id= None
 
     # Reset the streaming flag for this new message
     cl.user_session.set("answer_streamed", False)
 
     try:
-        # thread_id per session — LangGraph accumulates state across turns
-        #config = {
-        #    "recursion_limit": 15,
-        #    "configurable": {"thread_id": cl.user_session.get("thread_id")}
-        #}
-
+        
         config = {"recursion_limit": 15}
+        if cfg.memory.enabled:
+            # thread_id per session — LangGraph accumulates state across turns
+            config["configurable"] = {"thread_id": cl.user_session.get("thread_id")}
+
 
 
         async with cl.Step(name="🤖 SQL Agent", type="run") as agent_step:
@@ -53,6 +59,11 @@ async def on_message(message: cl.Message):
                 version="v2"
             ):
                 kind = event["event"]
+                
+                # Capture run_id from the root LangSmith run
+                if run_id is None and "run_id" in event:
+                    run_id = event["run_id"]
+
 
                 # --- 1. Intermediate Node Completion ---
                 if kind == "on_chain_end":
@@ -95,6 +106,29 @@ async def on_message(message: cl.Message):
     except Exception as e:
         logger.error(f"Unexpected error: {repr(e)}")
         await cl.Message(content="Sorry, I encountered a technical error.").send()
-
+    
+    # Attach feedback actions to the response message itself
     if response_msg:
+        if run_id:
+            response_msg.actions = [
+                cl.Action(name="thumbs_up",   payload={"run_id": str(run_id)}, label="👍"),
+                cl.Action(name="thumbs_down", payload={"run_id": str(run_id)}, label="👎"),
+            ]
         await response_msg.update()
+        
+
+
+@cl.action_callback("thumbs_up")
+async def on_thumbs_up(action: cl.Action):
+    run_id = action.payload.get("run_id")
+    if cfg.langsmith.tracing and run_id:
+        ls_client.create_feedback(run_id=run_id, key="user_feedback", score=1)
+    await action.remove()
+
+
+@cl.action_callback("thumbs_down")
+async def on_thumbs_down(action: cl.Action):
+    run_id = action.payload.get("run_id")
+    if cfg.langsmith.tracing and run_id:
+        ls_client.create_feedback(run_id=run_id, key="user_feedback", score=0)
+    await action.remove()

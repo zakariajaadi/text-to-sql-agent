@@ -2,12 +2,11 @@
 
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict
 
 import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.outputs import Generation
 from langchain_core.runnables.graph_mermaid import draw_mermaid_png
 from loguru import logger
 
@@ -64,6 +63,11 @@ def extract_schema_message(messages: list, db_name: str) -> ToolMessage | None:
             result = msg
     return result
 
+def get_question(state: dict) -> str:
+    """Return the standalone question (post-condensation) or fall back to last HumanMessage."""
+    return state.get("standalone_question") or next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+    )
 
 # =============================================================================
 # Chainlit UI helpers
@@ -171,12 +175,13 @@ async def handle_step(msg, node_name: str = "") -> None:
 
 def get_node_step_title(node_name: str) -> str:
     return {
-        "route_database":   "🗄️ Routing database...",
-        "retrieve_schema":  "🔍 Retrieving candidates...",
-        "rerank_tables":    "🎯 Selecting tables...",
-        "sql_coder":        "⚙️ Writing SQL...",
-        "sql_validator":    "✅ Validating & executing...",
-        "format_answer":    "✍️ Formatting answer...",
+        "condense_question": "💬 Condensing question...",
+        "route_database":    "🗄️ Routing database...",
+        "retrieve_schema":   "🔍 Retrieving candidates...",
+        "rerank_tables":     "🎯 Selecting tables...",
+        "sql_coder":         "⚙️ Writing SQL...",
+        "sql_validator":     "✅ Validating & executing...",
+        "format_answer":     "✍️ Formatting answer...",
     }.get(node_name, "")
 
 # =============================================================================

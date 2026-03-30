@@ -29,7 +29,7 @@ logging.getLogger("google_genai").setLevel(logging.WARNING)
 logging.getLogger("redisvl").setLevel(logging.WARNING)
 
 
-# Configure loguro logging
+# Configure loguru logging
 logger.remove() 
 logger.add(
     sys.stderr, 
@@ -93,6 +93,10 @@ class LangSmithConfig:
     tracing: bool
 
 @dataclass
+class MemoryConfig:
+    enabled: bool
+
+@dataclass
 class CacheConfig:
     enabled: bool
     redis_url: str
@@ -106,6 +110,7 @@ class AppConfig:
     databases: list[DatabaseConfig]
     retrieval: RetrievalConfig
     langsmith: LangSmithConfig
+    memory: MemoryConfig
     cache: CacheConfig
 
     
@@ -138,6 +143,7 @@ def load_config() -> AppConfig:
         databases=[DatabaseConfig(**db) for db in cfg.databases], 
         retrieval=RetrievalConfig(**cfg.retrieval),
         langsmith=LangSmithConfig(**cfg.langsmith),
+        memory=MemoryConfig(**cfg.memory),
         cache=CacheConfig(**cfg.cache),
 
     )
@@ -145,17 +151,24 @@ def load_config() -> AppConfig:
 
 def build_schema_store() -> dict[str, dict[str, str]]:
     """Load all enriched DDLs from Chroma into memory at startup."""
-    vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
-    store = vsm.get_store()
+    try:
+        vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
+        store = vsm.get_store()
 
-    result = {}
-    for db_cfg in cfg.databases:
-        docs = store.get(where={"db_name": {"$eq": db_cfg.name}})
-        result[db_cfg.name] = {
-            meta["table_name"]: doc
-            for meta, doc in zip(docs["metadatas"], docs["documents"])
-        }
-    return result
+        result = {}
+        for db_cfg in cfg.databases:
+            docs = store.get(where={"db_name": {"$eq": db_cfg.name}})
+            result[db_cfg.name] = {
+                meta["table_name"]: doc
+                for meta, doc in zip(docs["metadatas"], docs["documents"])
+            }
+            if not result[db_cfg.name]:
+                logger.warning(f"[schema_store] No schemas found for {db_cfg.name} — run indexer first.")
+        return result
+
+    except Exception as e:
+        logger.error(f"[schema_store] Failed to load from Chroma: {e}")
+        return {db_cfg.name: {} for db_cfg in cfg.databases}
 
 
 def build_fk_graph(db: SQLDatabase) -> dict[str, list[str]]:
@@ -164,23 +177,28 @@ def build_fk_graph(db: SQLDatabase) -> dict[str, list[str]]:
     If A references B via FK, both graph[A] contains B and graph[B] contains A.
     Bidirectionality ensures fact tables are reachable from dimension tables and vice versa.
     """
-    fk_graph: dict[str, set[str]] = {}
-    inspector = sa_inspect(db._engine)
-    tables    = db.get_usable_table_names()
+    try:
+        fk_graph: dict[str, set[str]] = {}
+        inspector = sa_inspect(db._engine)
+        tables    = db.get_usable_table_names()
 
-    for table in tables:
-        if table not in fk_graph:
-            fk_graph[table] = set()
+        for table in tables:
+            if table not in fk_graph:
+                fk_graph[table] = set()
 
-        for fk in inspector.get_foreign_keys(table):
-            target = fk["referred_table"]
-            if target in tables:
-                fk_graph[table].add(target)
-                if target not in fk_graph:
-                    fk_graph[target] = set()
-                fk_graph[target].add(table)
+            for fk in inspector.get_foreign_keys(table):
+                target = fk["referred_table"]
+                if target in tables:
+                    fk_graph[table].add(target)
+                    if target not in fk_graph:
+                        fk_graph[target] = set()
+                    fk_graph[target].add(table)
 
-    return {k: list(v) for k, v in fk_graph.items()}
+        return {k: list(v) for k, v in fk_graph.items()}
+
+    except Exception as e:
+        logger.error(f"[build_fk_graph] Failed: {e}")
+        return {}
 
 # =============================================================================
 # Init config and singletons

@@ -1,6 +1,5 @@
 # src/nodes.py
 
-from pathlib import Path
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -17,6 +16,7 @@ from config import (
 )
 from guardrails import is_safe_query
 from prompts import (
+    CONDENSE_QUESTION_PROMPT,
     FORMAT_ANSWER_PROMPT,
     RERANK_TABLES_PROMPT,
     SQL_CODER_PROMPT,
@@ -26,18 +26,66 @@ from schema_retrieval.retriever import get_schema_retriever
 from schemas import RankedTablesAndScope
 from state import AgentState
 from tools import get_run_query_tool
-from utils import cached_node, expand_fk, extract_sql, get_last_cycle, select_database
+from utils import (
+    cached_node,
+    expand_fk,
+    extract_sql,
+    extract_text_content,
+    get_last_cycle,
+    get_question,
+    select_database,
+)
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
+
+
+
+def condense_question(state: AgentState) -> dict:
+    """
+    LLM node — rewrites the current question using conversation history
+    to resolve pronouns and implicit references.
+    No-op when history has no prior turns (skips the LLM call).
+    """
+    question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
+    )
+
+    # Count prior human messages — if only one (the current), skip condensation
+    human_count = sum(1 for m in state["messages"] if isinstance(m, HumanMessage))
+    if human_count <= 1:
+        return {"standalone_question": question}
+
+    # Build history from all messages except the last HumanMessage
+    history_parts = []
+    for m in state["messages"][:-1]:
+        if isinstance(m, HumanMessage):
+            history_parts.append(f"User: {m.content}")
+        elif isinstance(m, AIMessage) and m.content and not m.tool_calls:
+            history_parts.append(f"Assistant: {m.content}")
+
+    if not history_parts:
+        return {"standalone_question": question}
+
+    response = fast_model.invoke([
+        SystemMessage(content=CONDENSE_QUESTION_PROMPT),
+        HumanMessage(content=(
+            f"Conversation history:\n" + "\n".join(history_parts) + "\n\n"
+            f"Follow-up question: {question}"
+        )),
+    ])
+    
+    
+    condensed = extract_text_content(response)
+    logger.debug(f"condense_question: '{question}' → '{condensed}'")
+
+    return {"standalone_question": condensed}
 
 def route_database(state: AgentState) -> dict:
     """
     Deterministic node — selects the target database for the incoming question.
     Routing logic is delegated to select_database() in utils.py.
     """
-    question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
-    )
+    question = get_question(state)
 
     selected = select_database(
         question=question,
@@ -60,10 +108,7 @@ def retrieve_schema(state: AgentState) -> dict:
     Scoped to selected_db via Chroma metadata filter — only tables
     belonging to the routed database are returned as candidates.
     """
-    question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        ""
-    )
+    question = get_question(state)
 
     # Retriever scoped to the database selected by route_database
     db_name          = state["selected_db"]
@@ -89,10 +134,7 @@ def rerank_tables(state: AgentState) -> dict:
         Pass 3 — load FK-expanded tables missing from candidates (schema store)
     """
     # Fetch user question
-    question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        ""
-    )
+    question = get_question(state)
 
     # Work on a copy — candidates may be extended with store-loaded schemas
     candidates = state["candidate_schemas"].copy()
@@ -161,7 +203,7 @@ def route_by_scope(state: AgentState) -> Literal["in_scope", "out_of_scope"]:
     return "out_of_scope"
 
 @cached_node(
-    key_fn=lambda state: f"{state['selected_db']}:{next((m.content for m in reversed(state['messages']) if isinstance(m, HumanMessage)), '')}",
+    key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
     return_key="generated_query"
 )
 def sql_coder(state: AgentState) -> dict:
@@ -175,10 +217,7 @@ def sql_coder(state: AgentState) -> dict:
     db_cfg = cfg.get_db(state["selected_db"])
 
     # Fetch user question
-    question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        ""
-    )
+    question = get_question(state)
 
     # Format prompt with schema, dialect and limit — all db-specific
     system_prompt = SQL_CODER_PROMPT.format(
@@ -243,8 +282,8 @@ def sql_validator(state: AgentState) -> dict:
     ai_msg   = AIMessage(content="", tool_calls=[tool_call])
     tool_msg = run_query.invoke(tool_call)
 
-    # On failure return feedback to sql_coder
-    if tool_msg.status == "error":
+    # On failure return feedback to sql_coder (SQLAlchemy error msgs always start with "Error")
+    if tool_msg.status == "error" or tool_msg.content.strip().lower().startswith("error"):
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
                 query=query,
@@ -274,7 +313,7 @@ def route_after_validation(state: AgentState) -> Literal["error", "success"]:
 
 
 @cached_node(
-    key_fn=lambda state: f"{state['selected_db']}:{next((m.content for m in reversed(state['messages']) if isinstance(m, HumanMessage)), '')}",
+    key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
     return_key="messages",
     cache_only_first_attempt=False
 )
@@ -289,9 +328,7 @@ def format_answer(state: AgentState) -> dict:
     messages = state["messages"]
     
     # Get last question 
-    question = next(
-        (m.content for m in reversed(messages) if isinstance(m, HumanMessage)), ""
-    )
+    question = get_question(state)
     
     # Fetch query (empty if out of scope)
     query = state.get("generated_query") or ""

@@ -10,3 +10,5 @@ class AgentState(MessagesState):
      generated_query: str               # SQL produced by sql_coder
      validation_feedback: str           # error feedback from sql_validator (empty on success)
      remaining_steps: RemainingSteps    # managed counter to handle infinite loop at parent level
+     standalone_question: str           # rewritten question after condensation
+

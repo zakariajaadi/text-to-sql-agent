@@ -24,11 +24,14 @@ retrieval:
   schemas_directory: "data/schemas"
   top_k: 8
 
+memory:
+  enabled: true
+
 langsmith:
   tracing: true
 
 cache:
-  enabled: true
+  enabled: false
   redis_url: "redis://redis:6379"
   distance_threshold: 0.10
   ttl: 86400 # 24h 

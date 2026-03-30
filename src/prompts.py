@@ -1,5 +1,17 @@
 # src/prompts.py
 
+# ── Node: condense_question ───────────────────────────────────────────────────
+# Used by: condense_question node (LLM invoke, no tools)
+# Input: conversation history + follow-up question
+# Output: standalone rewritten question
+
+CONDENSE_QUESTION_PROMPT = """
+Given the conversation history and a follow-up question, rewrite the question in its original language so that it is fully self-contained.
+Avoid the use of unclear pronouns.
+If the question is already self-contained, return it unchanged.
+Return ONLY the rewritten question, nothing else.
+"""
+
 # ── Node: rerank_tables ───────────────────────────────────────────────────────
 # Used by: rerank_tables node (LLM with structured output → SelectedTables)
 # Input context: SystemMessage + candidate schemas
