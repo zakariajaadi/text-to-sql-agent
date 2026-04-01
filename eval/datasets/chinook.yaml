@@ -1,0 +1,303 @@
+# benchmarks/chinook.yaml
+# ========================
+# Benchmark dataset for evaluating the Text-to-SQL agent on Chinook DB.
+#
+# Each entry contains:
+#   - question: Natural language question (as a user would ask)
+#   - difficulty: simple | medium | hard
+#   - category: The SQL skill being tested
+#   - expected_tables: Tables the agent should select
+#   - accepted_queries: One or more valid SQL answers
+#   - expected_row_count: (optional) Expected number of rows in the result
+#   - notes: (optional) Why this question is tricky
+#
+# Guidelines for adding questions:
+#   - Cover all tables in the schema
+#   - Include at least 2 accepted_queries when multiple valid approaches exist
+#   - Use difficulty levels consistently:
+#       simple  = 1-2 tables, basic SELECT/WHERE/ORDER BY
+#       medium  = 2-3 tables, JOINs, GROUP BY, HAVING
+#       hard    = 3+ tables, subqueries, window functions, ambiguity
+
+# ── Simple (1-2 tables, basic operations) ─────────────────────────────────────
+
+- question: "How many customers are there?"
+  difficulty: simple
+  category: count
+  expected_tables: [Customer]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Customer"
+    - "SELECT COUNT(CustomerId) FROM Customer"
+
+- question: "How many genres are there?"
+  difficulty: simple
+  category: count
+  expected_tables: [Genre]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Genre"
+    - "SELECT COUNT(GenreId) FROM Genre"
+
+- question: "How many employees are there?"
+  difficulty: simple
+  category: count
+  expected_tables: [Employee]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Employee"
+    - "SELECT COUNT(EmployeeId) FROM Employee"
+
+- question: "How many tracks are longer than 5 minutes?"
+  difficulty: simple
+  category: filtering
+  expected_tables: [Track]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Track WHERE Milliseconds > 300000"
+
+- question: "What is the most expensive track?"
+  difficulty: simple
+  category: aggregation
+  expected_tables: [Track]
+  accepted_queries:
+    - "SELECT Name, UnitPrice FROM Track ORDER BY UnitPrice DESC LIMIT 1"
+
+- question: "Which customers are from Brazil?"
+  difficulty: simple
+  category: filtering
+  expected_tables: [Customer]
+  accepted_queries:
+    - "SELECT FirstName, LastName FROM Customer WHERE Country = 'Brazil'"
+    - "SELECT FirstName, LastName, City FROM Customer WHERE Country = 'Brazil'"
+
+# ── Medium (2-3 tables, JOINs, GROUP BY) ──────────────────────────────────────
+
+- question: "How many albums does each artist have?"
+  difficulty: medium
+  category: join_aggregation
+  expected_tables: [Artist, Album]
+  accepted_queries:
+    - >
+      SELECT ar.Name, COUNT(al.AlbumId) AS AlbumCount
+      FROM Artist ar JOIN Album al ON ar.ArtistId = al.ArtistId
+      GROUP BY ar.Name ORDER BY AlbumCount DESC
+    - >
+      SELECT ar.Name, COUNT(*) AS AlbumCount
+      FROM Artist ar INNER JOIN Album al ON ar.ArtistId = al.ArtistId
+      GROUP BY ar.ArtistId ORDER BY AlbumCount DESC
+
+- question: "What are the top 5 customers by total spending?"
+  difficulty: medium
+  category: join_aggregation
+  expected_tables: [Customer, Invoice]
+  accepted_queries:
+    - >
+      SELECT c.FirstName, c.LastName, SUM(i.Total) AS TotalSpent
+      FROM Customer c JOIN Invoice i ON c.CustomerId = i.CustomerId
+      GROUP BY c.CustomerId ORDER BY TotalSpent DESC LIMIT 5
+    - >
+      SELECT c.FirstName || ' ' || c.LastName AS Name, SUM(i.Total) AS TotalSpent
+      FROM Customer c JOIN Invoice i ON c.CustomerId = i.CustomerId
+      GROUP BY c.CustomerId ORDER BY TotalSpent DESC LIMIT 5
+
+- question: "Which genres have the most tracks?"
+  difficulty: medium
+  category: join_aggregation
+  expected_tables: [Genre, Track]
+  accepted_queries:
+    - >
+      SELECT g.Name, COUNT(t.TrackId) AS TrackCount
+      FROM Genre g JOIN Track t ON g.GenreId = t.GenreId
+      GROUP BY g.Name ORDER BY TrackCount DESC
+
+- question: "How many tracks are in the 'Rock' genre?"
+  difficulty: medium
+  category: join_aggregation
+  expected_tables: [Track, Genre]
+  accepted_queries:
+    - >
+      SELECT COUNT(t.TrackId)
+      FROM Track t
+      JOIN Genre g ON t.GenreId = g.GenreId
+      WHERE g.Name = 'Rock'
+    - >
+      SELECT COUNT(*)
+      FROM Track t
+      JOIN Genre g ON t.GenreId = g.GenreId
+      WHERE g.Name = 'Rock'
+
+- question: "What is the average invoice total by country?"
+  difficulty: medium
+  category: aggregation
+  expected_tables: [Invoice]
+  accepted_queries:
+    - >
+      SELECT BillingCountry, AVG(Total) AS AvgTotal
+      FROM Invoice GROUP BY BillingCountry ORDER BY AvgTotal DESC
+    - >
+      SELECT BillingCountry, ROUND(AVG(Total), 2) AS AvgTotal
+      FROM Invoice GROUP BY BillingCountry ORDER BY AvgTotal DESC
+
+- question: "Which employee has the most customers?"
+  difficulty: medium
+  category: join_aggregation
+  expected_tables: [Employee, Customer]
+  accepted_queries:
+    - >
+      SELECT e.FirstName, e.LastName, COUNT(c.CustomerId) AS CustomerCount
+      FROM Employee e JOIN Customer c ON e.EmployeeId = c.SupportRepId
+      GROUP BY e.EmployeeId ORDER BY CustomerCount DESC LIMIT 1
+
+- question: "How many invoices were issued in 2009?"
+  difficulty: medium
+  category: date_filter
+  expected_tables: [Invoice]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Invoice WHERE strftime('%Y', InvoiceDate) = '2009'"
+    - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate BETWEEN '2009-01-01' AND '2009-12-31'"
+    - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate LIKE '2009%'"
+
+# ── Hard (3+ tables, subqueries, ambiguity) ───────────────────────────────────
+
+- question: "What is the total revenue per genre?"
+  difficulty: hard
+  category: multi_join_aggregation
+  expected_tables: [Genre, Track, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT g.Name, SUM(il.UnitPrice * il.Quantity) AS Revenue
+      FROM Genre g
+      JOIN Track t ON g.GenreId = t.GenreId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY g.Name ORDER BY Revenue DESC
+    - >
+      SELECT g.Name, ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS Revenue
+      FROM InvoiceLine il
+      JOIN Track t ON il.TrackId = t.TrackId
+      JOIN Genre g ON t.GenreId = g.GenreId
+      GROUP BY g.GenreId ORDER BY Revenue DESC
+
+- question: "Which artist has generated the most revenue?"
+  difficulty: hard
+  category: multi_join_aggregation
+  expected_tables: [Artist, Album, Track, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT ar.Name, SUM(il.UnitPrice * il.Quantity) AS Revenue
+      FROM Artist ar
+      JOIN Album al ON ar.ArtistId = al.ArtistId
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY ar.ArtistId ORDER BY Revenue DESC LIMIT 1
+
+- question: "What playlists contain tracks from the 'Jazz' genre?"
+  difficulty: hard
+  category: multi_join_filter
+  expected_tables: [Playlist, PlaylistTrack, Track, Genre]
+  accepted_queries:
+    - >
+      SELECT DISTINCT p.Name
+      FROM Playlist p
+      JOIN PlaylistTrack pt ON p.PlaylistId = pt.PlaylistId
+      JOIN Track t ON pt.TrackId = t.TrackId
+      JOIN Genre g ON t.GenreId = g.GenreId
+      WHERE g.Name = 'Jazz'
+
+- question: "Who are the top 3 artists by number of tracks sold?"
+  difficulty: hard
+  category: multi_join_aggregation
+  expected_tables: [Artist, Album, Track, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT ar.Name, COUNT(il.InvoiceLineId) AS TracksSold
+      FROM Artist ar
+      JOIN Album al ON ar.ArtistId = al.ArtistId
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY ar.ArtistId ORDER BY TracksSold DESC LIMIT 3
+    - >
+      SELECT ar.Name, SUM(il.Quantity) AS TracksSold
+      FROM Artist ar
+      JOIN Album al ON ar.ArtistId = al.ArtistId
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY ar.ArtistId ORDER BY TracksSold DESC LIMIT 3
+
+- question: "What is the average number of tracks per album?"
+  difficulty: hard
+  category: nested_aggregation
+  expected_tables: [Album, Track]
+  accepted_queries:
+    - >
+      SELECT AVG(TrackCount) FROM (
+        SELECT AlbumId, COUNT(*) AS TrackCount FROM Track GROUP BY AlbumId
+      )
+    - >
+      SELECT ROUND(CAST(COUNT(t.TrackId) AS FLOAT) / COUNT(DISTINCT t.AlbumId), 2)
+      FROM Track t
+
+- question: "Which customers have never made a purchase?"
+  difficulty: hard
+  category: anti_join
+  expected_tables: [Customer, Invoice]
+  accepted_queries:
+    - >
+      SELECT c.FirstName, c.LastName FROM Customer c
+      LEFT JOIN Invoice i ON c.CustomerId = i.CustomerId
+      WHERE i.InvoiceId IS NULL
+    - >
+      SELECT FirstName, LastName FROM Customer
+      WHERE CustomerId NOT IN (SELECT CustomerId FROM Invoice)
+
+# ── Ambiguous (tests assumption handling) ─────────────────────────────────────
+
+- question: "Show me the most popular tracks"
+  difficulty: hard
+  category: ambiguous
+  expected_tables: [Track, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT t.Name, COUNT(il.InvoiceLineId) AS TimesPurchased
+      FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY t.TrackId ORDER BY TimesPurchased DESC LIMIT 10
+    - >
+      SELECT t.Name, SUM(il.Quantity) AS TotalSold
+      FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY t.TrackId ORDER BY TotalSold DESC LIMIT 10
+  notes: >
+    "Popular" is ambiguous — could mean most purchased (InvoiceLine count),
+    most playlists (PlaylistTrack count), or most revenue. All are valid.
+
+- question: "What are the best-selling albums?"
+  difficulty: hard
+  category: ambiguous
+  expected_tables: [Album, Track, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT al.Title, SUM(il.Quantity) AS TotalSold
+      FROM Album al
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY al.AlbumId ORDER BY TotalSold DESC LIMIT 10
+    - >
+      SELECT al.Title, COUNT(il.InvoiceLineId) AS LineItems
+      FROM Album al
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY al.AlbumId ORDER BY LineItems DESC LIMIT 10
+  notes: >
+    "Best-selling" could mean by quantity, by revenue, or by number of
+    distinct customers. Agent should state its assumption.
+
+# ── Out of scope ──────────────────────────────────────────────────────────────
+
+- question: "What is the weather in Paris today?"
+  difficulty: simple
+  category: out_of_scope
+  expected_tables: []
+  accepted_queries: []
+  notes: "Agent should detect this is unrelated to the music database."
+
+- question: "What is the stock price of Apple?"
+  difficulty: simple
+  category: out_of_scope
+  expected_tables: []
+  accepted_queries: []
+  notes: "Agent should reject — no financial data in Chinook."

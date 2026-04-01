@@ -26,7 +26,7 @@ from schema_retrieval.retriever import get_schema_retriever
 from schemas import RankedTablesAndScope
 from state import AgentState
 from tools import get_run_query_tool
-from utils import (
+from lib import (
     cached_node,
     expand_fk,
     extract_sql,
@@ -85,6 +85,11 @@ def route_database(state: AgentState) -> dict:
     Deterministic node — selects the target database for the incoming question.
     Routing logic is delegated to select_database() in utils.py.
     """
+
+    # Skip if already set (eval mode or single-db deployment)
+    if state.get("selected_db"):
+        return {}
+
     question = get_question(state)
 
     selected = select_database(

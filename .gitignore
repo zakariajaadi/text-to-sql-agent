@@ -14,5 +14,6 @@ wheels/
 data/
 .chainlit/
 .files/
+.vscode/ 
 
 src/_*.py

@@ -1,0 +1,241 @@
+{
+  "summary": {
+    "total_questions": 5,
+    "evaluated": 5,
+    "avg_latency_s": 5.43,
+    "avg_table_selection": 5.0,
+    "avg_column_selection": 5.0,
+    "avg_join_correctness": 5.0,
+    "avg_filter_logic": 5.0,
+    "avg_aggregation": 5.0,
+    "avg_overall": 5.0,
+    "avg_table_recall": 1.0,
+    "execution_accuracy": 1.0,
+    "execution_evaluated": 5,
+    "score_distribution": {
+      "perfect (5)": 5,
+      "good (4)": 0,
+      "partial (3)": 0,
+      "poor (2)": 0,
+      "wrong (1)": 0
+    },
+    "avg_overall_simple": 5.0,
+    "exec_accuracy_simple": 1.0
+  },
+  "results": [
+    {
+      "question": "How many customers are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "-- Step 1: Count the total number of distinct CustomerIds from the Customer table.\nSELECT COUNT(c.CustomerId) AS TotalCustomers\nFROM Customer AS c;",
+      "selected_tables": [
+        "Customer",
+        "Employee",
+        "Invoice"
+      ],
+      "latency_s": 5.51,
+      "table_recall": 1.0,
+      "table_precision": 0.333,
+      "table_hallucination": 0.667,
+      "execution_accuracy": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the Customer table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the CustomerId for counting and provides a clear alias for the result, which is a valid approach."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this question, and the query correctly uses none."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT function to count the number of customers, which is equivalent to the ground truth."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The query is functionally identical to the ground truth and provides a perfectly correct answer to the user's question."
+        }
+      }
+    },
+    {
+      "question": "How many genres are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "-- Step 1: Count all rows in the Genre table.\nSELECT COUNT(T1.GenreId)\nFROM Genre AS T1;",
+      "selected_tables": [
+        "Genre",
+        "Track"
+      ],
+      "latency_s": 5.25,
+      "table_recall": 1.0,
+      "table_precision": 0.5,
+      "table_hallucination": 0.5,
+      "execution_accuracy": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'Genre' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses COUNT on the primary key 'GenreId', which is a valid way to count the total number of genres."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to find the total number of genres."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground-truth queries and will return the correct answer."
+        }
+      }
+    },
+    {
+      "question": "How many employees are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "-- Step 1: Count all EmployeeIds from the Employee table.\nSELECT COUNT(e.EmployeeId) AS TotalEmployees\nFROM Employee AS e;",
+      "selected_tables": [
+        "Employee",
+        "Customer"
+      ],
+      "latency_s": 5.64,
+      "table_recall": 1.0,
+      "table_precision": 0.5,
+      "table_hallucination": 0.5,
+      "execution_accuracy": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'Employee' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the 'EmployeeId' column within the COUNT function, which is a valid way to count all rows."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this question, and the query correctly avoids using any."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, and the query correctly avoids using any."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to count the total number of employees, which directly answers the question."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth queries and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "How many tracks are longer than 5 minutes?",
+      "difficulty": "simple",
+      "category": "filtering",
+      "generated_sql": "-- Step 1: Filter tracks where the duration (Milliseconds) is greater than 5 minutes (300,000 milliseconds).\n-- Step 2: Count the number of tracks that satisfy the condition.\nSELECT COUNT(t.TrackId) AS NumberOfTracksLongerThan5Minutes\nFROM Track AS t\nWHERE t.Milliseconds > (5 * 60 * 1000);",
+      "selected_tables": [
+        "Track",
+        "InvoiceLine",
+        "MediaType",
+        "Album",
+        "PlaylistTrack",
+        "Genre"
+      ],
+      "latency_s": 5.46,
+      "table_recall": 1.0,
+      "table_precision": 0.167,
+      "table_hallucination": 0.833,
+      "execution_accuracy": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'Track' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses COUNT(t.TrackId) to count the tracks, which is functionally equivalent to COUNT(*) in the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The filter condition 't.Milliseconds > (5 * 60 * 1000)' is functionally identical to the ground truth's 'Milliseconds > 300000' and correctly identifies tracks longer than 5 minutes."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to provide the total number of tracks meeting the criteria."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "What is the most expensive track?",
+      "difficulty": "simple",
+      "category": "aggregation",
+      "generated_sql": "-- Step 1: Select the track name and unit price.\n-- Step 2: Order by UnitPrice in descending order.\n-- Step 3: Limit to 1 to get the most expensive track.\nSELECT t.Name,\n       t.UnitPrice\nFROM Track AS t\nORDER BY t.UnitPrice DESC\nLIMIT 1;",
+      "selected_tables": [
+        "Track",
+        "InvoiceLine",
+        "MediaType",
+        "Album",
+        "PlaylistTrack",
+        "Genre"
+      ],
+      "latency_s": 5.28,
+      "table_recall": 1.0,
+      "table_precision": 0.167,
+      "table_hallucination": 0.833,
+      "execution_accuracy": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects from the 'Track' table, which is the only one required."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the track name and unit price, matching the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses ORDER BY DESC and LIMIT 1 to find the single most expensive track."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and perfectly answers the question."
+        }
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ CLI usage:
 """
 
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from langchain_community.utilities import SQLDatabase
@@ -67,28 +68,50 @@ class SchemaIndexer:
 
     def extract(self) -> list[Document]:
         """
-        Extract and enrich DDL for each table.
+        Extract and enrich DDL for each table in parallel.
         Returns documents ready for indexing — no disk write.
         """
         tables         = self.db.get_usable_table_names()
         all_tables_str = ", ".join(tables)
-        documents      = []
 
-        for table in tables:
+        def enrich_table(table: str) -> Document:
+            # Get table DLL
             ddl      = self.db.get_table_info(table_names=[table]).strip()
+            # Enrich table DDL with Business and technical info
             enriched = self._enrich_chain(ddl, all_tables_str)
-            documents.append(Document(
+            logger.info(f"[{self.db_name}] Extracted: {table}")
+            # return enriched DDL as document
+            return Document(
                 page_content=enriched,
                 metadata={"table_name": table, "db_name": self.db_name},
-            ))
-            logger.info(f"[{self.db_name}] Extracted: {table}")
+            )
+        # Parallel execution of enrich table
+        with ThreadPoolExecutor() as executor:
+            documents = list(executor.map(enrich_table, tables))
 
         return documents
 
 
     def index(self, documents: list[Document]):
-        """Embed documents into the shared Chroma store."""
-        self.vsm.get_store().add_documents(documents)
+        """
+        Embed documents into the shared Chroma store with deterministic IDs.
+
+        Deduplication strategy: delete-then-add with deterministic IDs.
+            - IDs are built as "<db_name>_<table_name>"
+            - delete() is a no-op on unknown IDs, so the first run is safe.
+        """
+        store = self.vsm.get_store()
+
+        # Build deterministic IDs
+        ids = [
+            f"{doc.metadata['db_name']}_{doc.metadata['table_name']}"
+            for doc in documents
+        ]
+
+        # Index documents with dedup
+        store.delete(ids=ids)
+        store.add_documents(documents, ids=ids)
+
         logger.info(f"[{self.db_name}] Indexed {len(documents)} schemas to Chroma.")
 
 
@@ -96,15 +119,17 @@ class SchemaIndexer:
         """Generate a database-level description from Chroma schemas."""
         from config import fast_model
 
-        # Load schemas from Chroma instead of disk
+        # Load schemas from Chroma
         store = self.vsm.get_store()
         docs  = store.get(where={"db_name": {"$eq": self.db_name}})
         all_schemas = "\n\n".join(docs["documents"])
-
+        
+        # Describe database
         prompt      = ChatPromptTemplate.from_messages([("human", DB_DESCRIPTION_PROMPT)])
         chain       = prompt | fast_model | StrOutputParser()
         description = chain.invoke({"db_name": self.db_name, "schemas": all_schemas})
-
+        
+        # Save description
         desc_path        = BASE_DIR / "config" / "db_descriptions.yaml"
         existing         = OmegaConf.load(desc_path) if desc_path.exists() else OmegaConf.create()
         existing[self.db_name] = description.strip()

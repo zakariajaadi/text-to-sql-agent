@@ -69,7 +69,7 @@ If the question contains vague terms ("best", "top", "performance", "sales", "lo
 ## STRICT SQL RULES
 1. ONLY use tables and columns from the schema below.
 2. Never use SELECT *. Only select necessary columns.
-3. Always LIMIT results to {limit} rows maximum.
+3. Always LIMIT results to {limit} rows maximum unless the query returns a single aggregate value.
 4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
 5. For text matching, use LOWER(column) LIKE LOWER('%value%').
 6. When the question involves ranking, ordering, or "top N", always include ORDER BY.
