@@ -2,7 +2,7 @@
   "summary": {
     "total_questions": 5,
     "evaluated": 5,
-    "avg_latency_s": 5.43,
+    "avg_latency_s": 3.63,
     "avg_table_selection": 5.0,
     "avg_column_selection": 5.0,
     "avg_join_correctness": 5.0,
@@ -10,7 +10,8 @@
     "avg_aggregation": 5.0,
     "avg_overall": 5.0,
     "avg_table_recall": 1.0,
-    "execution_accuracy": 1.0,
+    "exec_exact": 1.0,
+    "exec_f1": 1.0,
     "execution_evaluated": 5,
     "score_distribution": {
       "perfect (5)": 5,
@@ -20,7 +21,7 @@
       "wrong (1)": 0
     },
     "avg_overall_simple": 5.0,
-    "exec_accuracy_simple": 1.0
+    "exec_exact_simple": 1.0
   },
   "results": [
     {
@@ -33,35 +34,36 @@
         "Employee",
         "Invoice"
       ],
-      "latency_s": 5.51,
+      "latency_s": 3.45,
       "table_recall": 1.0,
       "table_precision": 0.333,
       "table_hallucination": 0.667,
-      "execution_accuracy": 1.0,
+      "exec_exact": 1.0,
+      "exec_f1": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the Customer table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly selects the 'Customer' table, which is the only one required to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the CustomerId for counting and provides a clear alias for the result, which is a valid approach."
+          "reasoning": "The query correctly uses the primary key 'CustomerId' for the count, which is functionally equivalent to COUNT(*) in this context, and the alias is appropriate."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this question, and the query correctly uses none."
+          "reasoning": "No joins are necessary to answer this question, and the query correctly omits them."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are needed to count all customers, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT function to count the number of customers, which is equivalent to the ground truth."
+          "reasoning": "The query correctly uses the COUNT aggregation function to find the total number of customers, which directly answers the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The query is functionally identical to the ground truth and provides a perfectly correct answer to the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth queries and perfectly answers the user's question."
         }
       }
     },
@@ -74,35 +76,36 @@
         "Genre",
         "Track"
       ],
-      "latency_s": 5.25,
+      "latency_s": 4.06,
       "table_recall": 1.0,
       "table_precision": 0.5,
       "table_hallucination": 0.5,
-      "execution_accuracy": 1.0,
+      "exec_exact": 1.0,
+      "exec_f1": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'Genre' table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly selects the `Genre` table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses COUNT on the primary key 'GenreId', which is a valid way to count the total number of genres."
+          "reasoning": "The query correctly counts the `GenreId` column, which directly corresponds to counting the number of genres."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+          "reasoning": "No joins are required for this question, and the query correctly uses none."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are required for this question, and the query correctly uses none."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT aggregation function to find the total number of genres."
+          "reasoning": "The query correctly uses the `COUNT` aggregation function to count the total number of genres."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground-truth queries and will return the correct answer."
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct result."
         }
       }
     },
@@ -110,16 +113,17 @@
       "question": "How many employees are there?",
       "difficulty": "simple",
       "category": "count",
-      "generated_sql": "-- Step 1: Count all EmployeeIds from the Employee table.\nSELECT COUNT(e.EmployeeId) AS TotalEmployees\nFROM Employee AS e;",
+      "generated_sql": "-- Step 1: Count all rows in the Employee table.\nSELECT COUNT(e.EmployeeId) AS TotalEmployees\nFROM Employee AS e;",
       "selected_tables": [
         "Employee",
         "Customer"
       ],
-      "latency_s": 5.64,
+      "latency_s": 3.53,
       "table_recall": 1.0,
       "table_precision": 0.5,
       "table_hallucination": 0.5,
-      "execution_accuracy": 1.0,
+      "exec_exact": 1.0,
+      "exec_f1": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
@@ -127,23 +131,23 @@
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the 'EmployeeId' column within the COUNT function, which is a valid way to count all rows."
+          "reasoning": "The query correctly uses COUNT on the primary key 'EmployeeId' to count the number of employees, which is a valid approach."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this question, and the query correctly avoids using any."
+          "reasoning": "No joins are required for this question, and the query correctly uses none."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required for this question, and the query correctly avoids using any."
+          "reasoning": "No filters are required to count all employees, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT aggregation function to count the total number of employees, which directly answers the question."
+          "reasoning": "The query correctly uses the COUNT aggregation function to get the total number of employees."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth queries and correctly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth queries and will produce the correct result."
         }
       }
     },
@@ -151,44 +155,45 @@
       "question": "How many tracks are longer than 5 minutes?",
       "difficulty": "simple",
       "category": "filtering",
-      "generated_sql": "-- Step 1: Filter tracks where the duration (Milliseconds) is greater than 5 minutes (300,000 milliseconds).\n-- Step 2: Count the number of tracks that satisfy the condition.\nSELECT COUNT(t.TrackId) AS NumberOfTracksLongerThan5Minutes\nFROM Track AS t\nWHERE t.Milliseconds > (5 * 60 * 1000);",
+      "generated_sql": "-- Step 1: Filter tracks where Milliseconds is greater than 5 minutes (300,000 milliseconds).\n-- Step 2: Count the number of such tracks.\nSELECT COUNT(t.TrackId) AS NumberOfTracksLongerThan5Minutes\nFROM Track AS t\nWHERE t.Milliseconds > 300000;",
       "selected_tables": [
         "Track",
+        "Album",
+        "Genre",
         "InvoiceLine",
         "MediaType",
-        "Album",
-        "PlaylistTrack",
-        "Genre"
+        "PlaylistTrack"
       ],
-      "latency_s": 5.46,
+      "latency_s": 3.25,
       "table_recall": 1.0,
       "table_precision": 0.167,
       "table_hallucination": 0.833,
-      "execution_accuracy": 1.0,
+      "exec_exact": 1.0,
+      "exec_f1": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'Track' table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly selects the 'Track' table, which is the only one needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses COUNT(t.TrackId) to count the tracks, which is functionally equivalent to COUNT(*) in the ground truth."
+          "reasoning": "The query correctly uses COUNT on the primary key, which is equivalent to COUNT(*), and correctly uses the 'Milliseconds' column for filtering."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+          "reasoning": "No joins are required for this question, and the query correctly uses none."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The filter condition 't.Milliseconds > (5 * 60 * 1000)' is functionally identical to the ground truth's 'Milliseconds > 300000' and correctly identifies tracks longer than 5 minutes."
+          "reasoning": "The WHERE clause correctly filters for tracks with 'Milliseconds' greater than 300000, which perfectly matches the 'longer than 5 minutes' condition."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT aggregation function to provide the total number of tracks meeting the criteria."
+          "reasoning": "The query correctly uses the COUNT aggregate function to answer the 'how many' part of the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct result."
         }
       }
     },
@@ -196,28 +201,29 @@
       "question": "What is the most expensive track?",
       "difficulty": "simple",
       "category": "aggregation",
-      "generated_sql": "-- Step 1: Select the track name and unit price.\n-- Step 2: Order by UnitPrice in descending order.\n-- Step 3: Limit to 1 to get the most expensive track.\nSELECT t.Name,\n       t.UnitPrice\nFROM Track AS t\nORDER BY t.UnitPrice DESC\nLIMIT 1;",
+      "generated_sql": "-- Step 1: Select the track name and unit price.\n-- Step 2: Order by UnitPrice in descending order to find the most expensive.\n-- Step 3: Limit to 1 to get only the single most expensive track.\nSELECT t.Name,\n       t.UnitPrice\nFROM Track AS t\nORDER BY t.UnitPrice DESC\nLIMIT 1;",
       "selected_tables": [
         "Track",
+        "Album",
+        "Genre",
         "InvoiceLine",
         "MediaType",
-        "Album",
-        "PlaylistTrack",
-        "Genre"
+        "PlaylistTrack"
       ],
-      "latency_s": 5.28,
+      "latency_s": 3.87,
       "table_recall": 1.0,
       "table_precision": 0.167,
       "table_hallucination": 0.833,
-      "execution_accuracy": 1.0,
+      "exec_exact": 1.0,
+      "exec_f1": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects from the 'Track' table, which is the only one required."
+          "reasoning": "The query correctly selects from the 'Track' table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the track name and unit price, matching the ground truth."
+          "reasoning": "The query correctly selects the track 'Name' and 'UnitPrice' columns, which directly answer the user's question."
         },
         "join_correctness": {
           "score": 5,
@@ -225,15 +231,15 @@
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filtering is required, and the query correctly omits any WHERE clause."
+          "reasoning": "No specific filtering is required; the logic to find the 'most expensive' is correctly handled by the ORDER BY and LIMIT clauses."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses ORDER BY DESC and LIMIT 1 to find the single most expensive track."
+          "reasoning": "The query correctly uses ORDER BY UnitPrice DESC and LIMIT 1 to find the single most expensive track."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and perfectly answers the question."
+          "reasoning": "The generated query is functionally identical to the ground truth query and perfectly answers the user's question."
         }
       }
     }

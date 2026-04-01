@@ -89,9 +89,11 @@ def route_database(state: AgentState) -> dict:
     # Skip if already set (eval mode or single-db deployment)
     if state.get("selected_db"):
         return {}
-
+    
+    # Get question
     question = get_question(state)
-
+    
+    # Routing
     selected = select_database(
         question=question,
         domain_rules=domain_rules,
@@ -113,6 +115,7 @@ def retrieve_schema(state: AgentState) -> dict:
     Scoped to selected_db via Chroma metadata filter — only tables
     belonging to the routed database are returned as candidates.
     """
+    # Get question
     question = get_question(state)
 
     # Retriever scoped to the database selected by route_database

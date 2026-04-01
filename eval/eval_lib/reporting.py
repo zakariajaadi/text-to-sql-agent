@@ -27,7 +27,8 @@ def results_to_df(results: list[dict]) -> pd.DataFrame:
             "filt": j["filter_logic"]["score"],
             "agg": j["aggregation"]["score"],
             "overall": j["overall"]["score"],
-            "exec": r.get("execution_accuracy"),
+            "exec": r.get("exec_exact"),
+            "f1": r.get("exec_f1"),
             "recall": r.get("table_recall", 0),
             "latency": r["latency_s"],
             "sql": r["generated_sql"] or "",
@@ -67,14 +68,11 @@ def compute_summary(results: list[dict]) -> dict:
     summary["avg_table_recall"] = round(sum(recalls) / len(recalls), 2) if recalls else 0
 
     # 3. Execution accuracy — only count scorable questions (not None)
-    exec_scores = [
-        r["execution_accuracy"] for r in results
-        if r.get("execution_accuracy") is not None
-    ]
-    summary["execution_accuracy"] = (
-        round(sum(exec_scores) / len(exec_scores), 3) if exec_scores else 0
-    )
-    summary["execution_evaluated"] = len(exec_scores)
+    exec_exact = [r["exec_exact"] for r in results if r.get("exec_exact") is not None]
+    exec_f1 = [r["exec_f1"] for r in results if r.get("exec_f1") is not None]
+    summary["exec_exact"] = round(sum(exec_exact) / len(exec_exact), 3) if exec_exact else 0
+    summary["exec_f1"] = round(sum(exec_f1) / len(exec_f1), 3) if exec_f1 else 0
+    summary["execution_evaluated"] = len(exec_exact)
 
     # 4. Score distribution
     overall_scores = [r["judge"]["overall"]["score"] for r in valid]
@@ -93,11 +91,11 @@ def compute_summary(results: list[dict]) -> dict:
             )
             # Execution accuracy per difficulty
             diff_exec = [
-                r["execution_accuracy"] for r in diff_results
-                if r.get("execution_accuracy") is not None
+                r["exec_exact"] for r in diff_results
+                if r.get("exec_exact") is not None
             ]
             if diff_exec:
-                summary[f"exec_accuracy_{diff}"] = round(
+                summary[f"exec_exact_{diff}"] = round(
                     sum(diff_exec) / len(diff_exec), 3
                 )
 
@@ -111,8 +109,9 @@ def print_summary(summary: dict):
     print(f"  Avg latency:       {summary['avg_latency_s']}s")
     print(f"  Avg table recall:  {summary['avg_table_recall']}")
     print(f"  Avg overall score: {summary['avg_overall']}/5")
-    print(f"  Execution accuracy: {summary['execution_accuracy']:.1%}"
+    print(f"  Exec exact:        {summary['exec_exact']:.1%}"
           f" ({summary['execution_evaluated']} scored)")
+    print(f"  Exec F1:           {summary['exec_f1']:.1%}")
 
     if "score_distribution" in summary:
         print("\n  Score distribution:")
@@ -121,7 +120,7 @@ def print_summary(summary: dict):
 
     for diff in ("simple", "medium", "hard"):
         key = f"avg_overall_{diff}"
-        exec_key = f"exec_accuracy_{diff}"
+        exec_key = f"exec_exact_{diff}"
         if key in summary:
             exec_str = f" | exec {summary[exec_key]:.0%}" if exec_key in summary else ""
             print(f"  Avg {diff:<8}:     {summary[key]}/5{exec_str}")

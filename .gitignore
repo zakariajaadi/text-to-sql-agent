@@ -16,4 +16,4 @@ data/
 .files/
 .vscode/ 
 
-src/_*.py
+eval/results.json

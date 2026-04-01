@@ -123,7 +123,8 @@ class EvaluationRunner:
                     "selected_tables": [],
                     "latency_s": 0,
                     "table_recall": 0, "table_precision": 0, "table_hallucination": 0,
-                    "execution_accuracy": None,
+                    "exec_exact": None,
+                    "exec_f1": None,
                     "judge": uniform_score(0, f"Agent error: {e}"),
                 }
 
@@ -175,7 +176,8 @@ class EvaluationRunner:
             "selected_tables": agent_res["selected_tables"],
             "latency_s": agent_res["latency_s"],
             **table_metrics,
-            "execution_accuracy": exec_score,
+            "exec_exact": exec_score["exact"] if exec_score else None,
+            "exec_f1": exec_score["f1"] if exec_score else None,
             "judge": judge_res,
         }
 

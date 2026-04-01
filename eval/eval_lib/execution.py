@@ -6,53 +6,61 @@
 # against the real database, then compares result sets.
 # This is the gold standard metric in Text-to-SQL evaluation.
 
+from collections import Counter
+
 from langchain_community.utilities import SQLDatabase
 from loguru import logger
 
+
 def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
-                       generated_sql: str | None) -> float | None:
+                       generated_sql: str | None) -> dict | None:
     """
     Compute execution accuracy for a single benchmark question.
-
+ 
     Compares the generated SQL result set against each accepted (gold) query.
-    Takes the best match if multiple gold queries exist — a question can
+    Takes the best score if multiple gold queries exist — a question can
     have several valid SQL formulations.
-
+ 
     Returns:
-        1.0  — result sets match (at least one gold query)
-        0.0  — no gold query matches
+        {"exact": 0.0|1.0, "f1": 0.0-1.0} — both scores for the best-matching gold query
         None — generated_sql is None (OOS refusal or agent error)
     """
     # OOS or agent crash — not scorable
     if not generated_sql:
         return None
-
+ 
     # No gold queries defined — skip
     if not accepted_queries:
         logger.warning("[execution] No accepted_queries defined, skipping")
         return None
-
+ 
     # Execute the generated query
     gen_rows = _execute_query(db, generated_sql)
     if gen_rows is None:
-        # Generated SQL crashed — that's a 0, not a None
-        return 0.0
-
+        # Generated SQL crashed — that's 0, not a None
+        return {"exact": 0.0, "f1": 0.0}
+ 
     # Compare against each accepted query, take best match
+    best = {"exact": 0.0, "f1": 0.0}
+ 
     for gold_sql in accepted_queries:
         gold_rows = _execute_query(db, gold_sql)
         if gold_rows is None:
             logger.error(f"[execution] Gold query failed: {gold_sql}")
             continue
-
+        # Compute exact and f1 scores 
         order_sensitive = _has_order_dependency(gold_sql) or _has_order_dependency(generated_sql)
-        score = _compare_result_sets(gold_rows, gen_rows, order_sensitive)
-
-        if score == 1.0:
-            return 1.0
-
-    return 0.0
-
+        exact = _exact_execution_score(gold_rows, gen_rows, order_sensitive)
+        f1 = _f1_execution_score(gold_rows, gen_rows)
+ 
+        # Prefer the gold query that gives the best exact score, use F1 as tiebreaker
+        if exact > best["exact"] or (exact == best["exact"] and f1 > best["f1"]):
+            best = {"exact": exact, "f1": f1}
+ 
+        if best["exact"] == 1.0:
+            return best  # early exit — perfect match found
+ 
+    return best
 # ── Helpers ──────────────────────────────────────────────────────────
 
 def _execute_query(db: SQLDatabase, sql: str) -> list[tuple] | None:
@@ -80,9 +88,40 @@ def _has_order_dependency(sql: str) -> bool:
         return False
     return "LIMIT" in sql_upper or "OFFSET" in sql_upper
 
-def _compare_result_sets(gold_rows: list, gen_rows: list, order_sensitive: bool) -> float:
+
+def _f1_execution_score(gold_rows: list, gen_rows: list) -> float:
+    """Partial credit score (0.0 to 1.0) based on row-level F1 similarity.
+       
+       Secondary exec score, useful for near-misses.
     """
-    Compare two result sets. Returns 1.0 on exact match, 0.0 otherwise.
+    if not gold_rows and not gen_rows:
+        return 1.0
+    if not gold_rows or not gen_rows:
+        return 0.0
+    
+    # Normalize types (float precision, whitespace, etc.) for reliable comparison
+    gold_norm = [_normalize_row(tuple(r)) for r in gold_rows]
+    gen_norm  = [_normalize_row(tuple(r)) for r in gen_rows]
+
+    # Counter handles duplicate rows correctly (set would collapse them)
+    gold_count = Counter(gold_norm)
+    gen_count  = Counter(gen_norm)
+
+    # Intersection weighted by min occurrence
+    intersection = sum(min(gold_count[k], gen_count[k]) for k in gold_count)
+
+    recall    = intersection / len(gold_rows)
+    precision = intersection / len(gen_rows) if gen_rows else 0.0
+
+    if recall + precision == 0:
+        return 0.0
+
+    return round(2 * (recall * precision) / (recall + precision), 4)
+
+def _exact_execution_score(gold_rows: list, gen_rows: list, order_sensitive: bool) -> float:
+    """
+    Main execution score — compares gold vs generated result sets.
+    Returns 1.0 on exact match, 0.0 otherwise.
     When order doesn't matter, both sets are sorted before comparison.
     """
     gold = [_normalize_row(tuple(r)) for r in gold_rows]
