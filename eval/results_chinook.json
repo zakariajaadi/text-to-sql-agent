@@ -1,0 +1,363 @@
+{
+  "summary": {
+    "total_questions": 8,
+    "evaluated": 8,
+    "avg_latency_s": 4.66,
+    "avg_table_selection": 5.0,
+    "avg_column_selection": 4.5,
+    "avg_join_correctness": 5.0,
+    "avg_filter_logic": 4.88,
+    "avg_aggregation": 4.5,
+    "avg_overall": 4.25,
+    "avg_table_recall": 1.0,
+    "exec_exact": 0.75,
+    "execution_evaluated": 8,
+    "score_distribution": {
+      "perfect (5)": 4,
+      "good (4)": 2,
+      "partial (3)": 2,
+      "poor (2)": 0,
+      "wrong (1)": 0
+    },
+    "avg_overall_hard": 4.25,
+    "exec_exact_hard": 0.75
+  },
+  "results": [
+    {
+      "question": "What is the total revenue per genre?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get the GenreId for each sold track.\n-- Step 2: Join with Genre to get the genre name.\n-- Step 3: Calculate the revenue for each line item (UnitPrice * Quantity).\n-- Step 4: Group by genre name and sum the total revenue.\nSELECT g.Name AS GenreName,\n       SUM(il.UnitPrice * il.Quantity) AS TotalRevenue\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Genre AS g ON t.GenreId = g.GenreId\nGROUP BY g.Name\nORDER BY TotalRevenue DESC\nLIMIT 5;",
+      "selected_tables": [
+        "Genre",
+        "Track",
+        "InvoiceLine"
+      ],
+      "latency_s": 4.28,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects and joins the necessary tables: InvoiceLine, Track, and Genre."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the genre name and uses the UnitPrice and Quantity columns to calculate the total revenue."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are correct, using the appropriate keys (TrackId and GenreId) to link the tables."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required by the question, and none were applied, which is correct."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The aggregation and ordering are correct, but the query arbitrarily adds a `LIMIT 5` which was not requested and differs from the ground truth's `LIMIT 100`."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct but includes an arbitrary `LIMIT 5` clause that was not specified in the user's question, which means it doesn't return the full result set."
+        }
+      }
+    },
+    {
+      "question": "Which artist has generated the most revenue?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get track details.\n-- Step 2: Join Track with Album to link tracks to their albums.\n-- Step 3: Join Album with Artist to link albums to their artists.\n-- Step 4: Calculate the revenue for each invoice line (UnitPrice * Quantity).\n-- Step 5: Group by artist name and sum the total revenue.\n-- Step 6: Order the results by total revenue in descending order and limit to 1 to find the artist with the most revenue.\nSELECT ar.Name AS ArtistName,\n       SUM(il.UnitPrice * il.Quantity) AS TotalRevenue\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nJOIN Artist AS ar ON al.ArtistId = ar.ArtistId\nGROUP BY ar.ArtistId, ar.Name\nORDER BY TotalRevenue DESC\nLIMIT 1;",
+      "selected_tables": [
+        "Artist",
+        "Album",
+        "Track",
+        "InvoiceLine"
+      ],
+      "latency_s": 4.53,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The generated query correctly selects and joins all the necessary tables (Artist, Album, Track, InvoiceLine) to link artists to their sales revenue."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects the correct columns, but uses different aliases ('ArtistName', 'TotalRevenue') compared to the ground truth ('Name', 'Revenue'), which is a minor cosmetic difference."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed correctly using the appropriate foreign keys, establishing the correct path from sales data back to the artist."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required for this question, and the query correctly omits a WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses SUM to calculate total revenue, groups by the artist, and uses ORDER BY with LIMIT 1 to find the top artist."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and produces the right answer, with only minor cosmetic differences in column aliases compared to the ground truth query."
+        }
+      }
+    },
+    {
+      "question": "What playlists contain tracks from the 'Jazz' genre?",
+      "difficulty": "hard",
+      "category": "multi_join_filter",
+      "generated_sql": "-- Step 1: Find the GenreId for 'Jazz'.\n-- Step 2: Find all TrackIds associated with the 'Jazz' genre.\n-- Step 3: Find all PlaylistIds that contain these 'Jazz' tracks.\n-- Step 4: Get the names of these playlists.\n-- Step 5: Ensure distinct playlist names and limit to 5.\nSELECT DISTINCT\n  p.Name\nFROM Playlist AS p\nJOIN PlaylistTrack AS pt\n  ON p.PlaylistId = pt.PlaylistId\nJOIN Track AS t\n  ON pt.TrackId = t.TrackId\nJOIN Genre AS g\n  ON t.GenreId = g.GenreId\nWHERE\n  LOWER(g.Name) = LOWER('Jazz')\nLIMIT 5;",
+      "selected_tables": [
+        "Playlist",
+        "PlaylistTrack",
+        "Track",
+        "Genre"
+      ],
+      "latency_s": 4.97,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The generated query correctly selects and joins all the necessary tables (Playlist, PlaylistTrack, Track, Genre) to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the playlist name, which is exactly what the question asks for."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed on the correct keys, accurately linking playlists to tracks and tracks to genres."
+        },
+        "filter_logic": {
+          "score": 4,
+          "reasoning": "The filter logic is correct, though using LOWER() is a minor stylistic difference from the ground truth but achieves the same case-insensitive result."
+        },
+        "aggregation": {
+          "score": 3,
+          "reasoning": "The query correctly uses DISTINCT to avoid duplicate playlist names, but it adds an unnecessary 'LIMIT 5' clause which was not requested and will return an incomplete list of results."
+        },
+        "overall": {
+          "score": 3,
+          "reasoning": "The query is mostly correct but includes an unrequested 'LIMIT 5' clause, which means it would return a partially correct but incomplete answer."
+        }
+      }
+    },
+    {
+      "question": "Who are the top 3 artists by number of tracks sold?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get track details.\n-- Step 2: Join Track with Album to link tracks to their albums.\n-- Step 3: Join Album with Artist to link albums to their artists.\n-- Step 4: Sum the Quantity of tracks sold for each artist.\n-- Step 5: Group the results by artist name.\n-- Step 6: Order the artists by the total number of tracks sold in descending order.\n-- Step 7: Limit the output to the top 3 artists.\nSELECT ar.Name AS ArtistName,\n       SUM(il.Quantity) AS TracksSold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nJOIN Artist AS ar ON al.ArtistId = ar.ArtistId\nGROUP BY ar.ArtistId, ar.Name\nORDER BY TracksSold DESC\nLIMIT 3;",
+      "selected_tables": [
+        "Artist",
+        "Album",
+        "Track",
+        "InvoiceLine"
+      ],
+      "latency_s": 4.81,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The generated query correctly selects the same four tables (Artist, Album, Track, InvoiceLine) as the ground-truth queries."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the artist's name and calculates the sum of quantity sold, which is a valid and correct approach matching one of the ground-truth queries."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed correctly using the appropriate foreign keys, linking sales data back to the artists."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required by the question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by artist, orders the results by the number of tracks sold in descending order, and limits the output to the top 3, perfectly matching the question's requirements."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and would return the correct answer."
+        }
+      }
+    },
+    {
+      "question": "What is the average number of tracks per album?",
+      "difficulty": "hard",
+      "category": "nested_aggregation",
+      "generated_sql": "-- Step 1: Count the number of tracks for each album.\n-- Step 2: Calculate the average of these counts.\nSELECT CAST(COUNT(t.TrackId) AS REAL) / COUNT(DISTINCT t.AlbumId) AS AverageTracksPerAlbum\nFROM Track AS t\nWHERE t.AlbumId IS NOT NULL;",
+      "selected_tables": [
+        "Album",
+        "Track"
+      ],
+      "latency_s": 3.95,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses only the 'Track' table, which is all that is needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses 'TrackId' and 'AlbumId' for counting, which are the necessary columns for this calculation."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this query, and none were used, which is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The 'WHERE t.AlbumId IS NOT NULL' clause is technically redundant as COUNT(DISTINCT) would ignore nulls anyway, but it does not harm the query and produces the correct result."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The aggregation logic of dividing the total track count by the distinct album count is a valid and efficient way to calculate the average, matching one of the ground-truth queries."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and correctly calculates the average number of tracks per album."
+        }
+      }
+    },
+    {
+      "question": "Which customers have never made a purchase?",
+      "difficulty": "hard",
+      "category": "anti_join",
+      "generated_sql": "-- Step 1: Select the customer's first name, last name, and email.\n-- Step 2: Left join the Customer table with the Invoice table on CustomerId.\n-- Step 3: Filter for customers where there is no matching invoice (InvoiceId is NULL).\n-- Step 4: Limit the results to 5.\nSELECT\n  c.FirstName,\n  c.LastName,\n  c.Email\nFROM Customer AS c\nLEFT JOIN Invoice AS i\n  ON c.CustomerId = i.CustomerId\nWHERE\n  i.InvoiceId IS NULL\nLIMIT 5;",
+      "selected_tables": [
+        "Customer",
+        "Invoice"
+      ],
+      "latency_s": 4.98,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the Customer and Invoice tables, which is identical to the ground truth."
+        },
+        "column_selection": {
+          "score": 3,
+          "reasoning": "The query correctly selects the customer's first and last name, but also includes the email address, which was not requested."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The LEFT JOIN between the Customer and Invoice tables on CustomerId is correct and matches the logic of the first ground truth query."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for customers where the InvoiceId is NULL, which accurately identifies customers who have never made a purchase."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query uses a LIMIT of 5, which is different from the ground truth's LIMIT of 100, but since the question did not specify a limit, this is a minor and acceptable difference."
+        },
+        "overall": {
+          "score": 3,
+          "reasoning": "The query correctly identifies customers who have never made a purchase, but it includes an extra, unrequested column (Email) in the final output."
+        }
+      }
+    },
+    {
+      "question": "Show me the most popular tracks",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'most popular tracks' as tracks with the highest total quantity sold\n-- Step 1: Join InvoiceLine with Track to get track names.\n-- Step 2: Group by track ID and name.\n-- Step 3: Calculate the total quantity sold for each track.\n-- Step 4: Order by the total quantity sold in descending order.\n-- Step 5: Limit the results to 5.\nSELECT t.Name AS TrackName,\n       SUM(il.Quantity) AS TotalQuantitySold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nGROUP BY t.TrackId, t.Name\nORDER BY TotalQuantitySold DESC\nLIMIT 5;",
+      "selected_tables": [
+        "Track",
+        "InvoiceLine"
+      ],
+      "latency_s": 4.86,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the Track and InvoiceLine tables, which are necessary to link track names with purchase data."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects the correct columns for the output, but uses different aliases ('TrackName', 'TotalQuantitySold') than the ground truth query."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between Track and InvoiceLine on the TrackId column is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required for this question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by track, sums the quantity sold, orders the results in descending order, and limits the output to the top 5, perfectly matching the logic of an accepted answer."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and correctly answers the user's question by interpreting 'popular' as the highest quantity sold."
+        }
+      }
+    },
+    {
+      "question": "What are the best-selling albums?",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'best-selling' as albums with the highest total quantity of tracks sold\n-- Step 1: Join InvoiceLine with Track to get track details for each sale.\n-- Step 2: Join Track with Album to link each track to its album.\n-- Step 3: Group by album ID and title to aggregate sales per album.\n-- Step 4: Sum the quantity of tracks sold for each album.\n-- Step 5: Order the results by the total quantity sold in descending order.\n-- Step 6: Limit the output to 5 best-selling albums.\nSELECT al.Title AS AlbumTitle,\n       SUM(il.Quantity) AS TotalQuantitySold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nGROUP BY al.AlbumId, al.Title\nORDER BY TotalQuantitySold DESC\nLIMIT 5;",
+      "selected_tables": [
+        "Album",
+        "Track",
+        "InvoiceLine"
+      ],
+      "latency_s": 4.9,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the Album, Track, and InvoiceLine tables, which are all necessary to link album titles to sales quantities."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the album title and calculates the sum of the quantity sold, which perfectly aligns with one of the valid interpretations of the question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are correct, using the appropriate foreign keys (Track.AlbumId and InvoiceLine.TrackId) to connect the tables."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required for this question, and the query correctly omits a WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses SUM and GROUP BY to aggregate sales per album, and correctly uses ORDER BY and LIMIT to find the top 5."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the first accepted ground-truth query, correctly interpreting 'best-selling' as the highest quantity of tracks sold and providing a perfect SQL implementation."
+        }
+      }
+    }
+  ]
+}

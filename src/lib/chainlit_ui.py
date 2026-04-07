@@ -1,8 +1,10 @@
 """
 Chainlit UI helpers
 Used by: app.py (on_message, astream_events loop)
-
 """
+
+import re
+
 import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage, ToolMessage
@@ -30,24 +32,37 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
     if not node_name:
         return
 
-    output = event["data"].get("output", {})
+    output = event["data"].get("output")
 
-    # ── route_database: show selected database ──
+    # Guard: output must be a dict to inspect node-specific keys
+    if not isinstance(output, dict):
+        return
+
+    # ── condense_question: show rewritten question (only when rewritten) ──
+    if node_name == "condense_question" and "standalone_question" in output:
+        original = next(
+            (m.content for m in reversed(event["data"].get("input", {}).get("messages", []))
+             if hasattr(m, "content")),
+            ""
+        )
+        condensed = output["standalone_question"]
+        # Only show step if the question was actually rewritten
+        if original and condensed and original.strip().lower() != condensed.strip().lower():
+            async with cl.Step(name="💬 Question rewritten", type="run") as s:
+                s.output = f"**Original:** {original}\n**Rewritten:** {condensed}"
+        return
+
+    # ── route_database: title-only, no body ──
     if node_name == "route_database" and "selected_db" in output:
-        selected = output["selected_db"]
-        async with cl.Step(name=f"🗄️ Database: {selected}", type="run") as s:
-            s.output = f"Routing to **{selected}**"
+        async with cl.Step(name=f"🗄️ Database: {output['selected_db']}", type="run"):
+            pass
         return
 
-    # ── retrieve_schema: show candidate tables ──
-    if node_name == "retrieve_schema" and "candidate_schemas" in output:
-        candidates = output["candidate_schemas"]
-        tables = ", ".join(candidates.keys())
-        async with cl.Step(name="🔍 Candidate tables", type="tool") as s:
-            s.output = f"Retrieved {len(candidates)} tables: {tables}"
+    # ── retrieve_schema: skip (merged into rerank_tables display) ──
+    if node_name == "retrieve_schema":
         return
 
-    # ── rerank_tables: show selected tables + scope decision ──
+    # ── rerank_tables: show final selected tables with count ──
     if node_name == "rerank_tables" and "retrieved_schema" in output:
         schema = output["retrieved_schema"]
         table_names = [
@@ -57,11 +72,11 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
         ]
         in_scope = output.get("is_in_scope", True)
         emoji = "🟢" if in_scope else "🔴"
-        async with cl.Step(name=f"{emoji} Tables selected", type="run") as s:
+        async with cl.Step(name=f"{emoji} {len(table_names)} tables selected", type="run") as s:
             s.output = ", ".join(table_names)
         return
 
-    # ── sql_coder: show generated SQL ──
+    # ── sql_coder: show generated SQL (strip step comments) ──
     if node_name == "sql_coder" and "generated_query" in output:
         query = output["generated_query"]
         formatted = sqlparse.format(query, reindent=True, keyword_case="upper")
@@ -69,15 +84,30 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
             s.output = f"```sql\n{formatted}\n```"
         return
 
-    # ── sql_validator: show feedback on failure ──
-    if node_name == "sql_validator" and "validation_feedback" in output:
-        feedback = output["validation_feedback"]
+    # ── sql_validator: show failure or results ──
+    if node_name == "sql_validator":
+        feedback = output.get("validation_feedback", "")
         if feedback:
             async with cl.Step(name="❌ Validation failed", type="tool") as s:
                 s.output = feedback
             return
 
-    # Standard message-based processing
+        messages = output.get("messages", [])
+        query = ""
+        for msg in messages:
+            if isinstance(msg, AIMessage) and msg.tool_calls:
+                tc = msg.tool_calls[0]
+                query = tc["args"].get("query", "") if isinstance(tc, dict) else tc.args.get("query", "")
+                break
+
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                seen_msg_ids.add(id(msg))
+                async with cl.Step(name="📊 Query results", type="tool") as s:
+                    s.output = _format_query_result(msg.content, query=query)
+        return
+
+    # ── Standard message-based processing (format_answer) ──
     if not isinstance(output, dict) or "messages" not in output:
         return
 
@@ -91,13 +121,7 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
 async def handle_step(msg, node_name: str = "") -> None:
     """Route a single message to the appropriate Chainlit UI step."""
 
-    # ── sql_validator success: show query result ──
-    if isinstance(msg, ToolMessage):
-        async with cl.Step(name="📊 Query results", type="tool") as s:
-            s.output = msg.content
-
-    # ── Plain LLM output: final answer fallback ──
-    elif isinstance(msg, AIMessage) and not msg.tool_calls and msg.content:
+    if isinstance(msg, AIMessage) and not msg.tool_calls and msg.content:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
 
         if node_name == "format_answer":
@@ -115,3 +139,89 @@ def get_node_step_title(node_name: str) -> str:
         "sql_validator":     "✅ Validating & executing...",
         "format_answer":     "✍️ Formatting answer...",
     }.get(node_name, "")
+
+
+# ── Private helpers ───────────────────────────────────────────────────────────
+
+
+# def _strip_step_comments(sql: str) -> str:
+#     """Remove '-- Step N:' comments, keep '-- Assumption:' comments."""
+#     return "\n".join(
+#         line for line in sql.splitlines()
+#         if not re.match(r"^\s*--\s*Step\s+\d+", line, re.IGNORECASE)
+#     )
+
+
+def _format_query_result(raw: str, max_rows: int = 20, query: str = "") -> str:
+    """
+    Convert raw SQL tool output to a markdown table via pandas.
+    Extracts column names from the SQL SELECT clause when available.
+    """
+    import ast
+    import pandas as pd
+
+    try:
+        rows = ast.literal_eval(raw.strip())
+    except (ValueError, SyntaxError):
+        return raw
+
+    if not isinstance(rows, list) or not rows:
+        return raw
+
+    if not isinstance(rows[0], (tuple, list)):
+        return raw
+
+    df = pd.DataFrame(rows[:max_rows])
+
+    col_names = _extract_column_names(query) if query else []
+    if col_names and len(col_names) == len(df.columns):
+        df.columns = col_names
+    else:
+        df.columns = [f"Col {i+1}" for i in range(len(df.columns))]
+
+    table = df.to_markdown(index=False)
+
+    if len(rows) > max_rows:
+        table += f"\n\n*... {len(rows) - max_rows} more rows*"
+
+    return table
+
+
+def _extract_column_names(query: str) -> list[str]:
+    """
+    Extract column names/aliases from the SELECT clause using sqlparse.
+    Handles: SELECT col, SELECT col AS alias, SELECT COUNT(*) AS alias.
+    """
+    parsed = sqlparse.parse(query)
+    if not parsed:
+        return []
+
+    stmt = parsed[0]
+    select_items = []
+    in_select = False
+
+    for token in stmt.tokens:
+        if token.ttype is sqlparse.tokens.DML and token.normalized == "SELECT":
+            in_select = True
+            continue
+        if in_select:
+            if token.ttype is sqlparse.tokens.Keyword and token.normalized in ("FROM", "INTO"):
+                break
+            if isinstance(token, sqlparse.sql.IdentifierList):
+                for ident in token.get_identifiers():
+                    select_items.append(_get_col_display_name(ident))
+            elif isinstance(token, sqlparse.sql.Identifier):
+                select_items.append(_get_col_display_name(token))
+            elif isinstance(token, sqlparse.sql.Function):
+                select_items.append(str(token))
+
+    return select_items
+
+
+def _get_col_display_name(ident) -> str:
+    """Return alias if present, otherwise the column name."""
+    alias = ident.get_alias()
+    if alias:
+        return alias
+    name = ident.get_real_name()
+    return name if name else str(ident)

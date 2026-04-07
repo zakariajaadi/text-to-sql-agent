@@ -23,7 +23,7 @@ if os.getenv("ENV", "dev") == "dev":
 
 
 # Set loggings level
-logging.getLogger("chainlit").setLevel(logging.ERROR)
+logging.getLogger("chainlit").setLevel(logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("google_genai").setLevel(logging.WARNING)
 logging.getLogger("redisvl").setLevel(logging.WARNING)
@@ -272,7 +272,7 @@ if __name__ == "__main__":
 
     result = store.get(where={
     "$and": [
-        {"table_name": {"$eq": "Orders"}},
+        {"table_name": {"$eq": "Order Details"}},
         {"db_name":    {"$eq": "Northwind"}},
     ]
     })

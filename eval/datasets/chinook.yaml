@@ -64,8 +64,8 @@
   category: filtering
   expected_tables: [Customer]
   accepted_queries:
-    - "SELECT FirstName, LastName FROM Customer WHERE Country = 'Brazil'"
-    - "SELECT FirstName, LastName, City FROM Customer WHERE Country = 'Brazil'"
+    - "SELECT FirstName, LastName FROM Customer WHERE Country = 'Brazil' LIMIT 100"
+    - "SELECT FirstName, LastName, City FROM Customer WHERE Country = 'Brazil' LIMIT 100"
 
 # ── Medium (2-3 tables, JOINs, GROUP BY) ──────────────────────────────────────
 
@@ -167,12 +167,14 @@
       JOIN Track t ON g.GenreId = t.GenreId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
       GROUP BY g.Name ORDER BY Revenue DESC
+      LIMIT 100
     - >
       SELECT g.Name, ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS Revenue
       FROM InvoiceLine il
       JOIN Track t ON il.TrackId = t.TrackId
       JOIN Genre g ON t.GenreId = g.GenreId
       GROUP BY g.GenreId ORDER BY Revenue DESC
+      LIMIT 100
 
 - question: "Which artist has generated the most revenue?"
   difficulty: hard
@@ -242,9 +244,11 @@
       SELECT c.FirstName, c.LastName FROM Customer c
       LEFT JOIN Invoice i ON c.CustomerId = i.CustomerId
       WHERE i.InvoiceId IS NULL
+      LIMIT 100
     - >
       SELECT FirstName, LastName FROM Customer
       WHERE CustomerId NOT IN (SELECT CustomerId FROM Invoice)
+      LIMIT 100
 
 # ── Ambiguous (tests assumption handling) ─────────────────────────────────────
 
@@ -256,11 +260,11 @@
     - >
       SELECT t.Name, COUNT(il.InvoiceLineId) AS TimesPurchased
       FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY t.TrackId ORDER BY TimesPurchased DESC LIMIT 10
+      GROUP BY t.TrackId ORDER BY TimesPurchased DESC LIMIT 5
     - >
       SELECT t.Name, SUM(il.Quantity) AS TotalSold
       FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY t.TrackId ORDER BY TotalSold DESC LIMIT 10
+      GROUP BY t.TrackId ORDER BY TotalSold DESC LIMIT 5
   notes: >
     "Popular" is ambiguous — could mean most purchased (InvoiceLine count),
     most playlists (PlaylistTrack count), or most revenue. All are valid.
@@ -275,13 +279,19 @@
       FROM Album al
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY al.AlbumId ORDER BY TotalSold DESC LIMIT 10
+      GROUP BY al.AlbumId ORDER BY TotalSold DESC LIMIT 5
     - >
       SELECT al.Title, COUNT(il.InvoiceLineId) AS LineItems
       FROM Album al
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY al.AlbumId ORDER BY LineItems DESC LIMIT 10
+      GROUP BY al.AlbumId ORDER BY LineItems DESC LIMIT 5
+    - >
+      SELECT al.Title, SUM(il.UnitPrice * il.Quantity) AS TotalRevenue
+      FROM Album al
+      JOIN Track t ON al.AlbumId = t.AlbumId
+      JOIN InvoiceLine il ON t.TrackId = il.TrackId
+      GROUP BY al.AlbumId ORDER BY TotalRevenue DESC LIMIT 5
   notes: >
     "Best-selling" could mean by quantity, by revenue, or by number of
     distinct customers. Agent should state its assumption.

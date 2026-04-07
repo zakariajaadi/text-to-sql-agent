@@ -28,7 +28,6 @@ def results_to_df(results: list[dict]) -> pd.DataFrame:
             "agg": j["aggregation"]["score"],
             "overall": j["overall"]["score"],
             "exec": r.get("exec_exact"),
-            "f1": r.get("exec_f1"),
             "recall": r.get("table_recall", 0),
             "latency": r["latency_s"],
             "sql": r["generated_sql"] or "",
@@ -69,9 +68,7 @@ def compute_summary(results: list[dict]) -> dict:
 
     # 3. Execution accuracy — only count scorable questions (not None)
     exec_exact = [r["exec_exact"] for r in results if r.get("exec_exact") is not None]
-    exec_f1 = [r["exec_f1"] for r in results if r.get("exec_f1") is not None]
     summary["exec_exact"] = round(sum(exec_exact) / len(exec_exact), 3) if exec_exact else 0
-    summary["exec_f1"] = round(sum(exec_f1) / len(exec_f1), 3) if exec_f1 else 0
     summary["execution_evaluated"] = len(exec_exact)
 
     # 4. Score distribution
@@ -111,7 +108,6 @@ def print_summary(summary: dict):
     print(f"  Avg overall score: {summary['avg_overall']}/5")
     print(f"  Exec exact:        {summary['exec_exact']:.1%}"
           f" ({summary['execution_evaluated']} scored)")
-    print(f"  Exec F1:           {summary['exec_f1']:.1%}")
 
     if "score_distribution" in summary:
         print("\n  Score distribution:")

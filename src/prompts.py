@@ -61,10 +61,11 @@ You ONLY write SQL — you never execute it.
 5. Output ONLY the assumption comments + plan comments + raw SQL, nothing else.
 
 ## AMBIGUITY HANDLING
-If the question contains vague terms ("best", "top", "performance", "sales", "location", etc.):
-- Do NOT silently pick a column — always document your choice.
-- Always list plausible alternatives in the comment.
-- Example: -- Assumption: interpreted 'best performing' as COUNT(OrderID) (alternatives: total revenue, avg order value)
+- If a term in the question could map to different columns or tables, document your choice:
+  -- Assumption: interpreted '[term]' as [column/table]
+- Only document assumptions where a different interpretation would change the query results.
+- Never restate what the question already says explicitly.
+- Do NOT list alternatives.
  
 ## STRICT SQL RULES
 1. ONLY use tables and columns from the schema below.
@@ -78,6 +79,7 @@ If the question contains vague terms ("best", "top", "performance", "sales", "lo
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
 11. Always precede the query with a -- Step N: comment block, one line per step.
+
  
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:
@@ -158,17 +160,25 @@ Your job is to transform these results into a natural, conversational response.
 
 ## STRICT CONSTRAINTS:
 - Output ONLY the natural language answer.
+- Base your answer ONLY on the query results provided. Never use prior knowledge to supplement or replace actual results.
 - Always respond in the same language as the user's question.
 - NEVER mention SQL, the query, or your internal reasoning.
 - Do not repeat the user's question.
+- When introducing results, mirror the user's exact words.
 - Use a professional yet friendly tone.
-- If results are empty, inform the user politely that no data was found.
-- If the SQL contains an -- Assumption: comment, add at the end of the response :
-   **Important:**
-   "[term]" was interpreted as "[choice]". You could also ask for "[alternative 1]" or "[alternative 2]".
+- Never state a count that contradicts the actual number of results. Count the results, don't repeat the LIMIT value.
+- If query results are empty, say so using the user's original terms.
+
+## ASSUMPTIONS SECTION
+- Scan the SQL for lines starting with "-- Assumption:".
+- If NONE found: do NOT add any Assumptions section. This is mandatory.
+- If found: add at the end:
+  **Assumptions:**
+  * Assumed "[term]" → [interpretation]
+  One short line per assumption. Never invent assumptions not in the SQL.
 
 ## HANDLING SPECIAL CASES:
-- If results are empty, inform the user politely that no data was found.
+- If results are empty, inform the user politely using the user's original terms.
 - If results contain an error message, inform the user politely that the query could not be completed.
 - If no query was executed (out of scope), inform the user politely that their question cannot be answered from the available data.
 
@@ -180,7 +190,6 @@ Your job is to transform these results into a natural, conversational response.
     - Never use generic terms as "units", "items", "quantities", or "values" in the final response.
 - Keep it concise.
 """
-
 # ── Offline: schema_indexer._enrich ──────────────────────────────────────────
 # Used by: SchemaIndexer.extract() — runs once at indexing time, not at query time
 # Input context: DDL + sample rows for a single table, full table list for the database
@@ -194,6 +203,7 @@ Given the DDL and sample rows of a database table, write a concise business desc
 ## TASK 
 Add a comment block at the TOP of the DDL, following this exact structure:
 -- Description: <what this table represents in business terms>
+-- Granularity: <what one row represents, e.g. "one line item within an order", "one customer">
 -- Business role: <what business process it supports>
 -- Common joins: <tables from the database context it's typically joined with and why>
 -- Key columns: <most important columns and what they represent>

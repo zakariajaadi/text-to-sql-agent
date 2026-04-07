@@ -113,6 +113,11 @@ class EvaluationRunner:
 
             try:
                 result = self._evaluate_one(q)
+                # Retry once if agent failed to generate SQL
+                if result["generated_sql"] is None and q["category"] != "out_of_scope":
+                    logger.warning(f"Retrying: {q['question']}")
+                    time.sleep(5)
+                    result = self._evaluate_one(q)
             except Exception as e:
                 logger.error(f"Agent failed: {q['question']} — {e}")
                 result = {
@@ -124,7 +129,6 @@ class EvaluationRunner:
                     "latency_s": 0,
                     "table_recall": 0, "table_precision": 0, "table_hallucination": 0,
                     "exec_exact": None,
-                    "exec_f1": None,
                     "judge": uniform_score(0, f"Agent error: {e}"),
                 }
 
@@ -157,7 +161,7 @@ class EvaluationRunner:
         exec_score = execution_accuracy(
             self.db_conn,
             q.get("accepted_queries", []),
-            agent_res["generated_sql"],
+            agent_res["generated_sql"]
         )
 
         # 4. Judge
@@ -177,7 +181,6 @@ class EvaluationRunner:
             "latency_s": agent_res["latency_s"],
             **table_metrics,
             "exec_exact": exec_score["exact"] if exec_score else None,
-            "exec_f1": exec_score["f1"] if exec_score else None,
             "judge": judge_res,
         }
 
@@ -205,7 +208,7 @@ class EvaluationRunner:
 
         return {
             "generated_sql": result.get("generated_query") or None,
-            "selected_tables": extract_tables(result.get("retrieved_schema", "")),
+            "selected_tables": result.get("llm_selected_tables", []),
             "latency_s": round(time.perf_counter() - start, 2),
         }
 

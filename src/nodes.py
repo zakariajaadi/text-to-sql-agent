@@ -46,38 +46,30 @@ def condense_question(state: AgentState) -> dict:
     to resolve pronouns and implicit references.
     No-op when history has no prior turns (skips the LLM call).
     """
-    question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), ""
-    )
+    # Fetch all human messages
+    human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
+    
+    # first question, no condensation
+    if len(human_msgs) <= 1:
+        return {"standalone_question": human_msgs[-1] if human_msgs else ""}
+    # Last question 
+    question = human_msgs[-1]
 
-    # Count prior human messages — if only one (the current), skip condensation
-    human_count = sum(1 for m in state["messages"] if isinstance(m, HumanMessage))
-    if human_count <= 1:
-        return {"standalone_question": question}
-
-    # Build history from all messages except the last HumanMessage
-    history_parts = []
-    for m in state["messages"][:-1]:
-        if isinstance(m, HumanMessage):
-            history_parts.append(f"User: {m.content}")
-        elif isinstance(m, AIMessage) and m.content and not m.tool_calls:
-            history_parts.append(f"Assistant: {m.content}")
-
-    if not history_parts:
-        return {"standalone_question": question}
-
+    # Previous questions
+    prior_questions = human_msgs[:-1][-5:]  # last 5 prior questions
+    
+    # Condesation
     response = fast_model.invoke([
         SystemMessage(content=CONDENSE_QUESTION_PROMPT),
         HumanMessage(content=(
-            f"Conversation history:\n" + "\n".join(history_parts) + "\n\n"
-            f"Follow-up question: {question}"
+            "Prior questions:\n"
+            + "\n".join(f"- {q}" for q in prior_questions)
+            + f"\n\nFollow-up question: {question}"
         )),
     ])
-    
-    
     condensed = extract_text_content(response)
-    logger.debug(f"condense_question: '{question}' → '{condensed}'")
 
+    logger.debug(f"condense_question: '{question}' → '{condensed}'")
     return {"standalone_question": condensed}
 
 def route_database(state: AgentState) -> dict:
@@ -87,8 +79,8 @@ def route_database(state: AgentState) -> dict:
     """
 
     # Skip if already set (eval mode or single-db deployment)
-    if state.get("selected_db"):
-        return {}
+    #if state.get("selected_db"):
+    #    return {}
     
     # Get question
     question = get_question(state)
@@ -172,6 +164,11 @@ def rerank_tables(state: AgentState) -> dict:
             candidates[table] = schema_store[db_name][table]
             logger.debug(f"[rerank_tables] Loaded LLM-selected table from store: {table}")
 
+    # Override scope if all LLM-selected tables are now available
+    if not response.is_in_scope and all(t in candidates for t in response.tables):
+        response.is_in_scope = True
+        logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
+
     selected_names = [t for t in response.tables if t in candidates]
 
     if not selected_names:
@@ -179,6 +176,7 @@ def rerank_tables(state: AgentState) -> dict:
         return {
             "retrieved_schema": "\n\n".join(candidates.values()),
             "is_in_scope":      response.is_in_scope,
+            "llm_selected_tables": list(response.tables),
         }
 
     # ── 3. FK expansion — recover bridge/fact tables ──────────────────────────
@@ -202,6 +200,7 @@ def rerank_tables(state: AgentState) -> dict:
     return {
         "retrieved_schema": "\n\n".join(selected),
         "is_in_scope":      response.is_in_scope,
+        "llm_selected_tables": list(response.tables),
     }
 
 
