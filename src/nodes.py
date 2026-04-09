@@ -49,9 +49,10 @@ def condense_question(state: AgentState) -> dict:
     # Fetch all human messages
     human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
     
-    # first question, no condensation
+    # if first question, no condensation
     if len(human_msgs) <= 1:
         return {"standalone_question": human_msgs[-1] if human_msgs else ""}
+    
     # Last question 
     question = human_msgs[-1]
 
@@ -247,7 +248,7 @@ def sql_coder(state: AgentState) -> dict:
     ])
 
     # Extract raw SQL from the response
-    query = extract_sql(response.content)
+    query = extract_sql(extract_text_content(response))
 
     return {"generated_query": query}
 

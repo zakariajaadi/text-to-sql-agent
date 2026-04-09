@@ -1,0 +1,480 @@
+{
+  "summary": {
+    "total_questions": 11,
+    "evaluated": 11,
+    "avg_latency_s": 6.89,
+    "avg_table_selection": 4.45,
+    "avg_column_selection": 4.27,
+    "avg_join_correctness": 4.64,
+    "avg_filter_logic": 4.73,
+    "avg_aggregation": 4.64,
+    "avg_overall": 4.18,
+    "avg_table_recall": 0.83,
+    "exec_exact": 0.636,
+    "execution_evaluated": 11,
+    "score_distribution": {
+      "perfect (5)": 6,
+      "good (4)": 3,
+      "partial (3)": 1,
+      "poor (2)": 0,
+      "wrong (1)": 1
+    },
+    "avg_overall_hard": 4.18,
+    "exec_exact_hard": 0.636
+  },
+  "results": [
+    {
+      "question": "What is the total revenue per category?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join Order Details with Products to link line items to categories.\n-- Step 2: Join with Categories to get the category name.\n-- Step 3: Calculate revenue per line item as (UnitPrice * Quantity) * (1 - Discount).\n-- Step 4: Group by category name and sum the calculated revenue.\nSELECT c.CategoryName,\n       SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS TotalRevenue\nFROM Categories AS c\nJOIN Products AS p ON c.CategoryID = p.CategoryID\nJOIN \"Order Details\" AS od ON p.ProductID = od.ProductID\nGROUP BY c.CategoryName;",
+      "selected_tables": [
+        "Categories",
+        "Products",
+        "Order Details"
+      ],
+      "latency_s": 6.33,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The generated query correctly selects the same tables as the ground truth queries: Categories, Products, and Order Details."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query correctly selects the category name and calculates the revenue, but uses a different alias ('TotalRevenue' vs 'Revenue') than the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are correct, using the appropriate keys to link Categories to Products and Products to Order Details."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, and the generated query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by category name and uses the SUM function, but it is missing the ORDER BY clause that is present in the ground truth queries."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and would return the right revenue numbers for each category, but it has minor differences from the ground truth, namely a different column alias and a missing ORDER BY clause."
+        }
+      }
+    },
+    {
+      "question": "What is the average order value by country?",
+      "difficulty": "hard",
+      "category": "nested_aggregation",
+      "generated_sql": "-- Step 1: Join Orders with Order Details to calculate the total value of each order.\n-- Step 2: Calculate the total value per order as sum of (UnitPrice * Quantity * (1 - Discount)).\n-- Step 3: Group the results by OrderID and ShipCountry.\n-- Step 4: Calculate the average of these order totals grouped by ShipCountry.\nSELECT o.ShipCountry,\n       AVG(order_totals.TotalValue) AS AverageOrderValue\nFROM Orders AS o\nJOIN (\n    SELECT OrderID,\n           SUM(UnitPrice * Quantity * (1 - Discount)) AS TotalValue\n    FROM \"Order Details\"\n    GROUP BY OrderID\n) AS order_totals ON o.OrderID = order_totals.OrderID\nGROUP BY o.ShipCountry\nORDER BY AverageOrderValue DESC\nLIMIT 100;",
+      "selected_tables": [
+        "Orders",
+        "Order Details"
+      ],
+      "latency_s": 5.96,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the 'Orders' and 'Order Details' tables, which are the exact tables needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the country and calculates the average order value using the correct formula for an individual order's total value."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the 'Orders' table and the subquery (derived from 'Order Details') is correctly performed on 'OrderID'."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required by the question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The aggregation logic is correct, but the LIMIT clause is 100, which differs from the ground truth's LIMIT of 5; however, the question did not specify a limit."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and uses a valid alternative approach (subquery vs. CTE), but it returns more rows than the ground truth due to a different LIMIT clause."
+        }
+      }
+    },
+    {
+      "question": "What is the average order value per customer?",
+      "difficulty": "hard",
+      "category": "nested_aggregation",
+      "generated_sql": "-- Step 1: Join Orders with Order Details to calculate the total value of each order.\n-- Step 2: Group by OrderID and CustomerID to get the total value per order.\n-- Step 3: Group the resulting order totals by CustomerID to calculate the average order value per customer.\nSELECT T.CustomerID,\n       AVG(T.OrderTotal) AS AverageOrderValue\nFROM (\n    SELECT o.CustomerID,\n           o.OrderID,\n           SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS OrderTotal\n    FROM Orders AS o\n    JOIN \"Order Details\" AS od ON o.OrderID = od.OrderID\n    GROUP BY o.CustomerID, o.OrderID\n) AS T\nGROUP BY T.CustomerID\nLIMIT 100;",
+      "selected_tables": [
+        "Orders",
+        "Order Details"
+      ],
+      "latency_s": 11.93,
+      "table_recall": 0.667,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 3,
+          "reasoning": "The query is missing the 'Customers' table, which is needed to display the customer's name instead of just their ID, as done in the ground truth."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query correctly calculates the average order value but selects the CustomerID instead of the more user-friendly CompanyName."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The joins between the 'Orders' and 'Order Details' tables are correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required by the question, and none were applied, which is correct."
+        },
+        "aggregation": {
+          "score": 3,
+          "reasoning": "The core aggregation logic is correct, but the use of 'LIMIT 100' without an 'ORDER BY' clause is arbitrary and less useful than the ground truth's ordered and limited result."
+        },
+        "overall": {
+          "score": 3,
+          "reasoning": "The query correctly calculates the required metric but fails to present it in a user-friendly way by omitting the customer name and applying an arbitrary limit without ordering."
+        }
+      }
+    },
+    {
+      "question": "What is the average number of items per order?",
+      "difficulty": "hard",
+      "category": "nested_aggregation",
+      "generated_sql": "-- Step 1: Calculate the total number of items (sum of Quantity) for each order.\n-- Step 2: Calculate the average of these totals across all orders.\nSELECT AVG(TotalItemsPerOrder)\nFROM (\n    SELECT SUM(od.Quantity) AS TotalItemsPerOrder\n    FROM \"Order Details\" AS od\n    GROUP BY od.OrderID\n);",
+      "selected_tables": [
+        "Order Details"
+      ],
+      "latency_s": 5.07,
+      "table_recall": 0.5,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses only the \"Order Details\" table, which is the only one required to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'Quantity' column for summation and then calculates the average of that sum, which is exactly what the question asks for."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary to answer this question, and the query correctly omits them."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required to answer the question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses a nested aggregation: first SUM(Quantity) grouped by OrderID, and then AVG() on the result of the sums, which is the correct approach."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground-truth queries and correctly calculates the average number of items per order using a subquery."
+        }
+      }
+    },
+    {
+      "question": "Which supplier has generated the most revenue?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join Suppliers with Products to link suppliers to their items.\n-- Step 2: Join Products with Order Details to link items to sales transactions.\n-- Step 3: Calculate revenue per line item as UnitPrice * Quantity * (1 - Discount).\n-- Step 4: Group by supplier and sum the total revenue.\n-- Step 5: Order by total revenue descending and limit to 1.\nSELECT s.CompanyName,\n       SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS TotalRevenue\nFROM Suppliers AS s\nJOIN Products AS p ON s.SupplierID = p.SupplierID\nJOIN \"Order Details\" AS od ON p.ProductID = od.ProductID\nGROUP BY s.SupplierID, s.CompanyName\nORDER BY TotalRevenue DESC\nLIMIT 1;",
+      "selected_tables": [
+        "Suppliers",
+        "Products",
+        "Order Details"
+      ],
+      "latency_s": 6.09,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the same tables as the ground truth: Suppliers, Products, and Order Details."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the supplier's company name and calculates the revenue, which perfectly matches the user's request."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are correct, using the appropriate keys (SupplierID and ProductID) to link the tables."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by supplier, calculates the sum of revenue, orders the results descending, and limits to the top result."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "Which customers have never placed an order?",
+      "difficulty": "hard",
+      "category": "anti_join",
+      "generated_sql": "-- Step 1: Select customers from the Customers table.\n-- Step 2: Use a LEFT JOIN to link them to the Orders table.\n-- Step 3: Filter for rows where the OrderID is NULL, indicating no matching order exists.\nSELECT c.CompanyName\nFROM Customers AS c\nLEFT JOIN Orders AS o ON c.CustomerID = o.CustomerID\nWHERE o.OrderID IS NULL\nLIMIT 100;",
+      "selected_tables": [
+        "Customers",
+        "Orders"
+      ],
+      "latency_s": 4.57,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the Customers and Orders tables, which is identical to the ground truth."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the CompanyName column, which is what the question asks for and matches the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The LEFT JOIN on CustomerID is the correct way to find customers who may not have orders, matching the ground truth."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for NULL OrderIDs, which accurately identifies customers with no orders."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly includes a LIMIT clause, which is appropriate for this type of question and matches the ground truth."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is identical to one of the accepted ground-truth queries and will produce the correct result."
+        }
+      }
+    },
+    {
+      "question": "What are the top 3 employees by total revenue generated?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "-- Step 1: Join Employees with Orders and Order Details to link sales to employees.\n-- Step 2: Calculate revenue per order line as (UnitPrice * Quantity * (1 - Discount)).\n-- Step 3: Group by employee and sum the calculated revenue.\n-- Step 4: Order by total revenue descending and limit to 3.\nSELECT e.FirstName || ' ' || e.LastName AS EmployeeName,\n       SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS TotalRevenue\nFROM Employees AS e\nJOIN Orders AS o ON e.EmployeeID = o.EmployeeID\nJOIN \"Order Details\" AS od ON o.OrderID = od.OrderID\nGROUP BY e.EmployeeID, e.FirstName, e.LastName\nORDER BY TotalRevenue DESC\nLIMIT 3;",
+      "selected_tables": [
+        "Employees",
+        "Orders",
+        "Order Details"
+      ],
+      "latency_s": 5.76,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects and joins the Employees, Orders, and \"Order Details\" tables, which is the exact same approach as the ground truth."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query correctly calculates the total revenue, but it concatenates the first and last names into a single column, which is a minor formatting difference from the ground truth that selects them separately."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed on the correct keys (EmployeeID and OrderID) and are logically sound, matching the ground truth query perfectly."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required by the question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by employee, calculates the sum of revenue, orders the results in descending order, and limits the output to the top 3, which is all correct."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and produces the correct result, with only a minor, acceptable difference in how the employee's name is formatted in the output."
+        }
+      }
+    },
+    {
+      "question": "What is the monthly revenue trend for 1997?",
+      "difficulty": "hard",
+      "category": "date_aggregation",
+      "generated_sql": "-- Step 1: Filter invoices for the year 1997.\n-- Step 2: Extract the month from the InvoiceDate.\n-- Step 3: Group by the month and calculate the sum of the Total column.\n-- Step 4: Order by the month chronologically.\n\nSELECT strftime('%m', i.InvoiceDate) AS Month,\n       SUM(i.Total) AS MonthlyRevenue\nFROM Invoice AS i\nWHERE strftime('%Y', i.InvoiceDate) = '1997'\nGROUP BY Month\nORDER BY Month;",
+      "selected_tables": [
+        "Invoice"
+      ],
+      "latency_s": 4.21,
+      "table_recall": 0.0,
+      "table_precision": 0.0,
+      "table_hallucination": 1.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 1,
+          "reasoning": "The query hallucinates an `Invoice` table which does not exist in the schema, instead of using the correct `Orders` and `Order Details` tables."
+        },
+        "column_selection": {
+          "score": 1,
+          "reasoning": "The query selects non-existent columns `InvoiceDate` and `Total` from a hallucinated table, failing to use the correct columns `OrderDate`, `UnitPrice`, `Quantity`, and `Discount` to calculate revenue."
+        },
+        "join_correctness": {
+          "score": 1,
+          "reasoning": "The query is missing the critical join between the `Orders` and `Order Details` tables required to link order dates with revenue details."
+        },
+        "filter_logic": {
+          "score": 2,
+          "reasoning": "The filtering logic to isolate the year '1997' is conceptually correct, but it is applied to a non-existent column (`InvoiceDate`) in a hallucinated table, making it non-functional."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The aggregation logic, including grouping by month, summing a value, and ordering the results, is perfectly aligned with the user's request for a monthly trend."
+        },
+        "overall": {
+          "score": 1,
+          "reasoning": "The query is completely wrong and non-executable because it hallucinates the `Invoice` table and its columns, failing to use the actual schema to answer the question."
+        }
+      }
+    },
+    {
+      "question": "Who are our best customers?",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'best customers' as customers with the highest total revenue generated from orders.\n-- Step 1: Join Customers with Orders and Order Details to calculate total revenue per customer.\n-- Step 2: Calculate revenue as (UnitPrice * Quantity) * (1 - Discount) for each line item.\n-- Step 3: Group by CustomerID and CompanyName to aggregate total revenue.\n-- Step 4: Order by total revenue in descending order and limit to 5.\nSELECT c.CompanyName,\n       SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS TotalRevenue\nFROM Customers AS c\nJOIN Orders AS o ON c.CustomerID = o.CustomerID\nJOIN \"Order Details\" AS od ON o.OrderID = od.OrderID\nGROUP BY c.CustomerID, c.CompanyName\nORDER BY TotalRevenue DESC\nLIMIT 5;",
+      "selected_tables": [
+        "Customers",
+        "Orders",
+        "Order Details"
+      ],
+      "latency_s": 6.65,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the Customers, Orders, and Order Details tables, which is identical to the first ground-truth query."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the company name and calculates the total spending, which matches the intent of the first ground-truth query."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins between Customers, Orders, and Order Details are performed correctly using the appropriate primary and foreign keys."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by customer, orders by the total revenue in descending order, and limits the result to the top 5, perfectly matching the ground truth's logic."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is a perfect match for one of the accepted ground-truth queries, correctly interpreting 'best customers' as those with the highest total spending."
+        }
+      }
+    },
+    {
+      "question": "Which products are underperforming?",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'underperforming' as products with the lowest total quantity sold (alternatives: lowest revenue, lowest profit margin)\n-- Step 1: Join Products with Order Details to link products to sales data.\n-- Step 2: Group by product name and calculate the total quantity sold for each.\n-- Step 3: Order by total quantity sold in ascending order to identify the least sold products.\n-- Step 4: Limit to 5 to show the bottom 5 products.\nSELECT p.ProductName,\n       SUM(od.Quantity) AS TotalQuantitySold\nFROM Products AS p\nJOIN \"Order Details\" AS od ON p.ProductID = od.ProductID\nGROUP BY p.ProductID, p.ProductName\nORDER BY TotalQuantitySold ASC\nLIMIT 5;",
+      "selected_tables": [
+        "Products",
+        "Order Details"
+      ],
+      "latency_s": 5.86,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query uses the exact same tables as the ground truth query."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query selects the correct columns to show the product name and its total quantity sold, which matches the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the Products and \"Order Details\" tables is correctly performed on the ProductID column."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, which is consistent with the ground truth."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by product, sums the quantity, orders by the sum in ascending order, and limits the result to the top 5, perfectly matching the ground truth's logic."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is a valid and correct interpretation of the ambiguous question, and its implementation is functionally identical to one of the accepted ground-truth queries."
+        }
+      }
+    },
+    {
+      "question": "Show me inactive customers",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'inactive customers' as customers who have not placed any orders.\n-- Step 1: Select customers from the Customers table.\n-- Step 2: Filter for customers whose CustomerID does not exist in the Orders table.\n-- Step 3: Limit to 100 as a safety cap.\nSELECT T1.CustomerID,\n       T1.CompanyName\nFROM Customers AS T1\nWHERE T1.CustomerID NOT IN\n    (SELECT DISTINCT T2.CustomerID\n     FROM Orders AS T2)\nLIMIT 100;",
+      "selected_tables": [
+        "Customers",
+        "Orders"
+      ],
+      "latency_s": 13.32,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the Customers and Orders tables, which is identical to the ground truth queries."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects CustomerID in addition to CompanyName, which is a minor deviation from the ground truth that only selects CompanyName."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The query uses a subquery with NOT IN, which is a valid and correct alternative to a LEFT JOIN for this question, as demonstrated by one of the ground truth queries."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for customers whose CustomerID is not present in the Orders table, perfectly matching the logic of the second ground truth query."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly includes LIMIT 100, matching the ground truth queries."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and uses a valid approach (NOT IN subquery) that matches one of the ground truth queries, with the only minor issue being the selection of an extra column (CustomerID)."
+        }
+      }
+    }
+  ]
+}

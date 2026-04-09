@@ -9,9 +9,7 @@ from config import db_registry, model
 
 
 
-# =============================================================================
 # Factory  — constructs the 3 tools per database
-# =============================================================================
 
 def _build_tools(llm: BaseChatModel, db: SQLDatabase) -> dict[str, BaseTool]:
     toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -24,9 +22,7 @@ def _build_tools(llm: BaseChatModel, db: SQLDatabase) -> dict[str, BaseTool]:
     }
 
 
-# =============================================================================
 # Registry — one entry per db, created on startup
-# =============================================================================
 
 _tools_registry: dict[str, dict[str, BaseTool]] = {
     db_name: _build_tools(llm=model, db=db_instance)
@@ -36,9 +32,7 @@ _tools_registry: dict[str, dict[str, BaseTool]] = {
 logger.debug(f"Tools registry initialized for: {list(_tools_registry.keys())}")
 
 
-# =============================================================================
-# Accesseurs publics — utilisés par nodes.py
-# =============================================================================
+# Public accessors — used by nodes.py
 
 def get_run_query_tool(db_name: str) -> BaseTool:
     return _tools_registry[db_name]["run_query"]
@@ -50,9 +44,6 @@ def get_list_tables_tool(db_name: str) -> BaseTool:
     return _tools_registry[db_name]["list_tables"]
 
 
-# =============================================================================
-# Vérification au démarrage
-# =============================================================================
 
 if __name__ == "__main__":
 
