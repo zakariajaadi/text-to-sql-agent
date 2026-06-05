@@ -76,6 +76,16 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
             s.output = ", ".join(table_names)
         return
 
+    # ── planner: skip (internal, no UI step) ──
+    #if node_name == "planner":
+    #    return
+    
+    # ── planner: show plan during debugging ──
+    if node_name == "planner" and "query_plan" in output:
+        async with cl.Step(name="📐 Query plan", type="run") as s:
+            s.output = output["query_plan"]
+        return
+        
     # ── sql_coder: show generated SQL (strip step comments) ──
     if node_name == "sql_coder" and "generated_query" in output:
         query = output["generated_query"]
@@ -135,6 +145,7 @@ def get_node_step_title(node_name: str) -> str:
         "route_database":    "🗄️ Routing database...",
         "retrieve_schema":   "🔍 Retrieving candidates...",
         "rerank_tables":     "🎯 Selecting tables...",
+        "planner":           "📐 Planning query...",
         "sql_coder":         "⚙️ Writing SQL...",
         "sql_validator":     "✅ Validating & executing...",
         "format_answer":     "✍️ Formatting answer...",

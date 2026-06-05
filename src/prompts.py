@@ -18,7 +18,7 @@ Return ONLY the rewritten question, nothing else.
 # Expected output: SelectedTables(tables=[...], reason=...)
 
 RERANK_TABLES_PROMPT = """
-You are an expert database architect working with a {dialect} database.
+You are working with a {dialect} database.
  
 ## TASK
 Given a user question and a list of candidate table schemas:
@@ -37,28 +37,49 @@ Given a user question and a list of candidate table schemas:
 {schemas}
 """
 
+# ── Node: planner ─────────────────────────────────────────────────────────────
+# Used by: planner node (LLM invoke, no tools)
+# Input: schema + question
+# Output: structured execution plan for sql_coder
+
+PLANNER_PROMPT = """
+You are working with a {dialect} database.
+
+## TASK
+Given a question and the database schema, produce a concise execution plan.
+Do NOT write SQL. Only describe the steps the SQL writer must follow.
+
+## PLAN FORMAT
+- Tables: [list of tables to use]
+- Joins: [table1.col = table2.col, ...]
+- Aggregation strategy: [describe levels — e.g. "first SUM per order, then AVG per country"]
+- Filters: [WHERE conditions if any]
+- Ordering: [ORDER BY if needed — required when results will be limited]
+
+## CRITICAL RULE
+If the question requires averaging, counting, or summing an already-aggregated value,
+you MUST specify a two-level aggregation strategy with an explicit intermediate step.
+
+## DATABASE SCHEMA
+{schema}
+"""
+
 # ── Node: sql_coder ───────────────────────────────────────────────────────────
 # Used by: sql_coder node (LLM, no tools)
 # Input: schema, question, validation_feedback (if retry)
 # Output: SQL query as text
 
 SQL_CODER_PROMPT = """
-You are an expert SQL query writer working with a {dialect} database.
+You are working with a {dialect} database.
  
 ## TASK
 Write a SQL query that answers the user's question. 
 You ONLY write SQL — you never execute it.
  
 ## STRATEGY
-1. Before planning: identify any ambiguous terms in the question. For each,
-   add a -- Assumption: interpreted '[term]' as [column/table] (alternatives: [x], [y]) comment.
-2. Write a step-by-step plan as SQL comments, one line per step:
-   -- Step 1: [first step]
-   -- Step 2: [second step]
-   -- Step 3: ...
-3. Then write the final query immediately after the plan.
-4. For simple questions, one or two steps suffice.
-5. Output ONLY the assumption comments + plan comments + raw SQL, nothing else.
+0. If an EXECUTION PLAN is provided, follow it strictly. Do not deviate from the specified aggregation strategy, tables, or joins.
+1. Identify any ambiguous terms in the question. For each, add a -- Assumption: comment.
+2. Translate the plan into SQL. Output ONLY the assumption comments + raw SQL, nothing else.
 
 ## AMBIGUITY HANDLING
 - If a term in the question could map to different columns or tables, document your choice:
@@ -81,8 +102,7 @@ You ONLY write SQL — you never execute it.
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
-11. Always precede the query with a -- Step N: comment block, one line per step.
-12. Two-level aggregation: always aggregate detail rows to the parent level first (CTE/subquery), then aggregate the result. Never skip the intermediate step.
+11. When LIMIT is applied, always include ORDER BY to ensure meaningful results.
 
  
 ## ERROR RECOVERY
@@ -97,11 +117,6 @@ If you receive feedback from a failed previous attempt:
 ### Example 1 — Complex query (multi-JOIN + aggregation)
 Question: "What are the top 3 product categories by total revenue?"
  
--- Step 1: Join OrderLines with Products to get the category for each line.
--- Step 2: Join with Categories to get the category name.
--- Step 3: Calculate revenue per line as UnitPrice * Quantity.
--- Step 4: Group by category name and sum revenue.
--- Step 5: Order by total revenue descending, limit to 3.
 SELECT c.CategoryName,
        SUM(ol.UnitPrice * ol.Quantity) AS TotalRevenue
 FROM OrderLines AS ol
@@ -114,10 +129,7 @@ LIMIT 3;
 ### Example 2 — Ambiguous question
 Question: "Who are the best customers?"
  
--- Assumption: interpreted 'best customers' as highest total spend (alternatives: most orders placed, most recent activity)
--- Step 1: Join Orders with OrderLines to compute spend per order.
--- Step 2: Group by customer and sum total spend.
--- Step 3: Order by total spend descending, limit to 5.
+-- Assumption: interpreted 'best customers' as highest total spend
 SELECT c.CustomerName,
        SUM(ol.UnitPrice * ol.Quantity) AS TotalSpend
 FROM Customers AS c

@@ -19,6 +19,7 @@ from prompts import (
     CONDENSE_QUESTION_PROMPT,
     FORMAT_ANSWER_PROMPT,
     RERANK_TABLES_PROMPT,
+    PLANNER_PROMPT,
     SQL_CODER_PROMPT,
     SQL_VALIDATOR_FEEDBACK,
 )
@@ -210,6 +211,29 @@ def route_by_scope(state: AgentState) -> Literal["in_scope", "out_of_scope"]:
         return "in_scope"
     return "out_of_scope"
 
+def planner(state: AgentState) -> dict:
+    """
+    LLM node — produces a structured execution plan for sql_coder.
+    Runs on fast_model. Skipped when validation_feedback is set (retry loop).
+    """
+    
+    schema = state["retrieved_schema"]
+    db_cfg = cfg.get_db(state["selected_db"])
+    question = get_question(state)
+
+    response = fast_model.invoke([
+        SystemMessage(content=PLANNER_PROMPT.format(
+            dialect=db_cfg.dialect,
+            schema=schema,
+        )),
+        HumanMessage(content=question),
+    ])
+
+    plan = extract_text_content(response)
+    logger.debug(f"planner: {plan[:200]}")
+
+    return {"query_plan": plan}
+
 @cached_node(
     key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
     return_key="generated_query"
@@ -234,10 +258,14 @@ def sql_coder(state: AgentState) -> dict:
         schema=schema,
     )
 
-    # Build user message: question + feedback if retry
+    # Build user message: plan + question + feedback if retry
     feedback = state.get("validation_feedback", "")
+    plan = state.get("query_plan", "")
+
     if feedback:
         user_content = f"{feedback}\n\nOriginal question: {question}"
+    elif plan:
+        user_content = f"## EXECUTION PLAN\n{plan}\n\n## QUESTION\n{question}"
     else:
         user_content = question
 
