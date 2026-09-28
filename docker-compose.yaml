@@ -1,4 +1,5 @@
 services:
+  # Redis for caching
   redis:
     image: redis/redis-stack:latest
     container_name: redis-cache
@@ -9,6 +10,7 @@ services:
       - redis_data:/data
     restart: unless-stopped
 
+  # Chainlit app
   app:
     build: .
     container_name: chainlit-app
@@ -30,6 +32,22 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+  
+  
+  # Hive (HiveServer2 + embedded metastore) for local dev
+  hive:
+    image: apache/hive:4.0.1
+    container_name: hive
+    environment:
+      SERVICE_NAME: hiveserver2
+    ports:
+      - "10000:10000"   # HiveServer2 (thrift)
+      - "10002:10002"   # web UI
+    volumes:
+      - hive_warehouse:/opt/hive/data/warehouse
+    restart: unless-stopped
+  
 
 volumes:
   redis_data:
+  hive_warehouse:

@@ -5,6 +5,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
+from agent_schemas import RankedTablesAndScope
 from config import (
     cfg,
     db_embeddings,
@@ -15,18 +16,6 @@ from config import (
     schema_store,
 )
 from guardrails import is_safe_query
-from prompts import (
-    CONDENSE_QUESTION_PROMPT,
-    FORMAT_ANSWER_PROMPT,
-    RERANK_TABLES_PROMPT,
-    PLANNER_PROMPT,
-    SQL_CODER_PROMPT,
-    SQL_VALIDATOR_FEEDBACK,
-)
-from schema_retrieval.retriever import get_schema_retriever
-from schemas import RankedTablesAndScope
-from state import AgentState
-from tools import get_run_query_tool
 from lib import (
     cached_node,
     expand_fk,
@@ -36,6 +25,17 @@ from lib import (
     get_question,
     select_database,
 )
+from prompts import (
+    CONDENSE_QUESTION_PROMPT,
+    FORMAT_ANSWER_PROMPT,
+    PLANNER_PROMPT,
+    RERANK_TABLES_PROMPT,
+    SQL_CODER_PROMPT,
+    SQL_VALIDATOR_FEEDBACK,
+)
+from schema_retrieval.retriever import get_schema_retriever
+from state import AgentState
+from tools import get_run_query_tool
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
@@ -76,29 +76,29 @@ def condense_question(state: AgentState) -> dict:
 
 def route_database(state: AgentState) -> dict:
     """
-    Deterministic node — selects the target database for the incoming question.
-    Routing logic is delegated to select_database() in utils.py.
+    Deterministic node — selects the target database once per conversation.
+    Routing logic is delegated to select_database() in lib/routing.py.
+    Skipped when a database is already set: previous turn (checkpointer) or eval mode.
     """
 
-    # Skip if already set (eval mode or single-db deployment)
-    #if state.get("selected_db"):
-    #    return {}
-    
-    # Get question
-    question = get_question(state)
-    
-    # Routing
+    # Resets always apply, even when routing is skipped
+    resets = {
+        "generated_query":     "",   # reset for the new turn
+        "validation_feedback": "",   # reset for the new turn
+    }
+
+    # One database per conversation — keep the one already selected
+    if state.get("selected_db"):
+        return {"selected_db": state["selected_db"], **resets}
+
+    # First question: route it
     selected = select_database(
-        question=question,
+        question=get_question(state),
         domain_rules=domain_rules,
         db_embeddings=db_embeddings,
     )
 
-    return {
-        "selected_db":         selected,
-        "generated_query":     "",   # reset for the new turn
-        "validation_feedback": "",   # reset for the new turn
-    }
+    return {"selected_db": selected, **resets}
 
 
 def retrieve_schema(state: AgentState) -> dict:
@@ -182,7 +182,8 @@ def rerank_tables(state: AgentState) -> dict:
         }
 
     # ── 3. FK expansion — recover bridge/fact tables ──────────────────────────
-    expanded_names = expand_fk(selected_names, fk_graphs[db_name])
+    expanded_names = expand_fk(selected_names, fk_graphs[db_name],
+                               include_neighbors=cfg.retrieval.fk_neighbors)
     logger.debug(f"rerank_tables: FK expansion {selected_names} → {expanded_names}")
 
     # ── 4. Load FK-expanded tables missing from candidates ────────────────────

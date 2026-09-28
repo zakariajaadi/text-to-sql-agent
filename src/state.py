@@ -1,7 +1,6 @@
 from langgraph.graph import MessagesState
 from langgraph.managed import RemainingSteps
 
-     
 
 class AgentState(MessagesState):
      standalone_question: str            # self-contained rewrite of user question (output of condense_question)

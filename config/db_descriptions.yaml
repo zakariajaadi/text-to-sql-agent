@@ -1,4 +1,5 @@
-Chinook: music store, digital media, artists, albums, tracks, customers, employees,
-  playlists, genres, sales, invoicing, order management, inventory, cataloging
-Northwind: wholesale, retail, customers, products, employees, suppliers, orders, inventory,
-  sales, procurement, logistics, order management, supply chain, territory management
+Chinook: music store, artists, albums, tracks, customers, employees, genres, playlists,
+  invoicing, order management
+Northwind: e-commerce, retail, customers, products, orders, employees, suppliers,
+  shippers, inventory management, sales processing, procurement, logistics, territory
+  management

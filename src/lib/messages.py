@@ -22,7 +22,8 @@ def extract_sql(text: str) -> str:
     query = text.strip()
     if query.startswith("```"):
         query = query.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    return query
+    # Hive/Impala reject a trailing ';' — harmless to drop for every dialect
+    return query.rstrip().rstrip(";").rstrip()
 
 
 def extract_schema_message(messages: list, db_name: str) -> ToolMessage | None:

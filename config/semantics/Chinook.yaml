@@ -1,0 +1,107 @@
+album:
+  description: Represents a music album released by an artist.
+  columns:
+    albumid: Unique identifier for the album.
+    title: Name of the album.
+    artistid: Identifier of the artist who created the album.
+
+artist:
+  description: Represents a musical artist or band.
+  columns:
+    artistid: Unique identifier for the artist.
+    name: Name of the artist or band.
+
+customer:
+  description: Represents a customer of the Chinook store.
+  columns:
+    customerid: Unique identifier for the customer.
+    firstname: Customer first name.
+    lastname: Customer last name.
+    company: Company name if the customer is a corporate client.
+    address: Street address of the customer.
+    city: City of the customer.
+    state: State or province of the customer.
+    country: Country of the customer.
+    postalcode: Postal or zip code of the customer.
+    phone: Phone number of the customer.
+    fax: Fax number of the customer.
+    email: Email address of the customer.
+    supportrepid: Identifier of the employee assigned to support this customer.
+
+employee:
+  description: Represents an employee of the company.
+  columns:
+    employeeid: Unique identifier for the employee.
+    lastname: Employee last name.
+    firstname: Employee first name.
+    title: Job title of the employee.
+    reportsto: Identifier of the manager this employee reports to.
+    birthdate: Date of birth of the employee.
+    hiredate: Date the employee was hired.
+    address: Street address of the employee.
+    city: City of the employee.
+    state: State or province of the employee.
+    country: Country of the employee.
+    postalcode: Postal code of the employee.
+    phone: Phone number of the employee.
+    fax: Fax number of the employee.
+    email: Email address of the employee.
+
+genre:
+  description: Represents a musical genre category used to classify tracks.
+  columns:
+    genreid: Unique identifier for the genre.
+    name: Descriptive name of the genre.
+
+invoice:
+  description: Represents a customer invoice generated for a purchase.
+  columns:
+    invoiceid: Primary key identifying the invoice.
+    customerid: Foreign key referencing the customer who made the purchase.
+    invoicedate: Date and time the invoice was issued.
+    billingaddress: Street address for billing purposes.
+    billingcity: City for billing purposes.
+    billingstate: State or province for billing purposes.
+    billingcountry: Country for billing purposes.
+    billingpostalcode: Postal code for billing purposes.
+    total: Total amount of the invoice in currency units.
+
+invoiceline:
+  description: Represents an individual line item within a customer invoice, detailing a specific track purchased.
+  columns:
+    invoicelineid: Unique identifier for the invoice line item.
+    invoiceid: Identifier of the invoice this line item belongs to.
+    trackid: Identifier of the track purchased in this line item.
+    unitprice: Price per unit of the track.
+    quantity: Number of units of the track purchased.
+
+mediatype:
+  description: Represents the various digital media formats available for tracks.
+  columns:
+    mediatypeid: Unique identifier for the media type.
+    name: Descriptive name of the media format.
+
+playlist:
+  description: A playlist represents a collection of tracks grouped together for listening or viewing purposes.
+  columns:
+    playlistid: Unique identifier for the playlist.
+    name: Descriptive title of the playlist.
+
+playlisttrack:
+  description: Associative table linking playlists to the tracks they contain.
+  columns:
+    playlistid: Identifier of the playlist.
+    trackid: Identifier of the track included in the playlist.
+
+track:
+  description: Individual music track available in the store.
+  columns:
+    trackid: Unique identifier for the track.
+    name: Title of the track.
+    albumid: Identifier of the album the track belongs to.
+    mediatypeid: Identifier of the media format type.
+    genreid: Identifier of the music genre.
+    composer: Name of the track composer.
+    milliseconds: Duration of the track in milliseconds.
+    bytes: File size of the track in bytes.
+    unitprice: Price of the track per unit.

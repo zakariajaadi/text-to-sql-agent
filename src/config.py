@@ -64,6 +64,7 @@ class DatabaseConfig:
     description: str
     limit: int = 5
     uri: str = "" 
+    #schema: str | None = None          # base Hive (ex: "sales_db")
 
     def __post_init__(self):
         
@@ -71,7 +72,20 @@ class DatabaseConfig:
             name = self.name if self.name.endswith(".db") else f"{self.name}.db"
             self.uri = f"sqlite:///{BASE_DIR / 'data' / name}"
 
+        elif self.dialect == "hive":
+            host = os.getenv("HIVE_HOST", "localhost")
+            port = os.getenv("HIVE_PORT", "10000")
+            user = os.getenv("HIVE_USER", "hive")
+            self.uri = f"hive://{user}@{host}:{port}/{self.name.lower() or 'default'}"
+
+    
     def build(self):
+        """Build a langchain SQLAlchemy wrapper from the URI."""
+        if self.dialect == "hive":
+            return SQLDatabase.from_uri(
+                self.uri,
+                lazy_table_reflection=True,  # don't reflect the whole metastore at startup
+            )
         return SQLDatabase.from_uri(self.uri)
 
 @dataclass
@@ -80,6 +94,7 @@ class RetrievalConfig:
     persist_directory: str
     schemas_directory: str
     top_k: int
+    fk_neighbors: bool = False
 
     def __post_init__(self):
         self.persist_directory = str(BASE_DIR / self.persist_directory)
@@ -170,29 +185,50 @@ def build_schema_store() -> dict[str, dict[str, str]]:
         logger.error(f"[schema_store] Failed to load from Chroma: {e}")
         return {db_cfg.name: {} for db_cfg in cfg.databases}
 
+# =============================================================================
+# Load foreign key relations as a knowlege graph for a database
+# =============================================================================
 
-def build_fk_graph(db: SQLDatabase) -> dict[str, list[str]]:
+def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
+    """Return (from_column, to_column) pairs, as table.column, declared in fk_relations.yaml."""
+    path = BASE_DIR / "config" / "fk_relations.yaml"
+    if not path.exists():
+        return []
+    relations = OmegaConf.load(path).get(db_name, {}).get("relations", [])
+    return [(r["from"], r["to"]) for r in relations]
+
+
+def build_fk_graph(db: SQLDatabase, db_name: str) -> dict[str, list[str]]:
     """
-    Build a bidirectional FK graph using SQLAlchemy reflection.
+    Build a bidirectional FK graph.
     If A references B via FK, both graph[A] contains B and graph[B] contains A.
     Bidirectionality ensures fact tables are reachable from dimension tables and vice versa.
+
+    FKs come from SQLAlchemy reflection. When the engine exposes none (Hive, Impala),
+    they come from config/fk_relations.yaml instead.
     """
     try:
-        fk_graph: dict[str, set[str]] = {}
         inspector = sa_inspect(db._engine)
         tables    = db.get_usable_table_names()
 
-        for table in tables:
-            if table not in fk_graph:
-                fk_graph[table] = set()
+        edges = [
+            (table, fk["referred_table"])
+            for table in tables
+            for fk in inspector.get_foreign_keys(table)
+        ]
+        if not edges:
+            edges = [
+                (source.split(".")[0], target.split(".")[0])
+                for source, target in load_fk_relations(db_name)
+            ]
 
-            for fk in inspector.get_foreign_keys(table):
-                target = fk["referred_table"]
-                if target in tables:
-                    fk_graph[table].add(target)
-                    if target not in fk_graph:
-                        fk_graph[target] = set()
-                    fk_graph[target].add(table)
+        fk_graph: dict[str, set[str]] = {table: set() for table in tables}
+        for source, target in edges:
+            if source in fk_graph and target in fk_graph:
+                fk_graph[source].add(target)
+                fk_graph[target].add(source)
+            else:
+                logger.warning(f"[build_fk_graph] {db_name}: unknown table in {source} -> {target}")
 
         return {k: list(v) for k, v in fk_graph.items()}
 
@@ -238,21 +274,27 @@ logger.debug(f"Initialized databases: {list(db_registry.keys())}.")
 # Derived from config — computed once at startup
 # =============================================================================
 
+# Databases without a description are left out of routing — generate it with make describe
+routable = [db for db in cfg.databases if db.description]
+for db in cfg.databases:
+    if not db.description:
+        logger.warning(f"No description for {db.name} — excluded from routing. Run: make describe DB={db.name}")
+
 # {db_name: [keywords]} — pass 1 of deterministic database routing
 domain_rules: dict[str, list[str]] = {
     db.name: db.description.lower().split(", ")
-    for db in cfg.databases
+    for db in routable
 }
 
 # {db_name: embedding_vector} — pass 2 of database routing (semantic similarity fallback)
 db_embeddings: dict[str, list[float]] = {
     db.name: embedding_model.embed_query(db.description)
-    for db in cfg.databases
+    for db in routable
 }
 
 # Bidirectional FK graph — used by expand_fk in rerank_tables
 fk_graphs: dict[str, dict[str, list[str]]] = {
-    db_cfg.name: build_fk_graph(db_registry[db_cfg.name])
+    db_cfg.name: build_fk_graph(db_registry[db_cfg.name], db_cfg.name)
     for db_cfg in cfg.databases
 }
 
