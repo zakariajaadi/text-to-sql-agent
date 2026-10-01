@@ -65,7 +65,7 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
     # ── rerank_tables: show final selected tables with count ──
     if node_name == "rerank_tables" and "retrieved_schema" in output:
         schema = output["retrieved_schema"]
-        # Table name may be quoted with " (SQLite), ` (Hive/Impala) or [ ] (SQL Server)
+        # Table name may be quoted with ` (Hive/Impala), " (ANSI) or [ ] (SQL Server)
         table_names = re.findall(r'CREATE TABLE\s+[`"\[]?([^`"\]\s(]+)', schema)
         in_scope = output.get("is_in_scope", True)
         emoji = "🟢" if in_scope else "🔴"

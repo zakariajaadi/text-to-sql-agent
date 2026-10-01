@@ -13,10 +13,6 @@ databases:
     description: ${oc.select:db_descriptions.Chinook,""} # Optional
     limit: 5
 
-  - name: "Northwind"
-    dialect: "sqlite"
-    description: ${oc.select:db_descriptions.Northwind,""} # Optional
-    limit: 5
 
 retrieval:
   embedding_model: "google_genai:gemini-embedding-001"

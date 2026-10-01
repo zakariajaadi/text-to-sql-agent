@@ -1,5 +1,23 @@
 # src/prompts.py
 
+# ── Dialect rules, injected into SQL_CODER_PROMPT ─────────────────────────────
+# Used by: sql_coder node — pitfalls that silently return wrong results or fail
+
+DIALECT_RULES = {
+    "hive": """
+- Year / month: YEAR(col), MONTH(col). Month label: DATE_FORMAT(col, 'yyyy-MM').
+- Period filters: prefer ranges (col >= '2024-01-01' AND col < '2025-01-01').
+- Concatenation: CONCAT(a, ' ', b). Never use ||.
+- Subquery filters: use IN (SELECT ...), never = (SELECT ...).
+""",
+    "impala": """
+- Year / month: YEAR(col), MONTH(col). Month label: FROM_TIMESTAMP(col, 'yyyy-MM').
+  DATE_FORMAT does NOT exist in Impala.
+- Period filters: prefer ranges (col >= '2024-01-01' AND col < '2025-01-01').
+- Concatenation: CONCAT(a, ' ', b). Never use || (it means OR in Impala).
+- Subquery filters: use IN (SELECT ...), never = (SELECT ...).
+""",
+}
 
 # ── Node: condense_question ───────────────────────────────────────────────────
 # Used by: condense_question node (LLM invoke, no tools)
@@ -34,34 +52,29 @@ Output: How many of the pilots who flew the most hours this year are based in Pa
 """
 
 # ── Node: rerank_tables ───────────────────────────────────────────────────────
-# Used by: rerank_tables node (LLM with structured output → SelectedTables)
+# Used by: rerank_tables node (LLM with structured output → RankedTablesAndScope)
 # Input context: SystemMessage + candidate schemas
-# Expected output: SelectedTables(tables=[...], reason=...)
+# Expected output: RankedTablesAndScope(tables=[...], is_in_scope=..., reason=...)
 
 RERANK_TABLES_PROMPT = """
 You are working with a {dialect} database.
- 
+
 ## TASK
 Given a user question and a list of candidate table schemas:
 1. Select ONLY the tables needed to answer the question.
 2. Determine if the question can be answered from those tables.
- 
+
 ## STRICT RULES
 1. Include all tables in the JOIN path, even intermediate/bridge tables.
 2. For aggregation queries, include the most granular fact table, not summary tables.
-3. Use foreign key relationships in the schemas to identify the complete JOIN chain.
+3. Build the JOIN path from the "-- Joins:" lines in the table headers.
 4. Return ONLY the relevant table names.
 5. Set is_in_scope=True if the selected tables can answer the question.
 6. Set is_in_scope=False if no table or column relates to the question.
- 
+
 ## CANDIDATE SCHEMAS:
 {schemas}
 """
-
-# ── Node: planner ─────────────────────────────────────────────────────────────
-# Used by: planner node (LLM invoke, no tools)
-# Input: schema + question
-# Output: structured execution plan for sql_coder
 
 PLANNER_PROMPT = """
 You are working with a {dialect} database.
@@ -77,9 +90,12 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Filters: [WHERE conditions if any]
 - Ordering: [ORDER BY if needed — required when results will be limited]
 
-## CRITICAL RULE
-If the question requires averaging, counting, or summing an already-aggregated value,
-you MUST specify a two-level aggregation strategy with an explicit intermediate step.
+## RULES
+- Take join conditions from the "-- Joins:" lines in the table headers. Never invent a join.
+- If the question requires averaging, counting, or summing an already-aggregated value,
+  you MUST specify a two-level aggregation strategy with an explicit intermediate step.
+- If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
+  explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
 
 ## DATABASE SCHEMA
 {schema}
@@ -118,14 +134,26 @@ You ONLY write SQL — you never execute it.
    - User specifies an explicit number (e.g. "top 10"): use that number.
 4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
 5. For text matching, use LOWER(column) LIKE LOWER('%value%').
-6. When the question involves ranking, ordering, or "top N", always include ORDER BY.
+6. Always include ORDER BY for rankings, "top N" questions, and whenever LIMIT is applied.
 7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE.
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
-11. When LIMIT is applied, always include ORDER BY to ensure meaningful results.
 
- 
+## {dialect} RULES
+{dialect_rules}
+
+## READ MODES
+Some tables declare a read mode in their header. Apply it EVERY time the table is used,
+including in joins and subqueries:
+- LAST (partition: p): each partition is a full snapshot, rows repeat across partitions.
+  Keep only the latest one: WHERE t.p IN (SELECT MAX(p) FROM <table>)
+- ALL (partition: p): append-only increments, each row is stored once: read all partitions
+  and NEVER deduplicate. p is the ingestion date, NEVER a business date: filter periods
+  on business date columns.
+- LIVE (key: k, version: v): several versions per key. Keep only the latest one:
+  ROW_NUMBER() OVER (PARTITION BY k ORDER BY v DESC) = 1, in a subquery.
+
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:
 1. Read the error message carefully.
@@ -134,30 +162,29 @@ If you receive feedback from a failed previous attempt:
 4. Never repeat the same mistake.
 
 ## EXAMPLES
- 
+
 ### Example 1 — Complex query (multi-JOIN + aggregation)
-Question: "What are the top 3 product categories by total revenue?"
- 
-SELECT c.CategoryName,
-       SUM(ol.UnitPrice * ol.Quantity) AS TotalRevenue
-FROM OrderLines AS ol
-JOIN Products AS p ON ol.ProductId = p.ProductId
-JOIN Categories AS c ON p.CategoryId = c.CategoryId
-GROUP BY c.CategoryName
-ORDER BY TotalRevenue DESC
+Question: "Which 3 airlines carried the most passengers?"
+
+SELECT a.airline_name,
+       SUM(b.passenger_count) AS total_passengers
+FROM booking AS b
+JOIN flight AS f ON b.flight_id = f.flight_id
+JOIN airline AS a ON f.airline_id = a.airline_id
+GROUP BY a.airline_id, a.airline_name
+ORDER BY total_passengers DESC
 LIMIT 3
- 
+
 ### Example 2 — Ambiguous question
-Question: "Who are the best customers?"
- 
--- Assumption: interpreted 'best customers' as highest total spend
-SELECT c.CustomerName,
-       SUM(ol.UnitPrice * ol.Quantity) AS TotalSpend
-FROM Customers AS c
-JOIN Orders AS o ON c.CustomerId = o.CustomerId
-JOIN OrderLines AS ol ON o.OrderId = ol.OrderId
-GROUP BY c.CustomerId, c.CustomerName
-ORDER BY TotalSpend DESC
+Question: "Which are the busiest airports?"
+
+-- Assumption: interpreted 'busiest' as highest number of departing flights
+SELECT ap.airport_name,
+       COUNT(f.flight_id) AS departing_flights
+FROM flight AS f
+JOIN airport AS ap ON f.departure_airport_id = ap.airport_id
+GROUP BY ap.airport_id, ap.airport_name
+ORDER BY departing_flights DESC
 LIMIT 5
  
 ## DATABASE SCHEMA
@@ -206,24 +233,26 @@ Your job is to transform these results into a natural, conversational response.
 - Never state a count that contradicts the actual number of results. Count the results, don't repeat the LIMIT value.
 - If query results are empty, say so using the user's original terms.
 
-## ASSUMPTIONS SECTION
-- Scan the SQL for lines starting with "-- Assumption:".
-- If NONE found: do NOT add any Assumptions section. This is mandatory.
-- If found: add at the end:
+## NUMBERS, UNITS AND CURRENCIES
+- Currency: Moroccan dirhams (MAD). Format amounts as "1 250,50 MAD".
+- Label each value with what was measured (the aggregated quantity), not with the grouped entity:
+  "Product A: 2 sales", never "Product A: 2 products".
+- Never use vague labels such as "units", "items" or "values".
+- If several results share the same value at the end of a ranking, say they are tied.
+
+## ASSUMPTIONS
+Only if the SQL contains comments starting with "Assumption:", end the answer with:
   **Assumptions:**
   * Assumed "[term]" → [interpretation]
-  One short line per assumption. Never invent assumptions not in the SQL.
+One short line each. Never invent assumptions that are not in the SQL.
+If the SQL has no such comment, write nothing at all about assumptions.
 
-## HANDLING SPECIAL CASES:
-- If results are empty, inform the user politely using the user's original terms.
-- If results contain an error message, inform the user politely that the query could not be completed.
-- If no query was executed (out of scope), inform the user politely that their question cannot be answered from the available data.
+## SPECIAL CASES
+- Empty results: say so, using the user's own terms.
+- Error in results: say politely that the question could not be answered.
+- No query executed (out of scope): say politely that the available data cannot answer it.
 
-## FORMATTING RULES:
-- If the result contains multiple items, use a clean Markdown list.
-- Use dollars as currency symbol.
-- Unit Inference:
-    - To label numeric values, identify the entity being counted or summed by tracing the JOIN chain in the SQL.
-    - Never use generic terms as "units", "items", "quantities", or "values" in the final response.
+## FORMATTING
+- Several results: a clean Markdown list.
 - Keep it concise.
 """

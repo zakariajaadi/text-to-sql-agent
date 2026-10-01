@@ -23,10 +23,12 @@ from lib import (
     extract_text_content,
     get_last_cycle,
     get_question,
+    normalize_sql,
     select_database,
 )
 from prompts import (
     CONDENSE_QUESTION_PROMPT,
+    DIALECT_RULES,
     FORMAT_ANSWER_PROMPT,
     PLANNER_PROMPT,
     RERANK_TABLES_PROMPT,
@@ -255,6 +257,7 @@ def sql_coder(state: AgentState) -> dict:
     # Format prompt with schema, dialect and limit — all db-specific
     system_prompt = SQL_CODER_PROMPT.format(
         dialect=db_cfg.dialect,
+        dialect_rules=DIALECT_RULES.get(db_cfg.dialect, ""),
         limit=db_cfg.limit,
         schema=schema,
     )
@@ -278,6 +281,10 @@ def sql_coder(state: AgentState) -> dict:
 
     # Extract raw SQL from the response
     query = extract_sql(extract_text_content(response))
+
+    # Quote query identifiers (reserved words on Hive/Impala)
+    # Deterministic fixes (Hive/Impala): backticks, NULLs last, assumption comments kept
+    query = normalize_sql(query, db_cfg.dialect)
 
     return {"generated_query": query}
 

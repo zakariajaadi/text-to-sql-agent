@@ -105,3 +105,58 @@ track:
     milliseconds: Duration of the track in milliseconds.
     bytes: File size of the track in bytes.
     unitprice: Price of the track per unit.
+
+customer_cdc:
+  description: One row per change event captured for a customer record, used for tracking historical updates.
+  read_mode: live
+  key_columns: [customerid]
+  version_column: time
+  columns:
+    customerid: Unique identifier for the customer.
+    firstname: First name.
+    lastname: Last name.
+    city: City.
+    country: Country.
+    email: Email address.
+    time: Timestamp of the change event.
+    date_technique: Technical date associated with the record processing.
+
+customer_snapshot:
+  description: A historical snapshot of customer profile data at a specific point in time.
+  read_mode: last
+  partition_column: date_technique
+  columns:
+    customerid: Unique identifier for the customer.
+    firstname: First name.
+    lastname: Last name.
+    company: Company name.
+    address: Street address.
+    city: City.
+    state: State or province.
+    country: Country.
+    postalcode: Postal code.
+    phone: Phone number.
+    fax: Fax number.
+    email: Email address.
+    supportrepid: Employee assigned to support this customer.
+    time: Timestamp of the snapshot capture.
+    date_technique: Technical date associated with the snapshot record.
+
+invoice_delta:
+  description: One row per incremental change or update record for an invoice.
+  read_mode: all
+  partition_column: date_technique
+  columns:
+    invoiceid: Unique identifier for the invoice.
+    customerid: Customer associated with the invoice.
+    invoicedate: Date and time the invoice was issued.
+    billingaddress: Street address for billing.
+    billingcity: City for billing.
+    billingstate: State or province for billing.
+    billingcountry: Country for billing.
+    billingpostalcode: Postal code for billing.
+    total: 'UNCLEAR: total invoice amount, currency not stated.'
+    time: Timestamp of the delta record creation.
+    date_technique: Technical date associated with the delta processing.
+
+

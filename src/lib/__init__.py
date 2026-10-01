@@ -16,3 +16,4 @@ from lib.messages import (
     get_question,
 )
 from lib.routing import select_database
+from lib.sql_normalize import normalize_sql

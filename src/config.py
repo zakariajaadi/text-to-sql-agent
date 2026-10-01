@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +14,6 @@ from omegaconf import OmegaConf
 from sqlalchemy import inspect as sa_inspect
 
 from schema_retrieval.vector_store import VectorStoreManager
-
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -68,15 +67,14 @@ class DatabaseConfig:
 
     def __post_init__(self):
         
-        if self.dialect == "sqlite" :
-            name = self.name if self.name.endswith(".db") else f"{self.name}.db"
-            self.uri = f"sqlite:///{BASE_DIR / 'data' / name}"
-
-        elif self.dialect == "hive":
+        if self.dialect == "hive":
             host = os.getenv("HIVE_HOST", "localhost")
             port = os.getenv("HIVE_PORT", "10000")
             user = os.getenv("HIVE_USER", "hive")
-            self.uri = f"hive://{user}@{host}:{port}/{self.name.lower() or 'default'}"
+            self.uri = f"hive://{user}@{host}:{port}/{self.name.lower()}"
+
+        else:
+            raise ValueError(f"Unsupported dialect '{self.dialect}' for database {self.name} (expected: hive)")
 
     
     def build(self):
@@ -300,23 +298,4 @@ fk_graphs: dict[str, dict[str, list[str]]] = {
 
 # Enriched DDLs loaded once at startup — avoids disk I/O at query time
 schema_store = build_schema_store()
-
-
-
-if __name__ == "__main__":
-    #from loguru import logger
-    #logger.debug(f"FK graph Orders: {fk_graphs["Northwind"].get('Orders', [])}")
-    #logger.debug(f"FK graph Customers: {fk_graphs["Northwind"].get('Customers', [])}")
-
-
-    vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
-    store = vsm.get_store()
-
-    result = store.get(where={
-    "$and": [
-        {"table_name": {"$eq": "Order Details"}},
-        {"db_name":    {"$eq": "Northwind"}},
-    ]
-    })
-    print(result["documents"][0])
 

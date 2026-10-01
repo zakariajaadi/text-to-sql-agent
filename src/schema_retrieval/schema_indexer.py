@@ -357,6 +357,9 @@ class SchemaIndexer:
         ]
         if joins:
             lines.append(f"-- Joins: {', '.join(joins)}")
+
+        # How to read partitioned / CDC tables (manual, from config/semantics)
+        lines.extend(self._render_read_mode(table, semantics))
         lines.append("")
 
         # Append each column description as an inline SQL comment
@@ -372,7 +375,22 @@ class SchemaIndexer:
                     line = f"{line.rstrip()}  -- {columns[name]}"
             lines.append(line)
 
-        return "\n".join(lines)    
+        return "\n".join(lines)  
+
+    @staticmethod
+    def _render_read_mode(table: str, semantics: dict) -> list[str]:
+        """Header line declaring how a partitioned or CDC table must be read (rules live in the prompts)."""
+        mode = semantics.get("read_mode")
+        if mode is None:
+            return []
+
+        if mode in ("last", "all"):
+            return [f"-- Read mode: {mode.upper()} (partition: {semantics['partition_column']})"]
+        if mode == "live":
+            keys = ", ".join(semantics["key_columns"])
+            return [f"-- Read mode: LIVE (key: {keys}, version: {semantics['version_column']})"]
+
+        raise ValueError(f"Unknown read_mode '{mode}' for table {table} (expected: last, all, live)")  
     
     @staticmethod
     def _dump_semantics(semantics: dict) -> str:
@@ -381,6 +399,7 @@ class SchemaIndexer:
             yaml.safe_dump({table: entry}, sort_keys=False, allow_unicode=True, width=1000)
             for table, entry in semantics.items()
         )
+    
 
 # =============================================================================
 # CLI entry point

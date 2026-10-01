@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "redis>=7.4.0",
     "requests>=2.32.5",
+    "sqlglot>=30.20.0",
     "sqlparse>=0.5.5",
     "tabulate>=0.10.0",
 ]

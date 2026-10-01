@@ -8,7 +8,7 @@ HIVE_DB = $(shell echo $(DB) | tr A-Z a-z)
 HIVE_JDBC = jdbc:hive2://localhost:10000
 RUN     = PYTHONPATH=src uv run python
 
-.PHONY: help app hive-up hive-load semantics relations index describe eval lint
+.PHONY: help app app-docker app-logs app-stop hive-up hive-load semantics relations index describe eval lint
 
 help:  ## Show available targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -16,6 +16,15 @@ help:  ## Show available targets
 # ── Chainlit ─────────────────────────────────────────────────────────────
 app:  ## Run the Chainlit app locally
 	uv run chainlit run app.py
+
+app-docker:  ## Build and run the app in Docker (with Redis and Hive), on http://localhost:8000
+	docker compose up -d --build app
+
+app-logs:  ## Follow the app container logs
+	docker compose logs -f app
+
+app-stop:  ## Stop the app container (Hive and Redis keep running)
+	docker compose stop app
 
 # ── Inspect ─────────────────────────────────────────────────────────
 schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])
@@ -43,11 +52,6 @@ describe:  ## Generate the db description for routing, if missing (review config
 hive-up:  ## Start the local Hive container
 	docker compose up -d hive
 
-hive-load:  ## Load a SQLite db into Hive (DB=Chinook)
-	uv run python scripts/export_to_hive.py $(DB)
-	docker cp data/hive_load hive:/tmp/hive_load
-	docker exec hive beeline -u jdbc:hive2://localhost:10000 -f /tmp/hive_load/$(HIVE_DB)/load.hql
-
 hive-check:  ## Check HiveServer2 is up (beeline, inside the container)
 	docker exec hive beeline -u $(HIVE_JDBC) -e "SHOW DATABASES;"
 
@@ -56,6 +60,14 @@ hive-ping:  ## Check the Python side: SQLAlchemy + PyHive connection
 	db = SQLDatabase.from_uri('hive://hive@localhost:10000/default'); \
 	print('dialect:', db.dialect); print(db.run('SELECT 1 + 1'))"
 
+hive-load:  ## Load a SQLite db into Hive (DB=Chinook)
+	uv run python scripts/export_to_hive.py $(DB)
+	docker cp data/hive_load hive:/tmp/hive_load
+	docker exec hive beeline -u jdbc:hive2://localhost:10000 -f /tmp/hive_load/$(HIVE_DB)/load.hql
+
+hive-partitioned:  ## Create the read-mode test tables (Full/Last, Delta/All, CDC/Live) in Hive
+	docker cp scripts/partitioned_tables.hql hive:/tmp/partitioned_tables.hql
+	docker exec hive beeline -u $(HIVE_JDBC) -f /tmp/partitioned_tables.hql
 # ── Quality ─────────────────────────────────────────────────────────
 eval:  ## Run the eval (pass options with ARGS="--limit 5")
 	uv run python eval/run.py $(ARGS)

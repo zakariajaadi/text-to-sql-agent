@@ -93,8 +93,8 @@ def _exact_execution_score(gold_rows: list, gen_rows: list) -> float:
 def _normalize_row(row: tuple) -> tuple:
     """
     Normalize a result row for reliable comparison.
-    SQLite is loose with types — the same value can come back as
-    int, float, or Decimal depending on the query structure.
+    Drivers return numbers as int, float or Decimal depending on the query
+    (PyHive: DECIMAL columns come back as Decimal).
     Rounds floats to 4 decimals to avoid false negatives.
     """
     normalized = []
