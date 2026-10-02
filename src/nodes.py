@@ -5,7 +5,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
-from agent_schemas import RankedTablesAndScope
+from agent_schemas import ColumnSelection, RankedTablesAndScope
 from config import (
     cfg,
     db_embeddings,
@@ -26,11 +26,13 @@ from lib import (
     normalize_sql,
     select_database,
 )
+from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
 from prompts import (
     CONDENSE_QUESTION_PROMPT,
     DIALECT_RULES,
     FORMAT_ANSWER_PROMPT,
     PLANNER_PROMPT,
+    PRUNE_COLUMNS_PROMPT,
     RERANK_TABLES_PROMPT,
     SQL_CODER_PROMPT,
     SQL_VALIDATOR_FEEDBACK,
@@ -136,6 +138,8 @@ def rerank_tables(state: AgentState) -> dict:
         Pass 1 — load LLM-selected tables missing from vector retrieval (via DDL semantic reasoning)
         Pass 2 — FK expansion to recover bridge/fact tables
         Pass 3 — load FK-expanded tables missing from candidates (schema store)
+
+    Outputs selected_schemas ({table: full DDL}); columns are pruned downstream by prune_columns.
     """
     # Fetch user question
     question = get_question(state)
@@ -169,7 +173,8 @@ def rerank_tables(state: AgentState) -> dict:
             logger.debug(f"[rerank_tables] Loaded LLM-selected table from store: {table}")
 
     # Override scope if all LLM-selected tables are now available
-    if not response.is_in_scope and all(t in candidates for t in response.tables):
+    # (an empty selection means out of scope — all() is True on an empty list)
+    if response.tables and not response.is_in_scope and all(t in candidates for t in response.tables):
         response.is_in_scope = True
         logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
 
@@ -178,8 +183,8 @@ def rerank_tables(state: AgentState) -> dict:
     if not selected_names:
         logger.warning("LLM returned no valid tables — fallback to all candidates.")
         return {
-            "retrieved_schema": "\n\n".join(candidates.values()),
-            "is_in_scope":      response.is_in_scope,
+            "selected_schemas":    candidates,
+            "is_in_scope":         response.is_in_scope,
             "llm_selected_tables": list(response.tables),
         }
 
@@ -194,17 +199,17 @@ def rerank_tables(state: AgentState) -> dict:
             candidates[table] = schema_store[db_name][table]
             logger.debug(f"[rerank_tables] FK-expanded from store: {table}")
 
-    # ── 5. Build final schema — preserve LLM order, deduplicate ──────────────
-    final_tables = list(dict.fromkeys(selected_names + expanded_names))
-    selected     = [candidates[t] for t in final_tables if t in candidates]
+    # ── 5. Build final schemas — preserve LLM order, deduplicate ─────────────
+    final_tables     = list(dict.fromkeys(selected_names + expanded_names))
+    selected_schemas = {t: candidates[t] for t in final_tables if t in candidates}
 
-    if not selected:
+    if not selected_schemas:
         logger.warning("No valid tables after FK expansion — fallback to all candidates.")
-        selected = list(candidates.values())
+        selected_schemas = candidates
 
     return {
-        "retrieved_schema": "\n\n".join(selected),
-        "is_in_scope":      response.is_in_scope,
+        "selected_schemas":    selected_schemas,
+        "is_in_scope":         response.is_in_scope,
         "llm_selected_tables": list(response.tables),
     }
 
@@ -213,6 +218,70 @@ def route_by_scope(state: AgentState) -> Literal["in_scope", "out_of_scope"]:
     if state["is_in_scope"]:
         return "in_scope"
     return "out_of_scope"
+
+def prune_columns(state: AgentState) -> dict:
+    """
+    LLM node — removes the columns irrelevant to the question from wide tables
+    , then builds retrieved_schema for planner and sql_coder.
+
+    Only tables with more than column_pruning.min_columns columns are sent to the LLM:
+    narrow tables have few tokens to save and recall to lose.
+
+    Recall guarantees — pruning must never remove a column the query needs:
+        - structural columns (join keys, read mode) are always kept
+        - column names invented by the LLM are ignored
+        - a table the LLM skipped, or a failed LLM call, keeps its full DDL
+    """
+    selected_schemas = state["selected_schemas"]
+    pruning_cfg      = cfg.column_pruning
+
+    # ── 1. Keep only the wide tables as pruning targets ───────────────────────
+    wide_schemas = {
+        table: ddl
+        for table, ddl in selected_schemas.items()
+        if pruning_cfg.enabled and len(get_column_names(ddl)) > pruning_cfg.min_columns
+    }
+
+    if pruning_cfg.enabled and not wide_schemas:
+        logger.debug(f"prune_columns: no table above {pruning_cfg.min_columns} columns — schemas kept whole")
+
+    # ── 2. LLM selects the semantic columns of the wide tables ────────────────
+    selected_columns: dict[str, set[str]] = {}
+
+    if wide_schemas:
+        schemas_text = "\n\n".join(f"### {table}\n{ddl}" for table, ddl in wide_schemas.items())
+
+        try:
+            selection = fast_model.with_structured_output(ColumnSelection).invoke([
+                SystemMessage(content=PRUNE_COLUMNS_PROMPT.format(schemas=schemas_text)),
+                HumanMessage(content=get_question(state)),
+            ])
+            # Hive names are lowercase, the LLM does not always keep the case
+            selected_columns = {
+                entry.table.lower(): {column.lower() for column in entry.columns}
+                for entry in selection.tables
+            }
+        except Exception as e:
+            # Pruning is an optimization: its failure must never block the answer
+            logger.warning(f"prune_columns: LLM call failed, tables kept whole — {e}")
+
+    # ── 3. Prune the wide tables, structural columns always kept ──────────────
+    pruned_schemas = dict(selected_schemas)   # narrow tables pass through unchanged
+
+    for table, ddl in wide_schemas.items():
+        column_names     = set(get_column_names(ddl))
+        semantic_columns = selected_columns.get(table, set()) & column_names   # drops invented names
+
+        # Nothing valid selected (table skipped or LLM failure) → keep the table whole rather than guess
+        if not semantic_columns:
+            logger.warning(f"prune_columns: no valid column selected for {table} — kept whole")
+            continue
+
+        columns_to_keep       = semantic_columns | get_structural_columns(table, ddl, query_tables=set(selected_schemas))
+        pruned_schemas[table] = prune_ddl(ddl, columns_to_keep)
+        logger.debug(f"prune_columns: {table} {len(column_names)} → {len(columns_to_keep)} columns")
+
+    return {"retrieved_schema": "\n\n".join(pruned_schemas.values())}
 
 def planner(state: AgentState) -> dict:
     """
@@ -246,13 +315,21 @@ def sql_coder(state: AgentState) -> dict:
     LLM node — generates SQL without executing.
     Receives schema and question, optionally validation feedback on retry.
     Outputs raw SQL into state['generated_query'].
-    """
-    # Fetch tables schema and db config
-    schema = state["retrieved_schema"]
-    db_cfg = cfg.get_db(state["selected_db"])
 
-    # Fetch user question
+    First attempt uses the pruned schema (retrieved_schema); retries use the full
+    schema (selected_schemas), so a column wrongly pruned cannot fail every attempt.
+    """
+    # Fetch db config, user question, plan and retry feedback
+    db_cfg   = cfg.get_db(state["selected_db"])
     question = get_question(state)
+    plan     = state.get("query_plan", "")
+    feedback = state.get("validation_feedback", "")
+
+    # Pruned schema first; full schema on retry — the error may come from a pruned column
+    if feedback:
+        schema = "\n\n".join(state["selected_schemas"].values())
+    else:
+        schema = state["retrieved_schema"]
 
     # Format prompt with schema, dialect and limit — all db-specific
     system_prompt = SQL_CODER_PROMPT.format(
@@ -263,9 +340,6 @@ def sql_coder(state: AgentState) -> dict:
     )
 
     # Build user message: plan + question + feedback if retry
-    feedback = state.get("validation_feedback", "")
-    plan = state.get("query_plan", "")
-
     if feedback:
         user_content = f"{feedback}\n\nOriginal question: {question}"
     elif plan:

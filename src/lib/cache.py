@@ -66,6 +66,11 @@ def cached_node(key_fn: Callable[[Dict], str],
             if llm_cache is None:
                 return fn(state, *args, **kwargs)
 
+            # Retry: bypass the cache entirely — a lookup would return the result that just failed
+            is_retry = bool(state.get("validation_feedback"))
+            if cache_only_first_attempt and is_retry:
+                return fn(state, *args, **kwargs)
+
             # 1. Generate unique key for this specific node execution
             cache_key = key_fn(state)
 

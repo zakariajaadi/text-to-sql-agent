@@ -76,6 +76,33 @@ Given a user question and a list of candidate table schemas:
 {schemas}
 """
 
+# ── Node: prune_columns ───────────────────────────────────────────────────────
+# Used by: prune_columns node (LLM with structured output → ColumnSelection)
+# Input context: SystemMessage + wide table schemas only (narrow tables are not pruned)
+# Expected output: ColumnSelection(tables=[TableColumns(table=..., columns=[...])])
+
+PRUNE_COLUMNS_PROMPT = """
+## TASK
+Given a user question and table schemas, select for each table the columns that could be
+needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregations.
+
+## RULES
+1. Recall over precision: when in doubt, KEEP the column. A missing column breaks the query,
+   an extra column only costs a few tokens.
+2. Keep the display columns (name, title, label...) of every entity the answer reports,
+   not only its identifier.
+3. Keep the columns whose description or sample values match a value cited in the question
+   (e.g. "in Brazil" → country).
+4. Keep the date / time columns when the question has a time dimension
+   (period filter, trend, "latest", "first", ordering by date).
+5. Join keys and read-mode columns are always kept automatically: no need to list them.
+6. Return one entry per table, named exactly as in its "-- Table:" header.
+7. Use exact column names from the DDL. Never invent columns.
+
+## SCHEMAS
+{schemas}
+"""
+
 PLANNER_PROMPT = """
 You are working with a {dialect} database.
 

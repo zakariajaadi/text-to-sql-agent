@@ -102,6 +102,11 @@ class RetrievalConfig:
         return init_embeddings(self.embedding_model)
 
 @dataclass
+class ColumnPruningConfig:
+    enabled: bool
+    min_columns: int   # tables with more columns are pruned by the LLM, narrower ones are kept whole
+
+@dataclass
 class LangSmithConfig:
     tracing: bool
 
@@ -122,6 +127,7 @@ class AppConfig:
     llm_fast: LLMConfig
     databases: list[DatabaseConfig]
     retrieval: RetrievalConfig
+    column_pruning: ColumnPruningConfig
     langsmith: LangSmithConfig
     memory: MemoryConfig
     cache: CacheConfig
@@ -155,6 +161,7 @@ def load_config() -> AppConfig:
         llm_fast=LLMConfig(**cfg.llm_fast),
         databases=[DatabaseConfig(**db) for db in cfg.databases], 
         retrieval=RetrievalConfig(**cfg.retrieval),
+        column_pruning=ColumnPruningConfig(**cfg.column_pruning),
         langsmith=LangSmithConfig(**cfg.langsmith),
         memory=MemoryConfig(**cfg.memory),
         cache=CacheConfig(**cfg.cache),

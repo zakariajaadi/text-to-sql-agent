@@ -9,12 +9,13 @@ from config import cfg
 from nodes import (
     condense_question,
     format_answer,
+    planner,
+    prune_columns,
     rerank_tables,
     retrieve_schema,
     route_after_validation,
     route_by_scope,
     route_database,
-    planner,
     sql_coder,
     sql_validator,
 )
@@ -29,6 +30,7 @@ def build_graph():
     builder.add_node(route_database)
     builder.add_node(retrieve_schema)
     builder.add_node(rerank_tables)
+    builder.add_node(prune_columns)
     builder.add_node(planner)
     builder.add_node(sql_coder)
     builder.add_node(sql_validator)
@@ -40,9 +42,10 @@ def build_graph():
     builder.add_edge("route_database",     "retrieve_schema")
     builder.add_edge("retrieve_schema",    "rerank_tables")
     builder.add_conditional_edges("rerank_tables", route_by_scope, {
-        "in_scope":     "planner",
+        "in_scope":     "prune_columns",
         "out_of_scope": "format_answer",
     })
+    builder.add_edge("prune_columns", "planner")
     builder.add_edge("planner", "sql_coder")
     builder.add_edge("sql_coder",       "sql_validator")
     builder.add_conditional_edges("sql_validator", route_after_validation, {

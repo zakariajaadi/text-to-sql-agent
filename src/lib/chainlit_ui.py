@@ -3,11 +3,11 @@ Chainlit UI helpers
 Used by: app.py (on_message, astream_events loop)
 """
 
-import re
-
 import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage, ToolMessage
+
+from lib.column_pruning import get_column_names
 
 
 def normalize_chunk_content(content) -> str:
@@ -63,14 +63,25 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
         return
 
     # ── rerank_tables: show final selected tables with count ──
-    if node_name == "rerank_tables" and "retrieved_schema" in output:
-        schema = output["retrieved_schema"]
-        # Table name may be quoted with ` (Hive/Impala), " (ANSI) or [ ] (SQL Server)
-        table_names = re.findall(r'CREATE TABLE\s+[`"\[]?([^`"\]\s(]+)', schema)
+    if node_name == "rerank_tables" and "selected_schemas" in output:
+        table_names = list(output["selected_schemas"])
         in_scope = output.get("is_in_scope", True)
         emoji = "🟢" if in_scope else "🔴"
         async with cl.Step(name=f"{emoji} {len(table_names)} tables selected", type="run") as s:
             s.output = ", ".join(table_names)
+        return
+    
+    # ── prune_columns: fixed title, column count before → after in the body ──
+    if node_name == "prune_columns" and "retrieved_schema" in output:
+        selected_schemas = event["data"].get("input", {}).get("selected_schemas", {})
+        columns_before   = sum(len(get_column_names(ddl)) for ddl in selected_schemas.values())
+        columns_after    = len(get_column_names(output["retrieved_schema"]))
+
+        async with cl.Step(name="✂️ Column pruning", type="run") as s:
+            if columns_after < columns_before:
+                s.output = f"{columns_before} → {columns_after} columns"
+            else:
+                s.output = f"No column pruned ({columns_before} columns)"
         return
 
     # ── planner: skip (internal, no UI step) ──
@@ -142,6 +153,7 @@ def get_node_step_title(node_name: str) -> str:
         "route_database":    "🗄️ Routing database...",
         "retrieve_schema":   "🔍 Retrieving candidates...",
         "rerank_tables":     "🎯 Selecting tables...",
+        "prune_columns":     "✂️ Pruning columns...",
         "planner":           "📐 Planning query...",
         "sql_coder":         "⚙️ Writing SQL...",
         "sql_validator":     "✅ Validating & executing...",
@@ -166,6 +178,7 @@ def _format_query_result(raw: str, max_rows: int = 20, query: str = "") -> str:
     Extracts column names from the SQL SELECT clause when available.
     """
     import ast
+
     import pandas as pd
 
     try:

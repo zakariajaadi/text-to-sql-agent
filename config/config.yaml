@@ -21,6 +21,9 @@ retrieval:
   top_k: 8
   fk_neighbors: false   # FK expansion pass 1: add all direct neighbors of selected tables
   
+column_pruning:
+  enabled: true
+  min_columns: 25   # only tables with more columns are sent to the LLM, narrower ones are kept whole
 
 memory:
   enabled: true

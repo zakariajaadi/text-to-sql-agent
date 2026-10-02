@@ -7,7 +7,8 @@ class AgentState(MessagesState):
      selected_db: str                    # target database name (output of route_database)
      is_in_scope: bool                   # whether the question can be answered (output of rerank_tables)
      candidate_schemas: dict[str, str]   # table_name → DDL from vector search (output of retrieve_schema)
-     retrieved_schema: str               # filtered DDL for sql_coder (output of rerank_tables)
+     selected_schemas: dict[str, str]    # table_name → full DDL of the tables kept by rerank_tables, FK-expanded (output of rerank_tables)
+     retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns)
      llm_selected_tables: list[str]      # tables selected by reranker LLM, before FK expansion, used by eval for precision/recall
      query_plan: str                     # execution plan from planner node
      generated_query: str                # SQL query (output of sql_coder)
