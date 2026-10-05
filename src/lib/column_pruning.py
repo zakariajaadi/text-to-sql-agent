@@ -5,7 +5,7 @@ Column pruning helpers — deterministic text operations on rendered DDL documen
 Used by: nodes.py (prune_columns)
 
 A rendered DDL is the per-table document indexed in Chroma by
-SchemaIndexer._render_semantics (schema_indexer.py):
+render_table (schema_indexer.py):
 
     -- Table: customer_cdc
     -- Description: One row per change event captured for a customer record...
@@ -58,7 +58,7 @@ def get_structural_columns(table_name: str, ddl: str, query_tables: set[str]) ->
     """
     Columns the generated SQL needs whatever the question asks — never pruned.
 
-    Read from the header lines written by SchemaIndexer._render_semantics:
+    Read from the header lines written by render_table (schema_indexer.py):
         - "-- Joins:"     → this table's join keys towards the other tables of the query
                             (a key towards a table absent from the query cannot be used)
         - "-- Read mode:" → partition column (LAST, ALL), key and version columns (LIVE)

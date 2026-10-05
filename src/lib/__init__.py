@@ -1,5 +1,5 @@
 # Re-export all public functions for backward compatibility.
-# Usage: from lib import expand_fk, select_database, cached_node, ...
+# Usage: from lib import expand_fk, cached_node, ...
 
 from lib.cache import cached_node, extract_text_content
 from lib.chainlit_ui import (
@@ -15,5 +15,4 @@ from lib.messages import (
     get_last_cycle,
     get_question,
 )
-from lib.routing import select_database
 from lib.sql_normalize import normalize_sql

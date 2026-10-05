@@ -45,7 +45,7 @@ relations:  ## Generate FK relations (review config/fk_relations.yaml after)
 index:  ## Index schemas into Chroma (no LLM when semantics exist)
 	$(RUN) -m schema_retrieval.schema_indexer --db $(DB)
 
-describe:  ## Generate the db description for routing, if missing (review config/db_descriptions.yaml after)
+describe:  ## Generate the db description shown in the chat profile selector, if missing (review config/db_descriptions.yaml after)
 	$(RUN) -m schema_retrieval.schema_indexer describe --db $(DB)
 
 # ── Local Hive ──────────────────────────────────────────────────────

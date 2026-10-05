@@ -52,8 +52,8 @@ async def process_node_output(event: dict, seen_msg_ids: set) -> None:
                 s.output = f"**Original:** {original}\n**Rewritten:** {condensed}"
         return
 
-    # ── route_database: title-only, no body ──
-    if node_name == "route_database" and "selected_db" in output:
+    # ── resolve_database: title-only, no body ──
+    if node_name == "resolve_database" and "selected_db" in output:
         async with cl.Step(name=f"🗄️ Database: {output['selected_db']}", type="run"):
             pass
         return
@@ -150,7 +150,7 @@ async def handle_step(msg, node_name: str = "") -> None:
 def get_node_step_title(node_name: str) -> str:
     return {
         "condense_question": "💬 Condensing question...",
-        "route_database":    "🗄️ Routing database...",
+        "resolve_database":  "🗄️ Resolving database...",
         "retrieve_schema":   "🔍 Retrieving candidates...",
         "rerank_tables":     "🎯 Selecting tables...",
         "prune_columns":     "✂️ Pruning columns...",

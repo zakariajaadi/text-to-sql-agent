@@ -1,13 +1,13 @@
 # src/schema_retrieval/indexer_prompts.py
 
 """
-Prompts for the offline schema pipeline (schema_indexer.py).
+Prompts for the offline schema pipeline (schema_indexer.py, generators.py).
 They run at indexing time, via make targets — never at query time.
-Pipeline order: semantics → relations → (review) → index → describe
+Pipeline order: semantics → fk-relations → (review) → index → describe
 """
 
-# ── Offline: schema_indexer.semantics ────────────────────────────────────────
-# Used by: SchemaIndexer._generate_semantics(), called by semantics()
+# ── Offline: generators.generate_semantics ──────────────────────────────
+# Used by: generators.generate_semantics()
 # Input context: DDL + sample rows for a single table, full table list for the database
 # Expected output: TableSemantics — merged into config/semantics/<db>.yaml, then reviewed
 
@@ -46,8 +46,8 @@ columns:
 {ddl}
 """
 
-# ── Offline: schema_indexer.relations ────────────────────────────────────────
-# Used by: SchemaIndexer._infer_relations(), called by relations()
+# ── Offline: generators.infer_fk_relations ──────────────────────────────
+# Used by: generators.infer_fk_relations()
 # Input context: enriched schemas of all tables in a database (from Chroma)
 # Expected output: FKRelations — merged into config/fk_relations.yaml, then reviewed
 
@@ -73,7 +73,7 @@ of another table (or of the same table, for hierarchies).
 """
 
 # ── Offline: schema_indexer.extract (fallback) ───────────────────────────────
-# Used by: SchemaIndexer._enrich_chain(), called by extract()
+# Used by: schema_indexer.enrich_chain, called by SchemaIndexer.extract()
 #          only for tables without an entry in config/semantics/<db>.yaml
 # Input context: DDL + sample rows for a single table, full table list for the database
 # Expected output: original DDL prepended with a business description comment block
@@ -105,10 +105,10 @@ All tables in this database: {all_tables}
 {ddl}
 """
 
-# ── Offline: schema_indexer.describe ─────────────────────────────────────────
-# Used by: SchemaIndexer._generate_description(), called by describe()
+# ── Offline: generators.describe_db ────────────────────────────────────────
+# Used by: generators.describe_db()
 # Input context: indexed schemas of all tables in a database (from Chroma)
-# Expected output: comma-separated keywords, written to config/db_descriptions.yaml for routing
+# Expected output: comma-separated keywords, written to config/db_descriptions.yaml (shown in the chat profile selector)
 
 DB_DESCRIPTION_PROMPT = """
 You are a database documentation expert.

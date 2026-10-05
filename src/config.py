@@ -279,24 +279,6 @@ logger.debug(f"Initialized databases: {list(db_registry.keys())}.")
 # Derived from config — computed once at startup
 # =============================================================================
 
-# Databases without a description are left out of routing — generate it with make describe
-routable = [db for db in cfg.databases if db.description]
-for db in cfg.databases:
-    if not db.description:
-        logger.warning(f"No description for {db.name} — excluded from routing. Run: make describe DB={db.name}")
-
-# {db_name: [keywords]} — pass 1 of deterministic database routing
-domain_rules: dict[str, list[str]] = {
-    db.name: db.description.lower().split(", ")
-    for db in routable
-}
-
-# {db_name: embedding_vector} — pass 2 of database routing (semantic similarity fallback)
-db_embeddings: dict[str, list[float]] = {
-    db.name: embedding_model.embed_query(db.description)
-    for db in routable
-}
-
 # Bidirectional FK graph — used by expand_fk in rerank_tables
 fk_graphs: dict[str, dict[str, list[str]]] = {
     db_cfg.name: build_fk_graph(db_registry[db_cfg.name], db_cfg.name)

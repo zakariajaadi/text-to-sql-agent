@@ -12,6 +12,10 @@ databases:
     dialect: "hive"
     description: ${oc.select:db_descriptions.Chinook,""} # Optional
     limit: 5
+  - name: "Northwind"
+    dialect: "hive"
+    description: ${oc.select:db_descriptions.Northwind,""} # Optional
+    limit: 5
 
 
 retrieval:

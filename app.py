@@ -17,8 +17,6 @@ from config import cfg
 
 ls_client = Client()
 
-
-
 @cl.on_chat_start
 async def on_chat_start():
     agent = build_graph()
@@ -26,8 +24,19 @@ async def on_chat_start():
     cl.user_session.set("agent", agent)
     if cfg.memory.enabled:
         cl.user_session.set("thread_id", str(uuid.uuid4()))
-    await cl.Message(content="👋 Posez-moi une question sur la base de données.").send()
 
+    # Database picked by the user in the chat profile selector (see chat_profiles)
+    db_name = cl.user_session.get("chat_profile")
+    await cl.Message(content=f"👋 Posez-moi une question sur la base **{db_name}**.").send()
+
+
+@cl.set_chat_profiles
+async def chat_profiles():
+    """One profile per database: the user picks the database, switching starts a new conversation."""
+    return [
+        cl.ChatProfile(name=db.name, markdown_description=db.description or db.name)
+        for db in cfg.databases
+    ]
 
 @cl.on_message
 async def on_message(message: cl.Message):
@@ -54,7 +63,10 @@ async def on_message(message: cl.Message):
 
         async with cl.Step(name="🤖 SQL Agent", type="run") as agent_step:
             async for event in agent.astream_events(
-                {"messages": [HumanMessage(content=message.content)]},
+                {
+                    "messages":    [HumanMessage(content=message.content)],
+                    "selected_db": cl.user_session.get("chat_profile"),
+                },
                 config=config,
                 version="v2"
             ):

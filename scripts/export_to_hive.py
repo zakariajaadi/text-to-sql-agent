@@ -53,7 +53,7 @@ for table in tables:
         f"DROP TABLE IF EXISTS {name};",
         f"CREATE TABLE {name} (\n  {col_defs}\n)\n"
         f"ROW FORMAT DELIMITED FIELDS TERMINATED BY '\\t' STORED AS TEXTFILE;",
-        f"LOAD DATA LOCAL INPATH '/tmp/hive_load/{hive_db}/{name}.tsv' INTO TABLE {name};",
+        f"LOAD DATA LOCAL INPATH '/tmp/hive_load/{hive_db}/{name}.tsv' OVERWRITE INTO TABLE {name};",
     ]
 
 (out_dir / "load.hql").write_text("\n".join(hql) + "\n")

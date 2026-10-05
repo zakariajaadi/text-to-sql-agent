@@ -12,10 +12,10 @@ from nodes import (
     planner,
     prune_columns,
     rerank_tables,
+    resolve_database,
     retrieve_schema,
     route_after_validation,
     route_by_scope,
-    route_database,
     sql_coder,
     sql_validator,
 )
@@ -27,7 +27,7 @@ def build_graph():
 
     # ── Nodes ─────────────────────────────────────────────────────────────────
     builder.add_node(condense_question)
-    builder.add_node(route_database)
+    builder.add_node(resolve_database)
     builder.add_node(retrieve_schema)
     builder.add_node(rerank_tables)
     builder.add_node(prune_columns)
@@ -38,8 +38,8 @@ def build_graph():
 
     # ── Edges ──────────────────────────────────────────────────────────────────
     builder.add_edge(START,                "condense_question")
-    builder.add_edge("condense_question",  "route_database")
-    builder.add_edge("route_database",     "retrieve_schema")
+    builder.add_edge("condense_question",  "resolve_database")
+    builder.add_edge("resolve_database",   "retrieve_schema")
     builder.add_edge("retrieve_schema",    "rerank_tables")
     builder.add_conditional_edges("rerank_tables", route_by_scope, {
         "in_scope":     "prune_columns",

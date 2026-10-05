@@ -1,13 +1,10 @@
-from loguru import logger 
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-
+from loguru import logger
 
 from config import db_registry, model
-
-
 
 # Factory  — constructs the 3 tools per database
 

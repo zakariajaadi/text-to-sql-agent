@@ -5,11 +5,19 @@ from typing import Literal
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
+from agent_prompts import (
+    CONDENSE_QUESTION_PROMPT,
+    DIALECT_RULES,
+    FORMAT_ANSWER_PROMPT,
+    PLANNER_PROMPT,
+    PRUNE_COLUMNS_PROMPT,
+    RERANK_TABLES_PROMPT,
+    SQL_CODER_PROMPT,
+    SQL_VALIDATOR_FEEDBACK,
+)
 from agent_schemas import ColumnSelection, RankedTablesAndScope
 from config import (
     cfg,
-    db_embeddings,
-    domain_rules,
     fast_model,
     fk_graphs,
     model,
@@ -24,19 +32,8 @@ from lib import (
     get_last_cycle,
     get_question,
     normalize_sql,
-    select_database,
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
-from prompts import (
-    CONDENSE_QUESTION_PROMPT,
-    DIALECT_RULES,
-    FORMAT_ANSWER_PROMPT,
-    PLANNER_PROMPT,
-    PRUNE_COLUMNS_PROMPT,
-    RERANK_TABLES_PROMPT,
-    SQL_CODER_PROMPT,
-    SQL_VALIDATOR_FEEDBACK,
-)
 from schema_retrieval.retriever import get_schema_retriever
 from state import AgentState
 from tools import get_run_query_tool
@@ -78,31 +75,34 @@ def condense_question(state: AgentState) -> dict:
     logger.debug(f"condense_question: '{question}' → '{condensed}'")
     return {"standalone_question": condensed}
 
-def route_database(state: AgentState) -> dict:
+def resolve_database(state: AgentState) -> dict:
     """
-    Deterministic node — selects the target database once per conversation.
-    Routing logic is delegated to select_database() in lib/routing.py.
-    Skipped when a database is already set: previous turn (checkpointer) or eval mode.
-    """
+    Deterministic node — resolves the target database and resets per-turn fields.
 
-    # Resets always apply, even when routing is skipped
+    The database is chosen by the caller, once per conversation:
+        - Chainlit: the chat profile picked by the user (app.py)
+        - eval:     the benchmark database (eval/run.py)
+
+    Without a caller choice, the only configured database is used.
+    With several databases, it fails loudly rather than guess.
+    """
+    # Per-turn fields, reset at every new question
     resets = {
-        "generated_query":     "",   # reset for the new turn
-        "validation_feedback": "",   # reset for the new turn
+        "generated_query":     "",
+        "validation_feedback": "",
     }
 
-    # One database per conversation — keep the one already selected
-    if state.get("selected_db"):
-        return {"selected_db": state["selected_db"], **resets}
+    db_name = state.get("selected_db")
 
-    # First question: route it
-    selected = select_database(
-        question=get_question(state),
-        domain_rules=domain_rules,
-        db_embeddings=db_embeddings,
-    )
+    if not db_name:
+        if len(cfg.databases) > 1:
+            raise ValueError("No database selected: pass selected_db in the graph input.")
+        db_name = cfg.databases[0].name
 
-    return {"selected_db": selected, **resets}
+    # Fail early on an unknown name rather than in retrieve_schema
+    cfg.get_db(db_name)
+
+    return {"selected_db": db_name, **resets}
 
 
 def retrieve_schema(state: AgentState) -> dict:

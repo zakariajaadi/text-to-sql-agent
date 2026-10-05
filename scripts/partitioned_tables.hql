@@ -70,7 +70,7 @@ CREATE TABLE customer_cdc (
 )
 STORED AS PARQUET;
 
-INSERT INTO TABLE customer_cdc
+INSERT OVERWRITE TABLE customer_cdc
 SELECT customerid, firstname, lastname, city, country, email,
        CAST('2026-09-01 00:00:00' AS TIMESTAMP), CAST('2026-09-01' AS DATE)
 FROM customer

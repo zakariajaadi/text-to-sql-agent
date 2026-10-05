@@ -1,0 +1,137 @@
+categories:
+  description: One row per product category used to classify items in the inventory.
+  columns:
+    categoryid: Unique identifier for the category.
+    categoryname: Name of the category.
+    description: Brief summary of the types of products included in the category.
+
+customercustomerdemo:
+  description: Mapping table linking customers to their specific demographic categories.
+  columns:
+    customerid: Unique identifier for the customer.
+    customertypeid: Identifier for the demographic category assigned to the customer.
+
+customerdemographics:
+  description: One row per customer demographic category used to classify customers.
+  columns:
+    customertypeid: Unique identifier for the customer demographic type.
+    customerdesc: Detailed description of the customer demographic category.
+
+customers:
+  description: One row per customer registered in the system.
+  columns:
+    customerid: Unique five-character alphanumeric code identifying the customer.
+    companyname: Name of the customer company.
+    contactname: Name of the primary contact person at the company.
+    contacttitle: Job title of the primary contact person.
+    address: Street address of the company.
+    city: City of the company.
+    region: Geographic region or state of the company.
+    postalcode: Postal code of the company.
+    country: Country of the company.
+    phone: Phone number of the company.
+    fax: Fax number of the company.
+
+employees:
+  description: One row per company employee, containing their personal details, contact information, and organizational hierarchy.
+  columns:
+    employeeid: Unique identifier for the employee.
+    lastname: Last name.
+    firstname: First name.
+    title: Job title.
+    titleofcourtesy: Honorific title used for the employee.
+    birthdate: Date of birth.
+    hiredate: Date the employee was hired.
+    address: Street address.
+    city: City.
+    region: Geographic region.
+    postalcode: Postal code.
+    country: Country.
+    homephone: Home telephone number.
+    extension: Internal telephone extension.
+    notes: General information or background notes about the employee.
+    reportsto: Identifier of the employee's direct supervisor.
+    photopath: URL or file path to the employee's photograph.
+
+employeeterritories:
+  description: One row represents the assignment of an employee to a specific territory.
+  columns:
+    employeeid: Identifier of the employee.
+    territoryid: Identifier of the territory.
+
+order_details:
+  description: One row represents a specific product line item within an order.
+  columns:
+    orderid: Identifier of the order.
+    productid: Identifier of the product.
+    unitprice: Price per unit of the product.
+    quantity: Number of units ordered.
+    discount: Percentage discount applied to the line item, expressed as a decimal.
+
+orders:
+  description: One row per customer order, containing shipping details and logistics information.
+  columns:
+    orderid: Unique order identifier.
+    customerid: Customer who placed the order.
+    employeeid: Employee who processed the order.
+    orderdate: Date the order was placed.
+    requireddate: Date the order is required to be delivered.
+    shippeddate: Date the order was actually shipped.
+    shipvia: Identifier of the shipping company used.
+    freight: 'UNCLEAR: shipping cost, currency not stated.'
+    shipname: Name of the recipient at the shipping address.
+    shipaddress: Street address for delivery.
+    shipcity: City for delivery.
+    shipregion: Region or state for delivery.
+    shippostalcode: Postal code for delivery.
+    shipcountry: Country for delivery.
+
+products:
+  description: One row per product available for sale, including pricing, inventory levels, and supplier information.
+  columns:
+    productid: Unique product identifier.
+    productname: Name of the product.
+    supplierid: Identifier of the supplier providing the product.
+    categoryid: Identifier of the product category.
+    quantityperunit: Physical description of the unit size or packaging.
+    unitprice: Price per single unit, currency not stated.
+    unitsinstock: Current number of units available in inventory.
+    unitsonorder: Number of units currently ordered from suppliers but not yet received.
+    reorderlevel: Minimum stock level that triggers a new order.
+    discontinued: 'Status indicating if the product is no longer available: 0 = active, 1 = discontinued.'
+
+regions:
+  description: One row per geographical region used to group territories.
+  columns:
+    regionid: Unique identifier for the region.
+    regiondescription: Name of the region.
+
+shippers:
+  description: One row per shipping company used to transport orders.
+  columns:
+    shipperid: Unique identifier for the shipper.
+    companyname: Name of the shipping company.
+    phone: Phone number of the shipping company.
+
+suppliers:
+  description: One row per supplier providing products to the company.
+  columns:
+    supplierid: Unique supplier identifier.
+    companyname: Supplier company name.
+    contactname: Name of the primary contact person.
+    contacttitle: Job title of the contact person.
+    address: Street address.
+    city: City.
+    region: Geographic region or state.
+    postalcode: Postal code.
+    country: Country.
+    phone: Phone number.
+    fax: Fax number.
+    homepage: URL of the supplier website.
+
+territories:
+  description: One row per sales territory defined within the company's regional structure.
+  columns:
+    territoryid: Unique identifier for the territory.
+    territorydescription: Name or descriptive label of the territory.
+    regionid: Identifier of the region to which the territory belongs.

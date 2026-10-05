@@ -166,6 +166,8 @@ You ONLY write SQL — you never execute it.
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
+11. Always give aggregates and computed expressions a descriptive snake_case alias
+    (e.g. COUNT(*) AS customer_count, SUM(il.unitprice * il.quantity) AS total_revenue).
 
 ## {dialect} RULES
 {dialect_rules}
