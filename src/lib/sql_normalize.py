@@ -1,6 +1,6 @@
 """
 Deterministic fixes applied to every generated query, for Hive and Impala.
-Used by: nodes.py (sql_coder)
+Used by: agent/nodes.py (sql_coder)
 """
 
 import sqlglot

@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 from loguru import logger
 
-from graph import build_graph
+from agent.graph import build_graph
 from lib import get_node_step_title, normalize_chunk_content, process_node_output
 from langsmith import Client
 from config import cfg 

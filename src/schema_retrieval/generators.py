@@ -26,13 +26,13 @@ from omegaconf import OmegaConf
 from sqlalchemy import inspect as sa_inspect
 
 from config import BASE_DIR, cfg, fast_model, load_fk_relations, model
-from schema_retrieval.indexer_prompts import (
+from schema_retrieval.prompts import (
     DB_DESCRIPTION_PROMPT,
     FK_RELATIONS_PROMPT,
     TABLE_SEMANTICS_PROMPT,
 )
-from schema_retrieval.indexer_schemas import FKRelations, TableSemantics
 from schema_retrieval.schema_indexer import SEMANTICS_DIR, load_semantics, render_table
+from schema_retrieval.schemas import FKRelations, TableSemantics
 
 # ------------------------------------------------------------
 # Constants

@@ -1,6 +1,6 @@
 """
 FK expnading helpers
-Used by: nodes.py (rerank_tables)
+Used by: agent/nodes.py (rerank_tables)
 """
 
 def expand_fk(selected: list[str], fk_graph: dict[str, list[str]],

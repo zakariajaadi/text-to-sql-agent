@@ -1,4 +1,4 @@
-# src/schema_retrieval/indexer_prompts.py
+# src/schema_retrieval/prompts.py
 
 """
 Prompts for the offline schema pipeline (schema_indexer.py, generators.py).
@@ -48,7 +48,7 @@ columns:
 
 # ── Offline: generators.infer_fk_relations ──────────────────────────────
 # Used by: generators.infer_fk_relations()
-# Input context: enriched schemas of all tables in a database (from Chroma)
+# Input context: schemas of all tables in a database (DDL + reviewed semantics)
 # Expected output: FKRelations — merged into config/fk_relations.yaml, then reviewed
 
 FK_RELATIONS_PROMPT = """
@@ -72,42 +72,9 @@ of another table (or of the same table, for hierarchies).
 {schemas}
 """
 
-# ── Offline: schema_indexer.extract (fallback) ───────────────────────────────
-# Used by: schema_indexer.enrich_chain, called by SchemaIndexer.extract()
-#          only for tables without an entry in config/semantics/<db>.yaml
-# Input context: DDL + sample rows for a single table, full table list for the database
-# Expected output: original DDL prepended with a business description comment block
-
-SCHEMA_DESCRIPTION_PROMPT = """
-You are a database documentation expert.
-
-Given the DDL and sample rows of a database table, write a concise business description.
-
-## TASK 
-Add a comment block at the TOP of the DDL, following this exact structure:
--- Description: <what this table represents in business terms>
--- Granularity: <what one row represents, e.g. "one line item within an order", "one customer">
--- Business role: <what business process it supports>
--- Common joins: <tables from the database context it's typically joined with and why>
--- Key columns: <most important columns and what they represent>
-
-## RULES
-- Be concise — max 2 lines per field
-- Infer from column names and sample data, do not invent
-- Only reference tables that exist in the list below for Common joins
-- Output ONLY the comment block + the original DDL, nothing else
-
-## DATABASE CONTEXT
-Database: {db_name}
-All tables in this database: {all_tables}
-
-## DDL
-{ddl}
-"""
-
 # ── Offline: generators.describe_db ────────────────────────────────────────
 # Used by: generators.describe_db()
-# Input context: indexed schemas of all tables in a database (from Chroma)
+# Input context: schemas of all tables in a database (DDL + reviewed semantics)
 # Expected output: comma-separated keywords, written to config/db_descriptions.yaml (shown in the chat profile selector)
 
 DB_DESCRIPTION_PROMPT = """

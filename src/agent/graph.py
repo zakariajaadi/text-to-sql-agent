@@ -1,12 +1,11 @@
-# src/graph.py
+# src/agent/graph.py
 
 from pathlib import Path
 
 from langchain_core.runnables.graph_mermaid import draw_mermaid_png
 from langgraph.graph import END, START, StateGraph
 
-from config import cfg
-from nodes import (
+from agent.nodes import (
     condense_question,
     format_answer,
     planner,
@@ -19,7 +18,8 @@ from nodes import (
     sql_coder,
     sql_validator,
 )
-from state import AgentState
+from agent.state import AgentState
+from config import cfg
 
 
 def build_graph():
@@ -65,7 +65,7 @@ def build_graph():
 
 def save_graph_png(agent, orientation: str = "LR") -> Path:
 
-    output_path = Path(__file__).resolve().parents[1] / "assets" / "graph.png"
+    output_path = Path(__file__).resolve().parents[2] / "assets" / "graph.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     mermaid_str = agent.get_graph().draw_mermaid().replace("graph TD", f"graph {orientation}")

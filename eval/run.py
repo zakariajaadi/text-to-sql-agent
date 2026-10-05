@@ -43,7 +43,7 @@ from eval_lib import (
 # Ensure src/ is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from graph import build_graph  # noqa: E402
+from agent.graph import build_graph  # noqa: E402
 from config import db_registry # noqa: E402
 
 

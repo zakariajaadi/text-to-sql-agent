@@ -1,4 +1,4 @@
-# src/prompts.py
+# src/agent/prompts.py
 
 # ── Dialect rules, injected into SQL_CODER_PROMPT ─────────────────────────────
 # Used by: sql_coder node — pitfalls that silently return wrong results or fail

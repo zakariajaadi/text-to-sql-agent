@@ -1,12 +1,12 @@
 """
 LangChain messages helpers
-Used by: nodes.py (check_query, generate_query)
+Used by: agent/nodes.py (check_query, generate_query)
 
 """
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
-from tools import get_run_query_tool
+from agent.tools import get_run_query_tool
 
 
 def get_last_cycle(messages: list) -> list:

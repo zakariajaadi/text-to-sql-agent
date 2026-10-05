@@ -2,7 +2,7 @@
 
 """
 Column pruning helpers — deterministic text operations on rendered DDL documents.
-Used by: nodes.py (prune_columns)
+Used by: agent/nodes.py (prune_columns)
 
 A rendered DDL is the per-table document indexed in Chroma by
 render_table (schema_indexer.py):

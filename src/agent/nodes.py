@@ -1,11 +1,12 @@
-# src/nodes.py
+# src/agent/nodes.py
 
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
-from agent_prompts import (
+from agent.guardrails import is_safe_query
+from agent.prompts import (
     CONDENSE_QUESTION_PROMPT,
     DIALECT_RULES,
     FORMAT_ANSWER_PROMPT,
@@ -15,7 +16,9 @@ from agent_prompts import (
     SQL_CODER_PROMPT,
     SQL_VALIDATOR_FEEDBACK,
 )
-from agent_schemas import ColumnSelection, RankedTablesAndScope
+from agent.schemas import ColumnSelection, RankedTablesAndScope
+from agent.state import AgentState
+from agent.tools import get_run_query_tool
 from config import (
     cfg,
     fast_model,
@@ -23,7 +26,6 @@ from config import (
     model,
     schema_store,
 )
-from guardrails import is_safe_query
 from lib import (
     cached_node,
     expand_fk,
@@ -35,8 +37,6 @@ from lib import (
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
 from schema_retrieval.retriever import get_schema_retriever
-from state import AgentState
-from tools import get_run_query_tool
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 """
 LangGraph Node Decorator: Semantic Caching Middleware
-Used by: src/nodes.py (sql_coder, format_answer ...)
+Used by: src/agent/nodes.py (sql_coder, format_answer ...)
 
 """
 
