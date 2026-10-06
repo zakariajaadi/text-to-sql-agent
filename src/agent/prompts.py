@@ -91,8 +91,8 @@ needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregation
    an extra column only costs a few tokens.
 2. Keep the display columns (name, title, label...) of every entity the answer reports,
    not only its identifier.
-3. Keep the columns whose description or sample values match a value cited in the question
-   (e.g. "in Brazil" → country).
+3. Keep the columns whose description, "Values:" list or sample values match a value cited
+   in the question (e.g. "in Brazil" → country).
 4. Keep the date / time columns when the question has a time dimension
    (period filter, trend, "latest", "first", ordering by date).
 5. Join keys and read-mode columns are always kept automatically: no need to list them.
@@ -115,6 +115,7 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Joins: [table1.col = table2.col, ...]
 - Aggregation strategy: [describe levels — e.g. "first SUM per order, then AVG per country"]
 - Filters: [WHERE conditions if any]
+- Also close: [other listed values matching a filtered term, not filtered on — or None]
 - Ordering: [ORDER BY if needed — required when results will be limited]
 
 ## RULES
@@ -123,6 +124,11 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   you MUST specify a two-level aggregation strategy with an explicit intermediate step.
 - If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
   explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
+- When a filtered column lists its "Values:", write the filter with the exact listed value
+  closest to the user's term (e.g. "United States" → country = 'USA').
+  Even when one value matches exactly, scan the whole list: variants or abbreviations of
+  the same concept are "also close" (e.g. "cancelled" → status = 'Cancelled',
+  Also close: 'Cancelled by Customer'). List them under "Also close", not in Filters.
 
 ## DATABASE SCHEMA
 {schema}
@@ -150,7 +156,9 @@ You ONLY write SQL — you never execute it.
   -- Assumption: interpreted '[term]' as [column/table]
 - Only document assumptions where a different interpretation would change the query results.
 - Never restate what the question already says explicitly.
-- Do NOT list alternatives.
+- Do NOT list alternatives, except for listed values: when the plan lists "Also close"
+  values, document them:
+  -- Assumption: interpreted 'cancelled' as status = 'Cancelled' (also close: 'Cancelled by Customer')
  
 ## STRICT SQL RULES
 1. ONLY use tables and columns from the schema below.
@@ -160,14 +168,17 @@ You ONLY write SQL — you never execute it.
    - Questions asking for a complete list: use LIMIT 100 as a safety cap.
    - User specifies an explicit number (e.g. "top 10"): use that number.
 4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
-5. For text matching, use LOWER(column) LIKE LOWER('%value%').
+5. Text filters:
+   - If the column lists its "Values:", map the user's term to the listed value and filter on it
+     exactly: col = 'Value' or col IN (...). E.g. "United States" → country = 'USA'.
+   - Otherwise, use LOWER(column) LIKE LOWER('%value%').
 6. Always include ORDER BY for rankings, "top N" questions, and whenever LIMIT is applied.
 7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE.
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
 11. Always give aggregates and computed expressions a descriptive snake_case alias
-    (e.g. COUNT(*) AS customer_count, SUM(il.unitprice * il.quantity) AS total_revenue).
+    (e.g. COUNT(*) AS flight_count, SUM(b.seat_price * b.passenger_count) AS total_revenue).
 
 ## {dialect} RULES
 {dialect_rules}
@@ -270,10 +281,17 @@ Your job is to transform these results into a natural, conversational response.
 - If several results share the same value at the end of a ranking, say they are tied.
 
 ## ASSUMPTIONS
-Only if the SQL contains comments starting with "Assumption:", end the answer with:
-  **Assumptions:**
-  * Assumed "[term]" → [interpretation]
+Only if the SQL contains comments starting with "Assumption:", end the answer with this
+block, written in the user's language, heading included:
+  **[heading]:**
+  * "[term]" → [interpretation] ([also close]: [values])
+One line per assumption comment. Add the "([also close]: [values])" part only when the
+comment lists also close values.
+[heading] and [also close] are "Assumptions" and "also close", translated into the
+language of the user's question.
 One short line each. Never invent assumptions that are not in the SQL.
+Keep database values exactly as written, never translated (e.g. 'Cancelled by Customer' stays as is).
+Always keep the "also close" values: they tell the user what else they could ask for.
 If the SQL has no such comment, write nothing at all about assumptions.
 
 ## SPECIAL CASES

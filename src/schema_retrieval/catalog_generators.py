@@ -3,13 +3,16 @@
 """
 Offline LLM generators for the reviewed configuration files read by the indexer.
 
-    generate_semantics  → config/semantics/<db>.yaml   (table and column descriptions)
+    generate_semantics  → config/semantics/<db>.yaml   (descriptions and categorical columns)
     infer_fk_relations  → config/fk_relations.yaml     (FK relations, for Hive / Impala)
     describe_db         → config/db_descriptions.yaml  (database description)
 
 All three are additive: they only fill what is missing and never overwrite reviewed
 content. They read the database directly (DDL + existing semantics), never Chroma,
 so they can run before the first index.
+
+The values of the categorical columns are not generated here: they are data, read
+from the database at index time (lib/categorical_values.py).
 
 Pipeline order: semantics → fk-relations → (review) → index → describe
 Run through the schema_indexer CLI (see schema_indexer.py).
@@ -40,6 +43,23 @@ from schema_retrieval.schemas import FKRelations, TableSemantics
 
 FK_RELATIONS_PATH    = BASE_DIR / "config" / "fk_relations.yaml"
 DB_DESCRIPTIONS_PATH = BASE_DIR / "config" / "db_descriptions.yaml"
+
+SEMANTICS_HEADER = """\
+# Semantic layer, generated (schema_indexer semantics) and reviewed manually.
+# The generator only ADDS missing content, it never overwrites reviewed content.
+#   description, columns : business meaning of the table and of each column
+#   categorical_columns  : columns holding a closed set of labels (country, status...),
+#                          whose values are read from the database at index time.
+#                          Remove a column from the list to reject it: it won't come back
+#   read_mode, key_columns, partition_column, version_column : Hive table layout
+
+"""
+
+# Key order of a table block in the YAML (unknown keys last)
+SEMANTICS_KEY_ORDER = [
+    "description", "read_mode", "key_columns", "partition_column", "version_column",
+    "categorical_columns", "columns",
+]
 
 FK_RELATIONS_HEADER = """\
 # Declarative FK relations, for engines that expose no FK metadata (Hive, Impala).
@@ -79,24 +99,28 @@ db_description_chain = (
 
 def generate_semantics(db_name: str):
     """
-    Generates a semantic layer (missing table and column descriptions) via LLM
-    into config/semantics/<db>.yaml.
+    Generates a semantic layer via LLM into config/semantics/<db>.yaml: missing table
+    and column descriptions, and which columns are categorical.
 
     Compares current DB tables and columns against `config/semantics/<db>.yaml`.
-    Only missing tables or tables with undocumented columns are routed to the LLM.
+    Only missing tables, tables with undocumented columns, or tables without
+    `categorical_columns` are routed to the LLM.
 
     Additive only:
-    existing descriptions are never overwritten.
+    existing descriptions are never overwritten, and a reviewed `categorical_columns`
+    list only gains columns that are new to the table.
     """
     db         = _connect(db_name)
     existing   = load_semantics(db_name)
     columns    = _table_columns(db)
     all_tables = ", ".join(columns)
 
-    # 1. Only tables that are missing or have undocumented columns go to the LLM
+    # 1. Only tables with something missing go to the LLM
     todo = [
         t for t in columns
-        if t not in existing or set(columns[t]) - set(existing[t].get("columns") or {})
+        if t not in existing
+        or "categorical_columns" not in existing[t]
+        or set(columns[t]) - set(existing[t].get("columns") or {})
     ]
 
     def generate(table: str) -> tuple[str, TableSemantics]:
@@ -120,9 +144,18 @@ def generate_semantics(db_name: str):
         entry.setdefault("description", result.description)
         entry["columns"] = entry.get("columns") or {}
 
+        # Categorical columns, in DDL order (columns the LLM invented are dropped).
+        # A reviewed list only gains the columns new to the table: rejections stay rejected
+        flagged     = {c.name for c in result.columns if c.categorical}
+        new_columns = [c for c in columns[table] if c not in entry["columns"]]
+        if "categorical_columns" not in entry:
+            entry["categorical_columns"] = [c for c in columns[table] if c in flagged]
+        else:
+            entry["categorical_columns"] += [c for c in new_columns if c in flagged]
+
         described = {c.name: c.description for c in result.columns}
-        for column in columns[table]:
-            if column not in entry["columns"] and column in described:
+        for column in new_columns:
+            if column in described:
                 entry["columns"][column] = described[column]
                 added += 1
 
@@ -239,9 +272,22 @@ def _render_schemas(db: SQLDatabase, db_name: str) -> str:
     return "\n\n".join(schemas)
 
 
+class _SemanticsDumper(yaml.SafeDumper):
+    """Lists on one line ([a, b, c]): key_columns and value lists stay compact for review."""
+
+
+_SemanticsDumper.add_representer(
+    list, lambda dumper, data: dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
+)
+
+
 def _dump_semantics(semantics: dict) -> str:
     """Dump one YAML block per table, separated by a blank line for readability."""
-    return "\n".join(
-        yaml.safe_dump({table: entry}, sort_keys=False, allow_unicode=True, width=1000)
+    def ordered(entry: dict) -> dict:
+        rank = {key: i for i, key in enumerate(SEMANTICS_KEY_ORDER)}
+        return dict(sorted(entry.items(), key=lambda item: rank.get(item[0], len(rank))))
+
+    return SEMANTICS_HEADER + "\n".join(
+        yaml.dump({table: ordered(entry)}, Dumper=_SemanticsDumper, sort_keys=False, allow_unicode=True, width=1000)
         for table, entry in semantics.items()
     )

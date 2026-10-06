@@ -1,5 +1,14 @@
+# Semantic layer, generated (schema_indexer semantics) and reviewed manually.
+# The generator only ADDS missing content, it never overwrites reviewed content.
+#   description, columns : business meaning of the table and of each column
+#   categorical_columns  : columns holding a closed set of labels (country, status...),
+#                          whose values are read from the database at index time.
+#                          Remove a column from the list to reject it: it won't come back
+#   read_mode, key_columns, partition_column, version_column : Hive table layout
+
 categories:
   description: One row per product category used to classify items in the inventory.
+  categorical_columns: [categoryname]
   columns:
     categoryid: Unique identifier for the category.
     categoryname: Name of the category.
@@ -7,18 +16,21 @@ categories:
 
 customercustomerdemo:
   description: Mapping table linking customers to their specific demographic categories.
+  categorical_columns: []
   columns:
     customerid: Unique identifier for the customer.
     customertypeid: Identifier for the demographic category assigned to the customer.
 
 customerdemographics:
   description: One row per customer demographic category used to classify customers.
+  categorical_columns: []
   columns:
     customertypeid: Unique identifier for the customer demographic type.
     customerdesc: Detailed description of the customer demographic category.
 
 customers:
   description: One row per customer registered in the system.
+  categorical_columns: [contacttitle, city, region, country]
   columns:
     customerid: Unique five-character alphanumeric code identifying the customer.
     companyname: Name of the customer company.
@@ -34,6 +46,7 @@ customers:
 
 employees:
   description: One row per company employee, containing their personal details, contact information, and organizational hierarchy.
+  categorical_columns: [title, titleofcourtesy, city, region, country]
   columns:
     employeeid: Unique identifier for the employee.
     lastname: Last name.
@@ -55,12 +68,14 @@ employees:
 
 employeeterritories:
   description: One row represents the assignment of an employee to a specific territory.
+  categorical_columns: []
   columns:
     employeeid: Identifier of the employee.
     territoryid: Identifier of the territory.
 
 order_details:
   description: One row represents a specific product line item within an order.
+  categorical_columns: []
   columns:
     orderid: Identifier of the order.
     productid: Identifier of the product.
@@ -70,6 +85,7 @@ order_details:
 
 orders:
   description: One row per customer order, containing shipping details and logistics information.
+  categorical_columns: [shipcity, shipregion, shipcountry]
   columns:
     orderid: Unique order identifier.
     customerid: Customer who placed the order.
@@ -88,6 +104,7 @@ orders:
 
 products:
   description: One row per product available for sale, including pricing, inventory levels, and supplier information.
+  categorical_columns: [discontinued]
   columns:
     productid: Unique product identifier.
     productname: Name of the product.
@@ -102,12 +119,14 @@ products:
 
 regions:
   description: One row per geographical region used to group territories.
+  categorical_columns: [regiondescription]
   columns:
     regionid: Unique identifier for the region.
     regiondescription: Name of the region.
 
 shippers:
   description: One row per shipping company used to transport orders.
+  categorical_columns: []
   columns:
     shipperid: Unique identifier for the shipper.
     companyname: Name of the shipping company.
@@ -115,6 +134,7 @@ shippers:
 
 suppliers:
   description: One row per supplier providing products to the company.
+  categorical_columns: [contacttitle, city, region, country]
   columns:
     supplierid: Unique supplier identifier.
     companyname: Supplier company name.
@@ -131,6 +151,7 @@ suppliers:
 
 territories:
   description: One row per sales territory defined within the company's regional structure.
+  categorical_columns: [territorydescription]
   columns:
     territoryid: Unique identifier for the territory.
     territorydescription: Name or descriptive label of the territory.

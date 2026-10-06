@@ -36,13 +36,13 @@ schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])
 	print(docs[0] if docs else 'Not found: $(DB)_$(TABLE)')"
 
 # ── Schema pipeline: semantics → relations → (review) → index ───────
-semantics:  ## Generate table/column descriptions (review config/semantics/ after)
+semantics:  ## Generate table/column descriptions and categorical columns (review config/semantics/ after)
 	$(RUN) -m schema_retrieval.schema_indexer semantics --db $(DB)
 
 relations:  ## Generate FK relations (review config/fk_relations.yaml after)
 	$(RUN) -m schema_retrieval.schema_indexer fk-relations --db $(DB)
 
-index:  ## Index schemas into Chroma (no LLM when semantics exist)
+index:  ## Index schemas into Chroma, with the values of the categorical columns (no LLM when semantics exist)
 	$(RUN) -m schema_retrieval.schema_indexer --db $(DB)
 
 describe:  ## Generate the db description shown in the chat profile selector, if missing (review config/db_descriptions.yaml after)

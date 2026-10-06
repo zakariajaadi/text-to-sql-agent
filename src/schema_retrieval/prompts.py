@@ -3,7 +3,7 @@
 """
 Prompts for the offline schema pipeline (schema_indexer.py, catalog_generators.py).
 They run at indexing time, via make targets — never at query time.
-Pipeline order: semantics → fk-relations → (review) → index → describe
+Pipeline order: semantics → values → fk-relations → (review) → index → describe
 """
 
 # ── Offline: catalog_generators.generate_semantics ──────────────────────
@@ -31,16 +31,22 @@ Describe the table and each of its columns, for an analyst writing SQL queries.
    If the name says it all (e.g. firstname, city), use a few words at most.
    Spend words only where the meaning is not obvious (ids pointing to other tables,
    codes, units, amounts).
+9. Categorical: true when the column holds labels from a closed set a user would filter
+   on: countries, states, cities, statuses, job titles, types, and the label of a reference
+   table (aircraft model, fare class), even if each label appears once.
+   False for identifiers, including ids pointing to another table (fare_class_id): the label
+   lives in the referenced table. False also for names of people or companies, contact
+   details (phone, fax, email, address), free text, dates, timestamps and amounts.
 
 ## EXAMPLE OUTPUT (style to imitate)
 description: One row per customer order, with its shipping and billing details.
 columns:
-  order_id: Unique order identifier.
-  firstname: First name.
-  city: City.
-  cust_ref: Customer who placed the order.
-  st_cd: "Order status: A = active, C = cancelled, R = refunded."
-  amt_ttc: UNCLEAR: amount including tax, currency not stated.
+  order_id: Unique order identifier.                                  (categorical: false)
+  firstname: First name.                                              (categorical: false)
+  city: City.                                                         (categorical: true)
+  cust_ref: Customer who placed the order.                            (categorical: false)
+  st_cd: "Order status: A = active, C = cancelled, R = refunded."     (categorical: true)
+  amt_ttc: UNCLEAR: amount including tax, currency not stated.        (categorical: false)
 
 ## TABLE
 {ddl}
@@ -62,9 +68,9 @@ of another table (or of the same table, for hierarchies).
 ## RULES
 1. Only use tables and columns that exist in the schemas below. Never invent names.
 2. Write columns as table.column, spelled exactly as in the DDL.
-3. The referenced column must be the identifier of its table (e.g. customer.customerid).
+3. The referenced column must be the identifier of its table (e.g. passenger.passenger_id).
 4. Use column names, descriptions and sample values, including irregular names
-   (e.g. a column holding an employee id under another name).
+   (e.g. booking.traveler_ref holding a passenger id under another name).
 5. Only include relationships you are confident about. Never link columns that merely
    share a generic name (name, title, date).
 
@@ -85,9 +91,9 @@ of the database as a whole.
 
 ## OUTPUT FORMAT
 A single comma-separated list of keywords describing:
-- The business domain (e.g. music store, e-commerce)
-- The main entities (e.g. artists, albums, customers)
-- The main processes (e.g. invoicing, order management)
+- The business domain (e.g. air travel, logistics)
+- The main entities (e.g. flights, airports, passengers)
+- The main processes (e.g. booking, check-in)
 
 ## RULES
 - Max 15 keywords

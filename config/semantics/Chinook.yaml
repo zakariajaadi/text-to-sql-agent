@@ -1,5 +1,14 @@
+# Semantic layer, generated (schema_indexer semantics) and reviewed manually.
+# The generator only ADDS missing content, it never overwrites reviewed content.
+#   description, columns : business meaning of the table and of each column
+#   categorical_columns  : columns holding a closed set of labels (country, status...),
+#                          whose values are read from the database at index time.
+#                          Remove a column from the list to reject it: it won't come back
+#   read_mode, key_columns, partition_column, version_column : Hive table layout
+
 album:
   description: Represents a music album released by an artist.
+  categorical_columns: []
   columns:
     albumid: Unique identifier for the album.
     title: Name of the album.
@@ -7,12 +16,14 @@ album:
 
 artist:
   description: Represents a musical artist or band.
+  categorical_columns: []
   columns:
     artistid: Unique identifier for the artist.
     name: Name of the artist or band.
 
 customer:
   description: Represents a customer of the Chinook store.
+  categorical_columns: [city, state, country]
   columns:
     customerid: Unique identifier for the customer.
     firstname: Customer first name.
@@ -30,6 +41,7 @@ customer:
 
 employee:
   description: Represents an employee of the company.
+  categorical_columns: [title, city, state, country]
   columns:
     employeeid: Unique identifier for the employee.
     lastname: Employee last name.
@@ -49,12 +61,14 @@ employee:
 
 genre:
   description: Represents a musical genre category used to classify tracks.
+  categorical_columns: [name]
   columns:
     genreid: Unique identifier for the genre.
     name: Descriptive name of the genre.
 
 invoice:
   description: Represents a customer invoice generated for a purchase.
+  categorical_columns: [billingcity, billingstate, billingcountry]
   columns:
     invoiceid: Primary key identifying the invoice.
     customerid: Foreign key referencing the customer who made the purchase.
@@ -68,6 +82,7 @@ invoice:
 
 invoiceline:
   description: Represents an individual line item within a customer invoice, detailing a specific track purchased.
+  categorical_columns: []
   columns:
     invoicelineid: Unique identifier for the invoice line item.
     invoiceid: Identifier of the invoice this line item belongs to.
@@ -77,24 +92,28 @@ invoiceline:
 
 mediatype:
   description: Represents the various digital media formats available for tracks.
+  categorical_columns: [name]
   columns:
     mediatypeid: Unique identifier for the media type.
     name: Descriptive name of the media format.
 
 playlist:
   description: A playlist represents a collection of tracks grouped together for listening or viewing purposes.
+  categorical_columns: [name]
   columns:
     playlistid: Unique identifier for the playlist.
     name: Descriptive title of the playlist.
 
 playlisttrack:
   description: Associative table linking playlists to the tracks they contain.
+  categorical_columns: []
   columns:
     playlistid: Identifier of the playlist.
     trackid: Identifier of the track included in the playlist.
 
 track:
   description: Individual music track available in the store.
+  categorical_columns: []
   columns:
     trackid: Unique identifier for the track.
     name: Title of the track.
@@ -111,6 +130,7 @@ customer_cdc:
   read_mode: live
   key_columns: [customerid]
   version_column: time
+  categorical_columns: [city, country]
   columns:
     customerid: Unique identifier for the customer.
     firstname: First name.
@@ -125,6 +145,7 @@ customer_snapshot:
   description: A historical snapshot of customer profile data at a specific point in time.
   read_mode: last
   partition_column: date_technique
+  categorical_columns: [city, state, country]
   columns:
     customerid: Unique identifier for the customer.
     firstname: First name.
@@ -146,6 +167,7 @@ invoice_delta:
   description: One row per incremental change or update record for an invoice.
   read_mode: all
   partition_column: date_technique
+  categorical_columns: [billingcity, billingstate, billingcountry]
   columns:
     invoiceid: Unique identifier for the invoice.
     customerid: Customer associated with the invoice.
@@ -158,5 +180,3 @@ invoice_delta:
     total: 'UNCLEAR: total invoice amount, currency not stated.'
     time: Timestamp of the delta record creation.
     date_technique: Technical date associated with the delta processing.
-
-

@@ -20,12 +20,14 @@ def load_semantics(db_name: str) -> dict:
 
 
 def render_table(table_name: str, table_ddl: str, table_semantics: dict,
-                 db_fk_relations: list[tuple[str, str]]) -> str:
+                 db_fk_relations: list[tuple[str, str]],
+                 categorical_values: dict[str, list[str]] | None = None) -> str:
     """
     Render the document indexed in Chroma for one table, from reviewed semantics — no LLM.
 
     Prepends a comment header to the DDL and appends each documented column's
-    description as an inline comment:
+    description, and its categorical values if any (read from the database by
+    lib/categorical_values.py), as an inline comment:
 
         -- Table: invoice
         -- Description: One row per customer purchase.
@@ -34,14 +36,16 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
 
         CREATE TABLE `invoice` (
             `invoiceid` INT,  -- Unique identifier of the invoice.
+            `billingcountry` STRING,  -- Billing country. Values: 'Brazil', 'Canada', ...
             ...
         )
 
     Format contract: the "-- Joins" and "-- Read mode" lines are parsed back by
     lib/column_pruning.py — keep both in sync when changing the format.
     """
-    columns = table_semantics.get("columns", {})
-    lines   = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
+    columns = table_semantics.get("columns") or {}
+    values  = categorical_values or {}   # {column: [value, ...]}
+    lines   =[f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
 
     # Join conditions involving this table, from fk_relations.yaml
     joins = [
@@ -56,17 +60,20 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     lines.extend(_render_read_mode(table_name, table_semantics))
     lines.append("")
 
-    # Append each column description as an inline SQL comment
+    # Append each column description and categorical values as an inline SQL comment
     in_create = False
     for line in table_ddl.splitlines():
         if line.startswith("CREATE TABLE"):
             in_create = True
         elif line.startswith(")"):
             in_create = False
-        elif in_create:
-            name = line.strip().split()[0].strip('`"[]')
-            if name in columns:
-                line = f"{line.rstrip()}  -- {columns[name]}"
+        elif in_create and line.strip():
+            name    = line.strip().split()[0].strip('`"[]')
+            comment = columns.get(name, "")
+            if name in values:
+                comment = f"{comment} Values: {', '.join(repr(str(v)) for v in values[name])}".strip()
+            if comment:
+                line = f"{line.rstrip()}  -- {comment}"
         lines.append(line)
 
     return "\n".join(lines)
