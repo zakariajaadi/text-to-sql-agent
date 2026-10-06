@@ -1,4 +1,4 @@
-# src/schema_retrieval/generators.py
+# src/schema_retrieval/catalog_generators.py
 
 """
 Offline LLM generators for the reviewed configuration files read by the indexer.
@@ -26,12 +26,12 @@ from omegaconf import OmegaConf
 from sqlalchemy import inspect as sa_inspect
 
 from config import BASE_DIR, cfg, fast_model, load_fk_relations, model
+from lib.semantics import SEMANTICS_DIR, load_semantics, render_table
 from schema_retrieval.prompts import (
     DB_DESCRIPTION_PROMPT,
     FK_RELATIONS_PROMPT,
     TABLE_SEMANTICS_PROMPT,
 )
-from schema_retrieval.schema_indexer import SEMANTICS_DIR, load_semantics, render_table
 from schema_retrieval.schemas import FKRelations, TableSemantics
 
 # ------------------------------------------------------------
@@ -109,7 +109,8 @@ def generate_semantics(db_name: str):
         })
 
     # 2. Generate descriptions in parallel
-    with ThreadPoolExecutor() as executor:
+    # (max_workers stays under the SQLAlchemy pool size: 5 + 10 overflow)
+    with ThreadPoolExecutor(max_workers=8) as executor:
         generated = dict(executor.map(generate, todo))
 
     # 3. Merge — fill only what is missing

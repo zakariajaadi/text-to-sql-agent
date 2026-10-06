@@ -1,13 +1,13 @@
 # src/schema_retrieval/prompts.py
 
 """
-Prompts for the offline schema pipeline (schema_indexer.py, generators.py).
+Prompts for the offline schema pipeline (schema_indexer.py, catalog_generators.py).
 They run at indexing time, via make targets — never at query time.
 Pipeline order: semantics → fk-relations → (review) → index → describe
 """
 
-# ── Offline: generators.generate_semantics ──────────────────────────────
-# Used by: generators.generate_semantics()
+# ── Offline: catalog_generators.generate_semantics ──────────────────────
+# Used by: catalog_generators.generate_semantics()
 # Input context: DDL + sample rows for a single table, full table list for the database
 # Expected output: TableSemantics — merged into config/semantics/<db>.yaml, then reviewed
 
@@ -46,8 +46,8 @@ columns:
 {ddl}
 """
 
-# ── Offline: generators.infer_fk_relations ──────────────────────────────
-# Used by: generators.infer_fk_relations()
+# ── Offline: catalog_generators.infer_fk_relations ──────────────────────
+# Used by: catalog_generators.infer_fk_relations()
 # Input context: schemas of all tables in a database (DDL + reviewed semantics)
 # Expected output: FKRelations — merged into config/fk_relations.yaml, then reviewed
 
@@ -72,8 +72,8 @@ of another table (or of the same table, for hierarchies).
 {schemas}
 """
 
-# ── Offline: generators.describe_db ────────────────────────────────────────
-# Used by: generators.describe_db()
+# ── Offline: catalog_generators.describe_db ────────────────────────────────
+# Used by: catalog_generators.describe_db()
 # Input context: schemas of all tables in a database (DDL + reviewed semantics)
 # Expected output: comma-separated keywords, written to config/db_descriptions.yaml (shown in the chat profile selector)
 
