@@ -11,11 +11,11 @@ databases:
   - name: "Chinook"
     dialect: "hive"
     description: ${oc.select:db_descriptions.Chinook,""} # Optional
-    limit: 5
+    max_rows: 100
   - name: "Northwind"
     dialect: "hive"
     description: ${oc.select:db_descriptions.Northwind,""} # Optional
-    limit: 5
+    max_rows: 100
 
 
 retrieval:

@@ -45,7 +45,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     """
     columns = table_semantics.get("columns") or {}
     values  = categorical_values or {}   # {column: [value, ...]}
-    lines   =[f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
+    lines   = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
 
     # Join conditions involving this table, from fk_relations.yaml
     joins = [

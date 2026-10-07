@@ -1,39 +1,41 @@
 {
   "summary": {
-    "total_questions": 8,
-    "evaluated": 8,
-    "avg_latency_s": 4.66,
-    "avg_table_selection": 5.0,
-    "avg_column_selection": 4.5,
+    "total_questions": 23,
+    "evaluated": 23,
+    "avg_latency_s": 5.1,
+    "avg_table_selection": 4.96,
+    "avg_column_selection": 4.74,
     "avg_join_correctness": 5.0,
-    "avg_filter_logic": 4.88,
-    "avg_aggregation": 4.5,
-    "avg_overall": 4.25,
+    "avg_filter_logic": 5.0,
+    "avg_aggregation": 4.87,
+    "avg_overall": 4.7,
     "avg_table_recall": 1.0,
-    "exec_exact": 0.75,
-    "execution_evaluated": 8,
+    "exec_exact": 1.0,
+    "execution_evaluated": 21,
     "score_distribution": {
-      "perfect (5)": 4,
-      "good (4)": 2,
-      "partial (3)": 2,
+      "perfect (5)": 16,
+      "good (4)": 7,
+      "partial (3)": 0,
       "poor (2)": 0,
       "wrong (1)": 0
     },
-    "avg_overall_hard": 4.25,
-    "exec_exact_hard": 0.75
+    "avg_overall_simple": 4.88,
+    "exec_exact_simple": 1.0,
+    "avg_overall_medium": 4.71,
+    "exec_exact_medium": 1.0,
+    "avg_overall_hard": 4.5,
+    "exec_exact_hard": 1.0
   },
   "results": [
     {
-      "question": "What is the total revenue per genre?",
-      "difficulty": "hard",
-      "category": "multi_join_aggregation",
-      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get the GenreId for each sold track.\n-- Step 2: Join with Genre to get the genre name.\n-- Step 3: Calculate the revenue for each line item (UnitPrice * Quantity).\n-- Step 4: Group by genre name and sum the total revenue.\nSELECT g.Name AS GenreName,\n       SUM(il.UnitPrice * il.Quantity) AS TotalRevenue\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Genre AS g ON t.GenreId = g.GenreId\nGROUP BY g.Name\nORDER BY TotalRevenue DESC\nLIMIT 5;",
+      "question": "How many customers are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "SELECT\n  COUNT(`t`.`customerid`) AS `customer_count`\nFROM `customer` AS `t`",
       "selected_tables": [
-        "Genre",
-        "Track",
-        "InvoiceLine"
+        "customer"
       ],
-      "latency_s": 4.28,
+      "latency_s": 4.84,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -41,85 +43,39 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects and joins the necessary tables: InvoiceLine, Track, and Genre."
+          "reasoning": "The query correctly selects the `customer` table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the genre name and uses the UnitPrice and Quantity columns to calculate the total revenue."
+          "reasoning": "The query correctly selects the `customerid` column for counting, which is equivalent to COUNT(*) for this purpose."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are correct, using the appropriate keys (TrackId and GenreId) to link the tables."
+          "reasoning": "No joins are required for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required by the question, and none were applied, which is correct."
+          "reasoning": "No filters are needed to count all customers, and the query correctly omits a WHERE clause."
         },
         "aggregation": {
-          "score": 4,
-          "reasoning": "The aggregation and ordering are correct, but the query arbitrarily adds a `LIMIT 5` which was not requested and differs from the ground truth's `LIMIT 100`."
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to find the total number of customers."
         },
         "overall": {
-          "score": 4,
-          "reasoning": "The query is functionally correct but includes an arbitrary `LIMIT 5` clause that was not specified in the user's question, which means it doesn't return the full result set."
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth queries and will return the correct answer."
         }
       }
     },
     {
-      "question": "Which artist has generated the most revenue?",
-      "difficulty": "hard",
-      "category": "multi_join_aggregation",
-      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get track details.\n-- Step 2: Join Track with Album to link tracks to their albums.\n-- Step 3: Join Album with Artist to link albums to their artists.\n-- Step 4: Calculate the revenue for each invoice line (UnitPrice * Quantity).\n-- Step 5: Group by artist name and sum the total revenue.\n-- Step 6: Order the results by total revenue in descending order and limit to 1 to find the artist with the most revenue.\nSELECT ar.Name AS ArtistName,\n       SUM(il.UnitPrice * il.Quantity) AS TotalRevenue\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nJOIN Artist AS ar ON al.ArtistId = ar.ArtistId\nGROUP BY ar.ArtistId, ar.Name\nORDER BY TotalRevenue DESC\nLIMIT 1;",
+      "question": "How many genres are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "SELECT\n  COUNT(`t1`.`genreid`) AS `genre_count`\nFROM `genre` AS `t1`",
       "selected_tables": [
-        "Artist",
-        "Album",
-        "Track",
-        "InvoiceLine"
+        "genre"
       ],
-      "latency_s": 4.53,
-      "table_recall": 1.0,
-      "table_precision": 1.0,
-      "table_hallucination": 0.0,
-      "exec_exact": 0.0,
-      "judge": {
-        "table_selection": {
-          "score": 5,
-          "reasoning": "The generated query correctly selects and joins all the necessary tables (Artist, Album, Track, InvoiceLine) to link artists to their sales revenue."
-        },
-        "column_selection": {
-          "score": 4,
-          "reasoning": "The query selects the correct columns, but uses different aliases ('ArtistName', 'TotalRevenue') compared to the ground truth ('Name', 'Revenue'), which is a minor cosmetic difference."
-        },
-        "join_correctness": {
-          "score": 5,
-          "reasoning": "All joins are performed correctly using the appropriate foreign keys, establishing the correct path from sales data back to the artist."
-        },
-        "filter_logic": {
-          "score": 5,
-          "reasoning": "No filtering is required for this question, and the query correctly omits a WHERE clause."
-        },
-        "aggregation": {
-          "score": 5,
-          "reasoning": "The query correctly uses SUM to calculate total revenue, groups by the artist, and uses ORDER BY with LIMIT 1 to find the top artist."
-        },
-        "overall": {
-          "score": 4,
-          "reasoning": "The query is functionally correct and produces the right answer, with only minor cosmetic differences in column aliases compared to the ground truth query."
-        }
-      }
-    },
-    {
-      "question": "What playlists contain tracks from the 'Jazz' genre?",
-      "difficulty": "hard",
-      "category": "multi_join_filter",
-      "generated_sql": "-- Step 1: Find the GenreId for 'Jazz'.\n-- Step 2: Find all TrackIds associated with the 'Jazz' genre.\n-- Step 3: Find all PlaylistIds that contain these 'Jazz' tracks.\n-- Step 4: Get the names of these playlists.\n-- Step 5: Ensure distinct playlist names and limit to 5.\nSELECT DISTINCT\n  p.Name\nFROM Playlist AS p\nJOIN PlaylistTrack AS pt\n  ON p.PlaylistId = pt.PlaylistId\nJOIN Track AS t\n  ON pt.TrackId = t.TrackId\nJOIN Genre AS g\n  ON t.GenreId = g.GenreId\nWHERE\n  LOWER(g.Name) = LOWER('Jazz')\nLIMIT 5;",
-      "selected_tables": [
-        "Playlist",
-        "PlaylistTrack",
-        "Track",
-        "Genre"
-      ],
-      "latency_s": 4.97,
+      "latency_s": 4.52,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -127,95 +83,171 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The generated query correctly selects and joins all the necessary tables (Playlist, PlaylistTrack, Track, Genre) to answer the question."
+          "reasoning": "The query correctly selects the `genre` table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the playlist name, which is exactly what the question asks for."
+          "reasoning": "The query correctly uses the `genreid` column within the COUNT function to count the number of genres."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are performed on the correct keys, accurately linking playlists to tracks and tracks to genres."
+          "reasoning": "No joins are required for this question, and the query correctly omits them."
         },
         "filter_logic": {
-          "score": 4,
-          "reasoning": "The filter logic is correct, though using LOWER() is a minor stylistic difference from the ground truth but achieves the same case-insensitive result."
+          "score": 5,
+          "reasoning": "No filters are needed to count all genres, and the query correctly does not include a WHERE clause."
         },
         "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to get the total number of genres."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and will produce the correct result."
+        }
+      }
+    },
+    {
+      "question": "How many employees are there?",
+      "difficulty": "simple",
+      "category": "count",
+      "generated_sql": "SELECT\n  COUNT(`e`.`employeeid`) AS `employee_count`\nFROM `employee` AS `e`",
+      "selected_tables": [
+        "employee"
+      ],
+      "latency_s": 4.61,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the 'employee' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'employeeid' column for counting, which is a valid and efficient way to count the number of employees."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this question, and the query correctly avoids using any."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregate function to count the number of employees, which directly answers the user's question."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth queries and will produce the correct result."
+        }
+      }
+    },
+    {
+      "question": "How many tracks are longer than 5 minutes?",
+      "difficulty": "simple",
+      "category": "filtering",
+      "generated_sql": "SELECT\n  COUNT(`t`.`trackid`) AS `track_count`\nFROM `track` AS `t`\nWHERE\n  `t`.`milliseconds` > 300000",
+      "selected_tables": [
+        "track"
+      ],
+      "latency_s": 4.72,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'track' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses COUNT(trackid) to count the tracks, which is functionally equivalent to COUNT(*) in the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this question, and the query correctly uses none."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The query correctly filters for tracks where milliseconds are greater than 300000, which accurately represents 'longer than 5 minutes'."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to find the total number of tracks matching the criteria."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "What is the most expensive track?",
+      "difficulty": "simple",
+      "category": "aggregation",
+      "generated_sql": "SELECT\n  `t`.`name`,\n  `t`.`unitprice`\nFROM `track` AS `t`\nORDER BY\n  `t`.`unitprice` DESC\nLIMIT 1",
+      "selected_tables": [
+        "track"
+      ],
+      "latency_s": 4.33,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses only the `track` table, which is the same as the ground truth."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the track name and unit price, which are the required columns to answer the question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary for this query, and none were used, which is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The query correctly identifies the most expensive track by ordering by price descending and taking the top result, which is a valid alternative to the ground truth's subquery filter."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The use of ORDER BY and LIMIT is a correct and common way to find the single top record, achieving the same goal as the MAX function in the ground truth."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is a different but equally valid and correct approach to finding the most expensive track, producing the correct answer."
+        }
+      }
+    },
+    {
+      "question": "Which customers are from Brazil?",
+      "difficulty": "simple",
+      "category": "filtering",
+      "generated_sql": "SELECT\n  `c`.`customerid`,\n  `c`.`firstname`,\n  `c`.`lastname`,\n  `c`.`company`,\n  `c`.`address`,\n  `c`.`city`,\n  `c`.`state`,\n  `c`.`country`,\n  `c`.`postalcode`,\n  `c`.`phone`,\n  `c`.`fax`,\n  `c`.`email`,\n  `c`.`supportrepid`\nFROM `customer` AS `c`\nWHERE\n  `c`.`country` = 'Brazil'",
+      "selected_tables": [
+        "customer"
+      ],
+      "latency_s": 4.56,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects from the 'customer' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
           "score": 3,
-          "reasoning": "The query correctly uses DISTINCT to avoid duplicate playlist names, but it adds an unnecessary 'LIMIT 5' clause which was not requested and will return an incomplete list of results."
-        },
-        "overall": {
-          "score": 3,
-          "reasoning": "The query is mostly correct but includes an unrequested 'LIMIT 5' clause, which means it would return a partially correct but incomplete answer."
-        }
-      }
-    },
-    {
-      "question": "Who are the top 3 artists by number of tracks sold?",
-      "difficulty": "hard",
-      "category": "multi_join_aggregation",
-      "generated_sql": "-- Step 1: Join InvoiceLine with Track to get track details.\n-- Step 2: Join Track with Album to link tracks to their albums.\n-- Step 3: Join Album with Artist to link albums to their artists.\n-- Step 4: Sum the Quantity of tracks sold for each artist.\n-- Step 5: Group the results by artist name.\n-- Step 6: Order the artists by the total number of tracks sold in descending order.\n-- Step 7: Limit the output to the top 3 artists.\nSELECT ar.Name AS ArtistName,\n       SUM(il.Quantity) AS TracksSold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nJOIN Artist AS ar ON al.ArtistId = ar.ArtistId\nGROUP BY ar.ArtistId, ar.Name\nORDER BY TracksSold DESC\nLIMIT 3;",
-      "selected_tables": [
-        "Artist",
-        "Album",
-        "Track",
-        "InvoiceLine"
-      ],
-      "latency_s": 4.81,
-      "table_recall": 1.0,
-      "table_precision": 1.0,
-      "table_hallucination": 0.0,
-      "exec_exact": 1.0,
-      "judge": {
-        "table_selection": {
-          "score": 5,
-          "reasoning": "The generated query correctly selects the same four tables (Artist, Album, Track, InvoiceLine) as the ground-truth queries."
-        },
-        "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the artist's name and calculates the sum of quantity sold, which is a valid and correct approach matching one of the ground-truth queries."
-        },
-        "join_correctness": {
-          "score": 5,
-          "reasoning": "All joins are performed correctly using the appropriate foreign keys, linking sales data back to the artists."
-        },
-        "filter_logic": {
-          "score": 5,
-          "reasoning": "No filtering is required by the question, and the query correctly omits any WHERE or HAVING clauses."
-        },
-        "aggregation": {
-          "score": 5,
-          "reasoning": "The query correctly groups by artist, orders the results by the number of tracks sold in descending order, and limits the output to the top 3, perfectly matching the question's requirements."
-        },
-        "overall": {
-          "score": 5,
-          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and would return the correct answer."
-        }
-      }
-    },
-    {
-      "question": "What is the average number of tracks per album?",
-      "difficulty": "hard",
-      "category": "nested_aggregation",
-      "generated_sql": "-- Step 1: Count the number of tracks for each album.\n-- Step 2: Calculate the average of these counts.\nSELECT CAST(COUNT(t.TrackId) AS REAL) / COUNT(DISTINCT t.AlbumId) AS AverageTracksPerAlbum\nFROM Track AS t\nWHERE t.AlbumId IS NOT NULL;",
-      "selected_tables": [
-        "Album",
-        "Track"
-      ],
-      "latency_s": 3.95,
-      "table_recall": 1.0,
-      "table_precision": 1.0,
-      "table_hallucination": 0.0,
-      "exec_exact": 1.0,
-      "judge": {
-        "table_selection": {
-          "score": 5,
-          "reasoning": "The query correctly uses only the 'Track' table, which is all that is needed to answer the question."
-        },
-        "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly uses 'TrackId' and 'AlbumId' for counting, which are the necessary columns for this calculation."
+          "reasoning": "The query selects all columns from the table, which is more information than necessary to identify the customers, but it does include the essential columns like first and last name."
         },
         "join_correctness": {
           "score": 5,
@@ -223,28 +255,28 @@
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The 'WHERE t.AlbumId IS NOT NULL' clause is technically redundant as COUNT(DISTINCT) would ignore nulls anyway, but it does not harm the query and produces the correct result."
+          "reasoning": "The WHERE clause correctly filters for customers where the country is 'Brazil', perfectly matching the user's request."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The aggregation logic of dividing the total track count by the distinct album count is a valid and efficient way to calculate the average, matching one of the ground-truth queries."
+          "reasoning": "No aggregation is needed to answer this question, and the query correctly omits any aggregation functions."
         },
         "overall": {
-          "score": 5,
-          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and correctly calculates the average number of tracks per album."
+          "score": 4,
+          "reasoning": "The query correctly identifies the right customers by filtering on the correct table and column, but it returns all available information about them instead of just their names, which is a minor cosmetic issue."
         }
       }
     },
     {
-      "question": "Which customers have never made a purchase?",
-      "difficulty": "hard",
-      "category": "anti_join",
-      "generated_sql": "-- Step 1: Select the customer's first name, last name, and email.\n-- Step 2: Left join the Customer table with the Invoice table on CustomerId.\n-- Step 3: Filter for customers where there is no matching invoice (InvoiceId is NULL).\n-- Step 4: Limit the results to 5.\nSELECT\n  c.FirstName,\n  c.LastName,\n  c.Email\nFROM Customer AS c\nLEFT JOIN Invoice AS i\n  ON c.CustomerId = i.CustomerId\nWHERE\n  i.InvoiceId IS NULL\nLIMIT 5;",
+      "question": "How many albums does each artist have?",
+      "difficulty": "medium",
+      "category": "join_aggregation",
+      "generated_sql": "SELECT\n  `t1`.`name`,\n  COUNT(`t2`.`albumid`) AS `album_count`\nFROM `artist` AS `t1`\nJOIN `album` AS `t2`\n  ON `t1`.`artistid` = `t2`.`artistid`\nGROUP BY\n  `t1`.`name`",
       "selected_tables": [
-        "Customer",
-        "Invoice"
+        "album",
+        "artist"
       ],
-      "latency_s": 4.98,
+      "latency_s": 7.58,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -252,40 +284,40 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the Customer and Invoice tables, which is identical to the ground truth."
+          "reasoning": "The query correctly selects the `artist` and `album` tables, which are the only ones required to answer the question."
         },
         "column_selection": {
-          "score": 3,
-          "reasoning": "The query correctly selects the customer's first and last name, but also includes the email address, which was not requested."
+          "score": 5,
+          "reasoning": "The query correctly selects the artist's name and provides a count of albums, which directly answers the user's question."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The LEFT JOIN between the Customer and Invoice tables on CustomerId is correct and matches the logic of the first ground truth query."
+          "reasoning": "The query correctly joins the `artist` and `album` tables on the `artistid` column."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The WHERE clause correctly filters for customers where the InvoiceId is NULL, which accurately identifies customers who have never made a purchase."
+          "reasoning": "No filters are needed to answer this question, and the query correctly omits any WHERE or HAVING clauses."
         },
         "aggregation": {
           "score": 4,
-          "reasoning": "The query uses a LIMIT of 5, which is different from the ground truth's LIMIT of 100, but since the question did not specify a limit, this is a minor and acceptable difference."
+          "reasoning": "The query correctly groups by artist name and counts the albums, but it is missing the `ORDER BY` clause that is present in the ground truth queries."
         },
         "overall": {
-          "score": 3,
-          "reasoning": "The query correctly identifies customers who have never made a purchase, but it includes an extra, unrequested column (Email) in the final output."
+          "score": 4,
+          "reasoning": "The query is functionally correct and provides the right answer, but it lacks the `ORDER BY` clause found in the ground truth queries, which is a minor cosmetic difference."
         }
       }
     },
     {
-      "question": "Show me the most popular tracks",
-      "difficulty": "hard",
-      "category": "ambiguous",
-      "generated_sql": "-- Assumption: interpreted 'most popular tracks' as tracks with the highest total quantity sold\n-- Step 1: Join InvoiceLine with Track to get track names.\n-- Step 2: Group by track ID and name.\n-- Step 3: Calculate the total quantity sold for each track.\n-- Step 4: Order by the total quantity sold in descending order.\n-- Step 5: Limit the results to 5.\nSELECT t.Name AS TrackName,\n       SUM(il.Quantity) AS TotalQuantitySold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nGROUP BY t.TrackId, t.Name\nORDER BY TotalQuantitySold DESC\nLIMIT 5;",
+      "question": "What are the top 5 customers by total spending?",
+      "difficulty": "medium",
+      "category": "join_aggregation",
+      "generated_sql": "SELECT\n  `c`.`firstname`,\n  `c`.`lastname`,\n  SUM(`i`.`total`) AS `total_spending`\nFROM `customer` AS `c`\nJOIN `invoice` AS `i`\n  ON `c`.`customerid` = `i`.`customerid`\nGROUP BY\n  `c`.`customerid`,\n  `c`.`firstname`,\n  `c`.`lastname`\nORDER BY\n  `total_spending` DESC\nLIMIT 5",
       "selected_tables": [
-        "Track",
-        "InvoiceLine"
+        "customer",
+        "invoice"
       ],
-      "latency_s": 4.86,
+      "latency_s": 5.39,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -293,15 +325,56 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the Track and InvoiceLine tables, which are necessary to link track names with purchase data."
+          "reasoning": "The query correctly selects the `customer` and `invoice` tables, which are the exact tables needed to answer the question."
         },
         "column_selection": {
-          "score": 4,
-          "reasoning": "The query selects the correct columns for the output, but uses different aliases ('TrackName', 'TotalQuantitySold') than the ground truth query."
+          "score": 5,
+          "reasoning": "The query correctly selects the customer's first and last name and calculates the sum of the invoice total, which perfectly matches the user's request."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between Track and InvoiceLine on the TrackId column is correct."
+          "reasoning": "The query correctly joins the `customer` and `invoice` tables on the `customerid` column."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by customer, orders the results by total spending in descending order, and applies the correct LIMIT of 5."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground-truth queries and perfectly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "Which genres have the most tracks?",
+      "difficulty": "medium",
+      "category": "join_aggregation",
+      "generated_sql": "SELECT\n  `g`.`name` AS `genre_name`,\n  COUNT(`t`.`trackid`) AS `track_count`\nFROM `genre` AS `g`\nJOIN `track` AS `t`\n  ON `g`.`genreid` = `t`.`genreid`\nGROUP BY\n  `g`.`genreid`,\n  `g`.`name`\nORDER BY\n  `track_count` DESC",
+      "selected_tables": [
+        "genre",
+        "track"
+      ],
+      "latency_s": 5.63,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `genre` and `track` tables, which are the same as the ground truth."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the genre name and a count of tracks, which matches the intent of the question and the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the `genre` and `track` tables on `genreid` is correct."
         },
         "filter_logic": {
           "score": 5,
@@ -309,11 +382,467 @@
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by track, sums the quantity sold, orders the results in descending order, and limits the output to the top 5, perfectly matching the logic of an accepted answer."
+          "reasoning": "The query correctly groups by genre and orders the results by the track count in descending order, which perfectly answers the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and correctly answers the user's question by interpreting 'popular' as the highest quantity sold."
+          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "How many tracks are in the 'Rock' genre?",
+      "difficulty": "medium",
+      "category": "join_aggregation",
+      "generated_sql": "-- Assumption: interpreted 'Rock' as genre.name = 'Rock' (also close: 'Rock And Roll')\nSELECT\n  COUNT(`t`.`trackid`) AS `track_count`\nFROM `track` AS `t`\nJOIN `genre` AS `g`\n  ON `t`.`genreid` = `g`.`genreid`\nWHERE\n  `g`.`name` = 'Rock'",
+      "selected_tables": [
+        "track",
+        "genre"
+      ],
+      "latency_s": 4.76,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the 'track' and 'genre' tables, which are the exact tables needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the track ID for counting and filters on the genre name, which is exactly what is required."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the 'track' and 'genre' tables on 'genreid' is perfectly correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for the genre name 'Rock', matching the user's request."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses COUNT to find the total number of tracks, which is the correct aggregation."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and will produce the correct result."
+        }
+      }
+    },
+    {
+      "question": "What is the average invoice total by country?",
+      "difficulty": "medium",
+      "category": "aggregation",
+      "generated_sql": "SELECT\n  `i`.`billingcountry`,\n  AVG(`i`.`total`) AS `average_invoice_total`\nFROM `invoice` AS `i`\nGROUP BY\n  `i`.`billingcountry`",
+      "selected_tables": [
+        "invoice"
+      ],
+      "latency_s": 5.14,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the 'invoice' table, which contains all the necessary information."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the billing country and calculates the average of the total, which directly answers the user's question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this query, and none were used."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are needed to answer the question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by country and uses the AVG function, but it is missing the ORDER BY clause present in the ground truth queries, which would improve the readability of the results."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and provides the right data, but it lacks the ORDER BY clause from the accepted queries, which makes the output less user-friendly."
+        }
+      }
+    },
+    {
+      "question": "Which employee has the most customers?",
+      "difficulty": "medium",
+      "category": "join_aggregation",
+      "generated_sql": "SELECT\n  `e`.`firstname`,\n  `e`.`lastname`,\n  COUNT(`c`.`customerid`) AS `customer_count`\nFROM `employee` AS `e`\nJOIN `customer` AS `c`\n  ON `e`.`employeeid` = `c`.`supportrepid`\nGROUP BY\n  `e`.`employeeid`,\n  `e`.`firstname`,\n  `e`.`lastname`\nORDER BY\n  `customer_count` DESC\nLIMIT 1",
+      "selected_tables": [
+        "employee",
+        "customer"
+      ],
+      "latency_s": 5.13,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `employee` and `customer` tables, which are the exact tables needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query selects the correct columns for the employee's name and performs the correct count on customer IDs."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between `employee` and `customer` is correctly performed on the `employeeid` and `supportrepid` columns."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required for this question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by employee, orders the results by the customer count in descending order, and uses LIMIT 1 to find the top employee."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct result."
+        }
+      }
+    },
+    {
+      "question": "How many invoices were issued in 2009?",
+      "difficulty": "medium",
+      "category": "date_filter",
+      "generated_sql": "SELECT\n  COUNT(`i`.`invoiceid`) AS `invoice_count`\nFROM `invoice` AS `i`\nWHERE\n  `i`.`invoicedate` >= '2009-01-01 00:00:00'\n  AND `i`.`invoicedate` <= '2009-12-31 23:59:59'",
+      "selected_tables": [
+        "invoice"
+      ],
+      "latency_s": 4.45,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the 'invoice' table, which is the only table needed to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly counts the number of invoices using COUNT(invoiceid), which is equivalent to the ground truth's COUNT(*)."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are required for this question, and the query correctly does not use any."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for all invoices within the year 2009 using a date range, which is a valid alternative to the YEAR() function or LIKE operator used in the ground truth queries."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT aggregation function to count the number of invoices, which matches the user's request."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is a perfect and valid alternative to the ground truth queries, correctly answering the user's question."
+        }
+      }
+    },
+    {
+      "question": "What is the total revenue per genre?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "SELECT\n  `g`.`name` AS `genre_name`,\n  SUM(`il`.`unitprice` * `il`.`quantity`) AS `total_revenue`\nFROM `genre` AS `g`\nJOIN `track` AS `t`\n  ON `g`.`genreid` = `t`.`genreid`\nJOIN `invoiceline` AS `il`\n  ON `t`.`trackid` = `il`.`trackid`\nGROUP BY\n  `g`.`name`",
+      "selected_tables": [
+        "genre",
+        "track",
+        "invoiceline"
+      ],
+      "latency_s": 5.38,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the necessary tables `genre`, `track`, and `invoiceline` to answer the question."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects the correct columns and performs the correct calculation, but uses different aliases (`genre_name`, `total_revenue`) than the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are correct, using the appropriate keys (`genreid` and `trackid`) to link the tables."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by genre name and calculates the sum, but it is missing the `ORDER BY` clause found in the ground truth queries."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query correctly calculates the total revenue per genre, but it returns the results in an arbitrary order instead of ordering by revenue as the ground truth queries do."
+        }
+      }
+    },
+    {
+      "question": "Which artist has generated the most revenue?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "SELECT\n  `ar`.`name` AS `artist_name`,\n  SUM(`il`.`unitprice` * `il`.`quantity`) AS `total_revenue`\nFROM `invoiceline` AS `il`\nJOIN `track` AS `t`\n  ON `il`.`trackid` = `t`.`trackid`\nJOIN `album` AS `al`\n  ON `t`.`albumid` = `al`.`albumid`\nJOIN `artist` AS `ar`\n  ON `al`.`artistid` = `ar`.`artistid`\nGROUP BY\n  `ar`.`artistid`,\n  `ar`.`name`\nORDER BY\n  `total_revenue` DESC\nLIMIT 1",
+      "selected_tables": [
+        "artist",
+        "album",
+        "track",
+        "invoiceline"
+      ],
+      "latency_s": 6.11,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The generated query correctly selected all the necessary tables (invoiceline, track, album, artist) to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the artist's name and calculates the total revenue by summing the product of unit price and quantity."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed on the correct keys, correctly linking revenue from invoice lines back to the artist."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required to answer this question, and the query correctly omits a WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by artist, orders the results by total revenue in descending order, and limits the output to the top result."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct answer."
+        }
+      }
+    },
+    {
+      "question": "What playlists contain tracks from the 'Jazz' genre?",
+      "difficulty": "hard",
+      "category": "multi_join_filter",
+      "generated_sql": "SELECT DISTINCT\n  `p`.`playlistid`,\n  `p`.`name` AS `playlist_name`\nFROM `playlist` AS `p`\nJOIN `playlisttrack` AS `pt`\n  ON `p`.`playlistid` = `pt`.`playlistid`\nJOIN `track` AS `t`\n  ON `pt`.`trackid` = `t`.`trackid`\nJOIN `genre` AS `g`\n  ON `t`.`genreid` = `g`.`genreid`\nWHERE\n  `g`.`name` = 'Jazz'",
+      "selected_tables": [
+        "playlist",
+        "playlisttrack",
+        "track",
+        "genre"
+      ],
+      "latency_s": 5.3,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects and joins all the necessary tables (playlist, playlisttrack, track, genre) to link playlists to genres."
+        },
+        "column_selection": {
+          "score": 3,
+          "reasoning": "The query includes the unnecessary `playlistid` column, as the question only asks for the names of the playlists."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed correctly using the appropriate primary and foreign keys, accurately linking the tables."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The WHERE clause correctly filters for tracks where the genre name is 'Jazz', which directly answers the user's question."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The use of DISTINCT is correct to ensure each playlist is listed only once, even if it contains multiple jazz tracks."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and provides the right answer, but it includes an extra, unrequested column in the output."
+        }
+      }
+    },
+    {
+      "question": "Who are the top 3 artists by number of tracks sold?",
+      "difficulty": "hard",
+      "category": "multi_join_aggregation",
+      "generated_sql": "SELECT\n  `ar`.`name`,\n  SUM(`il`.`quantity`) AS `total_tracks_sold`\nFROM `artist` AS `ar`\nJOIN `album` AS `al`\n  ON `ar`.`artistid` = `al`.`artistid`\nJOIN `track` AS `t`\n  ON `al`.`albumid` = `t`.`albumid`\nJOIN `invoiceline` AS `il`\n  ON `t`.`trackid` = `il`.`trackid`\nGROUP BY\n  `ar`.`artistid`,\n  `ar`.`name`\nORDER BY\n  `total_tracks_sold` DESC\nLIMIT 3",
+      "selected_tables": [
+        "artist",
+        "album",
+        "track",
+        "invoiceline"
+      ],
+      "latency_s": 6.34,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects all necessary tables (artist, album, track, invoiceline) to link artists to their sold tracks."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the artist's name and calculates the sum of quantities sold, which directly answers the user's question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins are performed on the correct keys, accurately linking artists to albums, albums to tracks, and tracks to invoice lines."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required by the question, and the query correctly omits a WHERE clause."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by artist, orders the results in descending order of tracks sold, and limits the output to the top 3 as requested."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to one of the accepted ground-truth queries and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "What is the average number of tracks per album?",
+      "difficulty": "hard",
+      "category": "nested_aggregation",
+      "generated_sql": "SELECT\n  AVG(`tracks_per_album`) AS `average_tracks_per_album`\nFROM (\n  SELECT\n    `a`.`albumid`,\n    COUNT(`t`.`trackid`) AS `tracks_per_album`\n  FROM `album` AS `a`\n  JOIN `track` AS `t`\n    ON `a`.`albumid` = `t`.`albumid`\n  GROUP BY\n    `a`.`albumid`\n) AS `album_track_counts`",
+      "selected_tables": [
+        "track",
+        "album"
+      ],
+      "latency_s": 5.07,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 4,
+          "reasoning": "The query includes the 'album' table which is unnecessary, as all required information (track count and album id) is available in the 'track' table alone, but this does not make the result incorrect."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the album ID for grouping, counts the track IDs, and then calculates the average of these counts, which perfectly answers the question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the 'album' and 'track' tables is correctly performed on the 'albumid' column."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The query correctly omits any filtering clauses as none are required by the user's question."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses a COUNT grouped by album in a subquery, and then correctly applies an AVG function to that result in the outer query."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is logically correct and produces the right answer, but it is slightly suboptimal due to the inclusion of an unnecessary join with the 'album' table."
+        }
+      }
+    },
+    {
+      "question": "Which customers have never made a purchase?",
+      "difficulty": "hard",
+      "category": "anti_join",
+      "generated_sql": "SELECT\n  `c`.`customerid`,\n  `c`.`firstname`,\n  `c`.`lastname`,\n  `c`.`email`\nFROM `customer` AS `c`\nLEFT JOIN `invoice` AS `i`\n  ON `c`.`customerid` = `i`.`customerid`\nWHERE\n  `i`.`customerid` IS NULL",
+      "selected_tables": [
+        "customer",
+        "invoice"
+      ],
+      "latency_s": 6.31,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the `customer` and `invoice` tables, which is identical to the ground truth."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects `customerid` and `email` in addition to the `firstname` and `lastname` requested by the ground truth, but these are still relevant columns for identifying a customer."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The query correctly performs a LEFT JOIN from the `customer` table to the `invoice` table on `customerid`."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The `WHERE i.customerid IS NULL` clause is a valid and correct way to find customers with no matching invoices after a LEFT JOIN, equivalent to the ground truth's `WHERE i.InvoiceId IS NULL`."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "No aggregation is needed for this question, and the query correctly omits any aggregation clauses."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and returns the right set of customers; the only minor difference is the selection of two extra, but relevant, columns compared to the ground truth."
+        }
+      }
+    },
+    {
+      "question": "Show me the most popular tracks",
+      "difficulty": "hard",
+      "category": "ambiguous",
+      "generated_sql": "-- Assumption: interpreted 'most popular' as tracks with the highest total quantity sold\nSELECT\n  `t`.`name`,\n  SUM(`il`.`quantity`) AS `total_quantity_sold`\nFROM `invoiceline` AS `il`\nJOIN `track` AS `t`\n  ON `il`.`trackid` = `t`.`trackid`\nGROUP BY\n  `t`.`trackid`,\n  `t`.`name`\nORDER BY\n  `total_quantity_sold` DESC",
+      "selected_tables": [
+        "track",
+        "invoiceline"
+      ],
+      "latency_s": 6.54,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `invoiceline` and `track` tables, which are the same as the ground truth."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the track name and calculates the sum of quantity sold, which aligns with one of the accepted ground truth queries."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between `invoiceline` and `track` on `trackid` is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required to answer the question, which is consistent with the core logic of the ground truth before the ranking filter is applied."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by track and orders the results by the total quantity sold in descending order, which correctly answers the question."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is a valid and correct way to determine the most popular tracks by quantity sold, providing a fully ranked list which is an acceptable interpretation of the user's request."
         }
       }
     },
@@ -321,41 +850,117 @@
       "question": "What are the best-selling albums?",
       "difficulty": "hard",
       "category": "ambiguous",
-      "generated_sql": "-- Assumption: interpreted 'best-selling' as albums with the highest total quantity of tracks sold\n-- Step 1: Join InvoiceLine with Track to get track details for each sale.\n-- Step 2: Join Track with Album to link each track to its album.\n-- Step 3: Group by album ID and title to aggregate sales per album.\n-- Step 4: Sum the quantity of tracks sold for each album.\n-- Step 5: Order the results by the total quantity sold in descending order.\n-- Step 6: Limit the output to 5 best-selling albums.\nSELECT al.Title AS AlbumTitle,\n       SUM(il.Quantity) AS TotalQuantitySold\nFROM InvoiceLine AS il\nJOIN Track AS t ON il.TrackId = t.TrackId\nJOIN Album AS al ON t.AlbumId = al.AlbumId\nGROUP BY al.AlbumId, al.Title\nORDER BY TotalQuantitySold DESC\nLIMIT 5;",
+      "generated_sql": "SELECT\n  `a`.`title`,\n  SUM(`il`.`quantity`) AS `total_quantity_sold`\nFROM `invoiceline` AS `il`\nJOIN `track` AS `t`\n  ON `il`.`trackid` = `t`.`trackid`\nJOIN `album` AS `a`\n  ON `t`.`albumid` = `a`.`albumid`\nGROUP BY\n  `a`.`albumid`,\n  `a`.`title`\nORDER BY\n  `total_quantity_sold` DESC",
       "selected_tables": [
-        "Album",
-        "Track",
-        "InvoiceLine"
+        "album",
+        "track",
+        "invoiceline"
       ],
-      "latency_s": 4.9,
+      "latency_s": 6.49,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
-      "exec_exact": 0.0,
+      "exec_exact": 1.0,
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the Album, Track, and InvoiceLine tables, which are all necessary to link album titles to sales quantities."
+          "reasoning": "The query correctly selects the `invoiceline`, `track`, and `album` tables, which are necessary to link sales to albums."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the album title and calculates the sum of the quantity sold, which perfectly aligns with one of the valid interpretations of the question."
+          "reasoning": "The query correctly selects the album title and calculates the sum of quantity sold, which directly answers the user's question."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are correct, using the appropriate foreign keys (Track.AlbumId and InvoiceLine.TrackId) to connect the tables."
+          "reasoning": "The joins between `invoiceline`, `track`, and `album` are all correct, using the appropriate foreign keys."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filtering is required for this question, and the query correctly omits a WHERE clause."
+          "reasoning": "No filters are required for this question, and the query correctly omits a WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses SUM and GROUP BY to aggregate sales per album, and correctly uses ORDER BY and LIMIT to find the top 5."
+          "reasoning": "The query correctly groups by album and orders the results by the total quantity sold in descending order, which perfectly matches the intent of finding the 'best-selling' albums."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the first accepted ground-truth query, correctly interpreting 'best-selling' as the highest quantity of tracks sold and providing a perfect SQL implementation."
+          "reasoning": "The generated query is a perfect match to one of the accepted ground-truth queries, correctly interpreting 'best-selling' as the total quantity of tracks sold and providing a properly ranked list."
+        }
+      }
+    },
+    {
+      "question": "What is the weather in Paris today?",
+      "difficulty": "simple",
+      "category": "out_of_scope",
+      "generated_sql": null,
+      "selected_tables": [],
+      "latency_s": 2.22,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": null,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        }
+      }
+    },
+    {
+      "question": "What is the stock price of Apple?",
+      "difficulty": "simple",
+      "category": "out_of_scope",
+      "generated_sql": null,
+      "selected_tables": [],
+      "latency_s": 1.77,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": null,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "Correctly refused out-of-scope question."
         }
       }
     }

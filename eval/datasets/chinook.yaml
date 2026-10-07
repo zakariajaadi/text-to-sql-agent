@@ -57,15 +57,16 @@
   category: aggregation
   expected_tables: [Track]
   accepted_queries:
-    - "SELECT Name, UnitPrice FROM Track ORDER BY UnitPrice DESC LIMIT 1"
+    - "SELECT t.Name, t.UnitPrice FROM Track t JOIN (SELECT MAX(UnitPrice) AS MaxPrice FROM Track) m ON t.UnitPrice = m.MaxPrice"
+  notes: "Many tracks tie at the max price: the accepted query keeps all of them, so any one matches."
 
 - question: "Which customers are from Brazil?"
   difficulty: simple
   category: filtering
   expected_tables: [Customer]
   accepted_queries:
-    - "SELECT FirstName, LastName FROM Customer WHERE Country = 'Brazil' LIMIT 100"
-    - "SELECT FirstName, LastName, City FROM Customer WHERE Country = 'Brazil' LIMIT 100"
+    - "SELECT FirstName, LastName FROM Customer WHERE Country = 'Brazil'"
+    - "SELECT FirstName, LastName, City FROM Customer WHERE Country = 'Brazil'"
 
 # ── Medium (2-3 tables, JOINs, GROUP BY) ──────────────────────────────────────
 
@@ -81,7 +82,7 @@
     - >
       SELECT ar.Name, COUNT(*) AS AlbumCount
       FROM Artist ar INNER JOIN Album al ON ar.ArtistId = al.ArtistId
-      GROUP BY ar.ArtistId ORDER BY AlbumCount DESC
+      GROUP BY ar.ArtistId, ar.Name ORDER BY AlbumCount DESC
 
 - question: "What are the top 5 customers by total spending?"
   difficulty: medium
@@ -91,11 +92,11 @@
     - >
       SELECT c.FirstName, c.LastName, SUM(i.Total) AS TotalSpent
       FROM Customer c JOIN Invoice i ON c.CustomerId = i.CustomerId
-      GROUP BY c.CustomerId ORDER BY TotalSpent DESC LIMIT 5
+      GROUP BY c.CustomerId, c.FirstName, c.LastName ORDER BY TotalSpent DESC LIMIT 5
     - >
       SELECT c.FirstName || ' ' || c.LastName AS Name, SUM(i.Total) AS TotalSpent
       FROM Customer c JOIN Invoice i ON c.CustomerId = i.CustomerId
-      GROUP BY c.CustomerId ORDER BY TotalSpent DESC LIMIT 5
+      GROUP BY c.CustomerId, c.FirstName, c.LastName ORDER BY TotalSpent DESC LIMIT 5
 
 - question: "Which genres have the most tracks?"
   difficulty: medium
@@ -143,14 +144,14 @@
     - >
       SELECT e.FirstName, e.LastName, COUNT(c.CustomerId) AS CustomerCount
       FROM Employee e JOIN Customer c ON e.EmployeeId = c.SupportRepId
-      GROUP BY e.EmployeeId ORDER BY CustomerCount DESC LIMIT 1
+      GROUP BY e.EmployeeId, e.FirstName, e.LastName ORDER BY CustomerCount DESC LIMIT 1
 
 - question: "How many invoices were issued in 2009?"
   difficulty: medium
   category: date_filter
   expected_tables: [Invoice]
   accepted_queries:
-    - "SELECT COUNT(*) FROM Invoice WHERE strftime('%Y', InvoiceDate) = '2009'"
+    - "SELECT COUNT(*) FROM Invoice WHERE year(InvoiceDate) = 2009"
     - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate BETWEEN '2009-01-01' AND '2009-12-31'"
     - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate LIKE '2009%'"
 
@@ -167,14 +168,12 @@
       JOIN Track t ON g.GenreId = t.GenreId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
       GROUP BY g.Name ORDER BY Revenue DESC
-      LIMIT 100
     - >
       SELECT g.Name, ROUND(SUM(il.UnitPrice * il.Quantity), 2) AS Revenue
       FROM InvoiceLine il
       JOIN Track t ON il.TrackId = t.TrackId
       JOIN Genre g ON t.GenreId = g.GenreId
-      GROUP BY g.GenreId ORDER BY Revenue DESC
-      LIMIT 100
+      GROUP BY g.GenreId, g.Name ORDER BY Revenue DESC
 
 - question: "Which artist has generated the most revenue?"
   difficulty: hard
@@ -187,7 +186,7 @@
       JOIN Album al ON ar.ArtistId = al.ArtistId
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY ar.ArtistId ORDER BY Revenue DESC LIMIT 1
+      GROUP BY ar.ArtistId, ar.Name ORDER BY Revenue DESC LIMIT 1
 
 - question: "What playlists contain tracks from the 'Jazz' genre?"
   difficulty: hard
@@ -213,14 +212,14 @@
       JOIN Album al ON ar.ArtistId = al.ArtistId
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY ar.ArtistId ORDER BY TracksSold DESC LIMIT 3
+      GROUP BY ar.ArtistId, ar.Name ORDER BY TracksSold DESC LIMIT 3
     - >
       SELECT ar.Name, SUM(il.Quantity) AS TracksSold
       FROM Artist ar
       JOIN Album al ON ar.ArtistId = al.ArtistId
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY ar.ArtistId ORDER BY TracksSold DESC LIMIT 3
+      GROUP BY ar.ArtistId, ar.Name ORDER BY TracksSold DESC LIMIT 3
 
 - question: "What is the average number of tracks per album?"
   difficulty: hard
@@ -230,7 +229,7 @@
     - >
       SELECT AVG(TrackCount) FROM (
         SELECT AlbumId, COUNT(*) AS TrackCount FROM Track GROUP BY AlbumId
-      )
+      ) AS album_tracks
     - >
       SELECT ROUND(CAST(COUNT(t.TrackId) AS FLOAT) / COUNT(DISTINCT t.AlbumId), 2)
       FROM Track t
@@ -244,11 +243,9 @@
       SELECT c.FirstName, c.LastName FROM Customer c
       LEFT JOIN Invoice i ON c.CustomerId = i.CustomerId
       WHERE i.InvoiceId IS NULL
-      LIMIT 100
     - >
       SELECT FirstName, LastName FROM Customer
       WHERE CustomerId NOT IN (SELECT CustomerId FROM Invoice)
-      LIMIT 100
 
 # ── Ambiguous (tests assumption handling) ─────────────────────────────────────
 
@@ -258,16 +255,24 @@
   expected_tables: [Track, InvoiceLine]
   accepted_queries:
     - >
-      SELECT t.Name, COUNT(il.InvoiceLineId) AS TimesPurchased
-      FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY t.TrackId ORDER BY TimesPurchased DESC LIMIT 5
+      SELECT Name, TimesPurchased FROM (
+        SELECT t.Name, COUNT(il.InvoiceLineId) AS TimesPurchased,
+               RANK() OVER (ORDER BY COUNT(il.InvoiceLineId) DESC) AS rk
+        FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
+        GROUP BY t.TrackId, t.Name
+      ) ranked WHERE rk <= 5
     - >
-      SELECT t.Name, SUM(il.Quantity) AS TotalSold
-      FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY t.TrackId ORDER BY TotalSold DESC LIMIT 5
+      SELECT Name, TotalSold FROM (
+        SELECT t.Name, SUM(il.Quantity) AS TotalSold,
+               RANK() OVER (ORDER BY SUM(il.Quantity) DESC) AS rk
+        FROM Track t JOIN InvoiceLine il ON t.TrackId = il.TrackId
+        GROUP BY t.TrackId, t.Name
+      ) ranked WHERE rk <= 5
   notes: >
     "Popular" is ambiguous — could mean most purchased (InvoiceLine count),
     most playlists (PlaylistTrack count), or most revenue. All are valid.
+    Many tracks tie at the top: the accepted queries keep every tied track
+    (RANK), so any valid top 5 matches.
 
 - question: "What are the best-selling albums?"
   difficulty: hard
@@ -279,19 +284,19 @@
       FROM Album al
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY al.AlbumId ORDER BY TotalSold DESC LIMIT 5
+      GROUP BY al.AlbumId, al.Title ORDER BY TotalSold DESC LIMIT 5
     - >
       SELECT al.Title, COUNT(il.InvoiceLineId) AS LineItems
       FROM Album al
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY al.AlbumId ORDER BY LineItems DESC LIMIT 5
+      GROUP BY al.AlbumId, al.Title ORDER BY LineItems DESC LIMIT 5
     - >
       SELECT al.Title, SUM(il.UnitPrice * il.Quantity) AS TotalRevenue
       FROM Album al
       JOIN Track t ON al.AlbumId = t.AlbumId
       JOIN InvoiceLine il ON t.TrackId = il.TrackId
-      GROUP BY al.AlbumId ORDER BY TotalRevenue DESC LIMIT 5
+      GROUP BY al.AlbumId, al.Title ORDER BY TotalRevenue DESC LIMIT 5
   notes: >
     "Best-selling" could mean by quantity, by revenue, or by number of
     distinct customers. Agent should state its assumption.

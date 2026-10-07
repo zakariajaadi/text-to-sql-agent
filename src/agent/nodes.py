@@ -4,6 +4,7 @@ from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
 
 from agent.guardrails import is_safe_query
 from agent.prompts import (
@@ -18,7 +19,7 @@ from agent.prompts import (
 )
 from agent.schemas import ColumnSelection, RankedTablesAndScope
 from agent.state import AgentState
-from agent.tools import get_run_query_tool
+from agent.tools import get_run_query_tool, run_capped_query
 from config import (
     cfg,
     fast_model,
@@ -331,11 +332,10 @@ def sql_coder(state: AgentState) -> dict:
     else:
         schema = state["retrieved_schema"]
 
-    # Format prompt with schema, dialect and limit — all db-specific
+    # Format prompt with schema and dialect — both db-specific
     system_prompt = SQL_CODER_PROMPT.format(
         dialect=db_cfg.dialect,
         dialect_rules=DIALECT_RULES.get(db_cfg.dialect, ""),
-        limit=db_cfg.limit,
         schema=schema,
     )
 
@@ -370,12 +370,13 @@ def sql_validator(state: AgentState) -> dict:
     On failure: writes structured feedback for sql_coder.
     On success: injects the query result into messages for format_answer.
 
-    The run_query_tool is resolved from the tools registry using selected_db
-    to ensure the query is always executed against the correct database.
+    The query runs against selected_db and at most `max_rows` rows are read:
+    the safety cap is applied here, never as a LIMIT in the SQL.
     """
     # Fetch generated query and target database from state
     query   = state["generated_query"]
     db_name = state["selected_db"]
+    db_cfg  = cfg.get_db(db_name)
 
     # 1. Guardrail — only SELECT allowed
     if not is_safe_query(query):
@@ -387,33 +388,32 @@ def sql_validator(state: AgentState) -> dict:
             )
         }
 
-    # 2. Execute SQL query via the db-scoped tool
-    run_query = get_run_query_tool(db_name)
-
-    tool_call = {
-        "name": run_query.name,
-        "args": {"query": query},
-        "id":   "sql_validator_call",
-        "type": "tool_call",
-    }
-
-    ai_msg   = AIMessage(content="", tool_calls=[tool_call])
-    tool_msg = run_query.invoke(tool_call)
-
-    # On failure return feedback to sql_coder (SQLAlchemy error msgs always start with "Error")
-    if tool_msg.status == "error" or tool_msg.content.strip().lower().startswith("error"):
+    # 2. Execute SQL query, reading at most max_rows rows
+    try:
+        result, row_count, truncated = run_capped_query(db_name, query, db_cfg.max_rows)
+    except SQLAlchemyError as e:
+        # On failure return feedback to sql_coder
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
                 query=query,
-                error=f"Execution error: {tool_msg.content}",
+                error=f"Execution error: Error: {e}",
                 extra_context="",
             )
         }
 
-    # On success, clear feedback and inject result into messages (AI msg + tool msg)
+    # On success, clear feedback and inject result into messages as a tool call + result,
+    # in the format of the sql_db_query tool (read by format_answer and the Chainlit UI)
+    tool_name = get_run_query_tool(db_name).name
+    ai_msg    = AIMessage(content="", tool_calls=[{
+        "name": tool_name, "args": {"query": query}, "id": "sql_validator_call", "type": "tool_call",
+    }])
+    tool_msg  = ToolMessage(content=result, name=tool_name, tool_call_id="sql_validator_call")
+
     return {
         "messages":            [ai_msg, tool_msg],
         "validation_feedback": "",  # clear feedback on success
+        "result_row_count":    row_count,
+        "result_truncated":    truncated,
     }
 
 
@@ -456,14 +456,21 @@ def format_answer(state: AgentState) -> dict:
         (m.content for m in reversed(messages) if isinstance(m, ToolMessage)),
         "No results."
     ) if query else "No results."
-    
+
+    # Give the formatter the row count, and tell it when sql_validator left rows unread (safety cap)
+    results_label = "Results"
+    if query and state.get("result_truncated"):
+        results_label = f"Results (truncated: first {state['result_row_count']} rows only, the query returned more)"
+    elif query and "result_row_count" in state:
+        results_label = f"Results ({state['result_row_count']} rows)"
+
     # Format answer
     response = fast_model.invoke([
         SystemMessage(content=FORMAT_ANSWER_PROMPT.format(dialect=db_cfg.dialect)),
         HumanMessage(content=(
             f"Question: {question}\n\n"
             f"Executed SQL:\n{query or 'No query executed — question is out of scope.'}\n\n"
-            f"Results: {result}"
+            f"{results_label}: {result}"
         )),
     ])
 

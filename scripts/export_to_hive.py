@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-TYPE_MAP = {"INTEGER": "INT", "DATETIME": "TIMESTAMP", "DATE": "DATE"}
+TYPE_MAP = {"INTEGER": "INT", "REAL": "DOUBLE", "DATETIME": "TIMESTAMP", "DATE": "DATE"}
 
 
 def hive_type(sqlite_type: str) -> str:

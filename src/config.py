@@ -61,8 +61,8 @@ class DatabaseConfig:
     name: str
     dialect:str
     description: str
-    limit: int = 5
-    uri: str = "" 
+    max_rows: int = 100   # safety cap on the rows read from a query result (never a LIMIT in the SQL)
+    uri: str = ""
     #schema: str | None = None          # base Hive (ex: "sales_db")
 
     def __post_init__(self):

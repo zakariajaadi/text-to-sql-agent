@@ -6,6 +6,8 @@
 # against the real database, then compares result sets.
 # This is the gold standard metric in Text-to-SQL evaluation.
 
+from itertools import permutations
+
 from langchain_community.utilities import SQLDatabase
 from loguru import logger
 
@@ -36,6 +38,9 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
     if gen_rows is None:
         return {"exact": 0.0}
 
+    # An ordered result can be compared on its first rows (full ranking vs expected top N)
+    is_ordered = "order by" in generated_sql.lower()
+
     best_exact = 0.0
 
     for gold_sql in accepted_queries:
@@ -45,7 +50,7 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
             logger.error(f"[execution] Gold query failed: {gold_sql}")
             continue
 
-        exact = _exact_execution_score(gold_rows, gen_rows)
+        exact = _exact_execution_score(gold_rows, gen_rows, is_ordered)
         if exact > best_exact:
             best_exact = exact
 
@@ -72,23 +77,37 @@ def _execute_query(db: SQLDatabase, sql: str) -> list[tuple] | None:
         return None
 
     
-def _exact_execution_score(gold_rows: list, gen_rows: list) -> float:
+def _exact_execution_score(gold_rows: list, gen_rows: list, is_ordered: bool = False) -> float:
     """
     Binary execution score — 1.0 if generated rows are a valid subset of gold, 0.0 otherwise.
     Checks that every row returned by the agent exists in the gold result set.
+
+    Extra generated columns are allowed (an id or an email next to the expected name):
+    the score holds if some choice of generated columns, one per gold column and in any
+    order, gives rows that all exist in gold.
+
+    An ordered result with more rows than gold (a full ranking when gold expects a top N)
+    is compared on its first len(gold_rows) rows: a well-ordered ranking starts with the
+    expected top, a badly ordered one does not.
     """
     if not gold_rows and not gen_rows:
         return 1.0
     if not gold_rows or not gen_rows:
         return 0.0
-    if len(gold_rows[0]) != len(gen_rows[0]):
+    if len(gen_rows[0]) < len(gold_rows[0]):
         return 0.0
+
+    if is_ordered:
+        gen_rows = gen_rows[:len(gold_rows)]
 
     gold = set([_normalize_row(tuple(r)) for r in gold_rows])
     gen = [_normalize_row(tuple(r)) for r in gen_rows]
 
     # Every generated row must exist in gold (avoid LIMIT clause overhead)
-    return 1.0 if all(r in gold for r in gen) else 0.0
+    for columns in permutations(range(len(gen[0])), len(gold_rows[0])):
+        if all(tuple(r[i] for i in columns) in gold for r in gen):
+            return 1.0
+    return 0.0
 
 def _normalize_row(row: tuple) -> tuple:
     """

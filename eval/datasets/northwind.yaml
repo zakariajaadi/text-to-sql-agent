@@ -42,8 +42,8 @@
   category: filtering
   expected_tables: [Products]
   accepted_queries:
-    - "SELECT ProductName FROM Products WHERE Discontinued = 1 LIMIT 100"
-    - "SELECT ProductID, ProductName FROM Products WHERE Discontinued = 1 LIMIT 100"
+    - "SELECT ProductName FROM Products WHERE Discontinued = 1"
+    - "SELECT ProductID, ProductName FROM Products WHERE Discontinued = 1"
 
 - question: "What is the most expensive product?"
   difficulty: simple
@@ -57,15 +57,15 @@
   category: filtering
   expected_tables: [Suppliers]
   accepted_queries:
-    - "SELECT CompanyName FROM Suppliers WHERE Country = 'Germany' LIMIT 100"
-    - "SELECT CompanyName, City FROM Suppliers WHERE Country = 'Germany' LIMIT 100"
+    - "SELECT CompanyName FROM Suppliers WHERE Country = 'Germany'"
+    - "SELECT CompanyName, City FROM Suppliers WHERE Country = 'Germany'"
 
 - question: "How many orders were placed in 1997?"
   difficulty: simple
   category: date_filter
   expected_tables: [Orders]
   accepted_queries:
-    - "SELECT COUNT(*) FROM Orders WHERE strftime('%Y', OrderDate) = '1997'"
+    - "SELECT COUNT(*) FROM Orders WHERE year(OrderDate) = 1997"
     - "SELECT COUNT(*) FROM Orders WHERE OrderDate BETWEEN '1997-01-01' AND '1997-12-31'"
     - "SELECT COUNT(*) FROM Orders WHERE OrderDate LIKE '1997%'"
 
@@ -83,7 +83,7 @@
     - >
       SELECT c.CategoryName, COUNT(*) AS ProductCount
       FROM Categories c JOIN Products p ON c.CategoryID = p.CategoryID
-      GROUP BY c.CategoryID ORDER BY ProductCount DESC
+      GROUP BY c.CategoryID, c.CategoryName ORDER BY ProductCount DESC
 
 - question: "Which customers have placed the most orders?"
   difficulty: medium
@@ -93,20 +93,20 @@
     - >
       SELECT c.CompanyName, COUNT(o.OrderID) AS OrderCount
       FROM Customers c JOIN Orders o ON c.CustomerID = o.CustomerID
-      GROUP BY c.CustomerID ORDER BY OrderCount DESC LIMIT 5
+      GROUP BY c.CustomerID, c.CompanyName ORDER BY OrderCount DESC LIMIT 5
 
 - question: "What is the total revenue per product?"
   difficulty: medium
   category: join_aggregation
-  expected_tables: [Products, "Order Details"]
+  expected_tables: [Products, order_details]
   accepted_queries:
     - >
       SELECT p.ProductName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
-      FROM Products p JOIN "Order Details" od ON p.ProductID = od.ProductID
-      GROUP BY p.ProductID ORDER BY Revenue DESC
+      FROM Products p JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY p.ProductID, p.ProductName ORDER BY Revenue DESC
     - >
       SELECT p.ProductName, ROUND(SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)), 2) AS Revenue
-      FROM Products p JOIN "Order Details" od ON p.ProductID = od.ProductID
+      FROM Products p JOIN order_details od ON p.ProductID = od.ProductID
       GROUP BY p.ProductName ORDER BY Revenue DESC
 
 - question: "Which employees have handled the most orders?"
@@ -117,7 +117,7 @@
     - >
       SELECT e.FirstName, e.LastName, COUNT(o.OrderID) AS OrderCount
       FROM Employees e JOIN Orders o ON e.EmployeeID = o.EmployeeID
-      GROUP BY e.EmployeeID ORDER BY OrderCount DESC LIMIT 5
+      GROUP BY e.EmployeeID, e.FirstName, e.LastName ORDER BY OrderCount DESC LIMIT 5
 
 - question: "What are the top 5 countries by number of customers?"
   difficulty: medium
@@ -136,45 +136,45 @@
     - >
       SELECT s.CompanyName, COUNT(o.OrderID) AS OrderCount
       FROM Shippers s JOIN Orders o ON s.ShipperID = o.ShipVia
-      GROUP BY s.ShipperID ORDER BY OrderCount DESC
+      GROUP BY s.ShipperID, s.CompanyName ORDER BY OrderCount DESC
 
 # ── Hard (3+ tables, subqueries, master/detail) ──────────────────────────────
 
 - question: "What is the total revenue per category?"
   difficulty: hard
   category: multi_join_aggregation
-  expected_tables: [Categories, Products, "Order Details"]
+  expected_tables: [Categories, Products, order_details]
   accepted_queries:
     - >
       SELECT c.CategoryName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
       FROM Categories c
       JOIN Products p ON c.CategoryID = p.CategoryID
-      JOIN "Order Details" od ON p.ProductID = od.ProductID
+      JOIN order_details od ON p.ProductID = od.ProductID
       GROUP BY c.CategoryName ORDER BY Revenue DESC
     - >
       SELECT c.CategoryName, ROUND(SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)), 2) AS Revenue
       FROM Categories c
       JOIN Products p ON c.CategoryID = p.CategoryID
-      JOIN "Order Details" od ON p.ProductID = od.ProductID
-      GROUP BY c.CategoryID ORDER BY Revenue DESC
+      JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY c.CategoryID, c.CategoryName ORDER BY Revenue DESC
 
 - question: "What is the average order value by country?"
   difficulty: hard
   category: nested_aggregation
-  expected_tables: [Orders, "Order Details"]
+  expected_tables: [Orders, order_details]
   accepted_queries:
     - >
       WITH OrderTotals AS (
         SELECT o.OrderID, o.ShipCountry,
                SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS OrderTotal
         FROM Orders o
-        JOIN "Order Details" od ON o.OrderID = od.OrderID
+        JOIN order_details od ON o.OrderID = od.OrderID
         GROUP BY o.OrderID, o.ShipCountry
       )
       SELECT ShipCountry, AVG(OrderTotal) AS AvgOrderValue
       FROM OrderTotals
       GROUP BY ShipCountry
-      ORDER BY AvgOrderValue DESC LIMIT 5
+      ORDER BY AvgOrderValue DESC
   notes: >
     Tests master/detail aggregation: must first sum line items
     per order, then average per country. Common error is averaging
@@ -183,21 +183,21 @@
 - question: "What is the average order value per customer?"
   difficulty: hard
   category: nested_aggregation
-  expected_tables: [Customers, Orders, "Order Details"]
+  expected_tables: [Customers, Orders, order_details]
   accepted_queries:
     - >
       WITH OrderTotals AS (
         SELECT o.OrderID, o.CustomerID,
                SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS OrderTotal
         FROM Orders o
-        JOIN "Order Details" od ON o.OrderID = od.OrderID
+        JOIN order_details od ON o.OrderID = od.OrderID
         GROUP BY o.OrderID, o.CustomerID
       )
       SELECT c.CompanyName, AVG(ot.OrderTotal) AS AvgOrderValue
       FROM Customers c
       JOIN OrderTotals ot ON c.CustomerID = ot.CustomerID
-      GROUP BY c.CustomerID
-      ORDER BY AvgOrderValue DESC LIMIT 5
+      GROUP BY c.CustomerID, c.CompanyName
+      ORDER BY AvgOrderValue DESC
   notes: >
     Same master/detail pattern: aggregate line items to order level first,
     then average per customer.
@@ -205,12 +205,12 @@
 - question: "What is the average number of items per order?"
   difficulty: hard
   category: nested_aggregation
-  expected_tables: [Orders, "Order Details"]
+  expected_tables: [order_details]
   accepted_queries:
     - >
       WITH OrderItemCounts AS (
         SELECT OrderID, SUM(Quantity) AS TotalItems
-        FROM "Order Details"
+        FROM order_details
         GROUP BY OrderID
       )
       SELECT AVG(TotalItems) AS AvgItemsPerOrder
@@ -218,8 +218,8 @@
     - >
       SELECT AVG(ItemCount) FROM (
         SELECT OrderID, SUM(Quantity) AS ItemCount
-        FROM "Order Details" GROUP BY OrderID
-      )
+        FROM order_details GROUP BY OrderID
+      ) AS order_items
   notes: >
     Must count items per order first, then average.
     Common error is AVG(Quantity) directly on Order Details.
@@ -227,14 +227,14 @@
 - question: "Which supplier has generated the most revenue?"
   difficulty: hard
   category: multi_join_aggregation
-  expected_tables: [Suppliers, Products, "Order Details"]
+  expected_tables: [Suppliers, Products, order_details]
   accepted_queries:
     - >
       SELECT s.CompanyName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
       FROM Suppliers s
       JOIN Products p ON s.SupplierID = p.SupplierID
-      JOIN "Order Details" od ON p.ProductID = od.ProductID
-      GROUP BY s.SupplierID ORDER BY Revenue DESC LIMIT 1
+      JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY s.SupplierID, s.CompanyName ORDER BY Revenue DESC LIMIT 1
 
 - question: "Which customers have never placed an order?"
   difficulty: hard
@@ -245,37 +245,35 @@
       SELECT c.CompanyName FROM Customers c
       LEFT JOIN Orders o ON c.CustomerID = o.CustomerID
       WHERE o.OrderID IS NULL
-      LIMIT 100
     - >
       SELECT CompanyName FROM Customers
       WHERE CustomerID NOT IN (SELECT CustomerID FROM Orders)
-      LIMIT 100
 
 - question: "What are the top 3 employees by total revenue generated?"
   difficulty: hard
   category: multi_join_aggregation
-  expected_tables: [Employees, Orders, "Order Details"]
+  expected_tables: [Employees, Orders, order_details]
   accepted_queries:
     - >
       SELECT e.FirstName, e.LastName,
              SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
       FROM Employees e
       JOIN Orders o ON e.EmployeeID = o.EmployeeID
-      JOIN "Order Details" od ON o.OrderID = od.OrderID
-      GROUP BY e.EmployeeID ORDER BY Revenue DESC LIMIT 3
+      JOIN order_details od ON o.OrderID = od.OrderID
+      GROUP BY e.EmployeeID, e.FirstName, e.LastName ORDER BY Revenue DESC LIMIT 3
 
 - question: "What is the monthly revenue trend for 1997?"
   difficulty: hard
   category: date_aggregation
-  expected_tables: [Orders, "Order Details"]
+  expected_tables: [Orders, order_details]
   accepted_queries:
     - >
-      SELECT strftime('%m', o.OrderDate) AS Month,
+      SELECT date_format(o.OrderDate, 'MM') AS Month,
              SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
       FROM Orders o
-      JOIN "Order Details" od ON o.OrderID = od.OrderID
-      WHERE strftime('%Y', o.OrderDate) = '1997'
-      GROUP BY strftime('%m', o.OrderDate)
+      JOIN order_details od ON o.OrderID = od.OrderID
+      WHERE year(o.OrderDate) = 1997
+      GROUP BY date_format(o.OrderDate, 'MM')
       ORDER BY Month
 
 # ── Ambiguous (tests assumption handling) ─────────────────────────────────────
@@ -283,19 +281,19 @@
 - question: "Who are our best customers?"
   difficulty: hard
   category: ambiguous
-  expected_tables: [Customers, Orders, "Order Details"]
+  expected_tables: [Customers, Orders, order_details]
   accepted_queries:
     - >
       SELECT c.CompanyName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS TotalSpent
       FROM Customers c
       JOIN Orders o ON c.CustomerID = o.CustomerID
-      JOIN "Order Details" od ON o.OrderID = od.OrderID
-      GROUP BY c.CustomerID ORDER BY TotalSpent DESC LIMIT 5
+      JOIN order_details od ON o.OrderID = od.OrderID
+      GROUP BY c.CustomerID, c.CompanyName ORDER BY TotalSpent DESC LIMIT 5
     - >
       SELECT c.CompanyName, COUNT(o.OrderID) AS OrderCount
       FROM Customers c
       JOIN Orders o ON c.CustomerID = o.CustomerID
-      GROUP BY c.CustomerID ORDER BY OrderCount DESC LIMIT 5
+      GROUP BY c.CustomerID, c.CompanyName ORDER BY OrderCount DESC LIMIT 5
   notes: >
     "Best" is ambiguous — could mean highest revenue, most orders,
     or most recent activity. Agent should state its assumption.
@@ -303,18 +301,18 @@
 - question: "Which products are underperforming?"
   difficulty: hard
   category: ambiguous
-  expected_tables: [Products, "Order Details"]
+  expected_tables: [Products, order_details]
   accepted_queries:
     - >
       SELECT p.ProductName, SUM(od.Quantity) AS TotalSold
       FROM Products p
-      JOIN "Order Details" od ON p.ProductID = od.ProductID
-      GROUP BY p.ProductID ORDER BY TotalSold ASC LIMIT 5
+      JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY p.ProductID, p.ProductName ORDER BY TotalSold ASC LIMIT 5
     - >
       SELECT p.ProductName, SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) AS Revenue
       FROM Products p
-      JOIN "Order Details" od ON p.ProductID = od.ProductID
-      GROUP BY p.ProductID ORDER BY Revenue ASC LIMIT 5
+      JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY p.ProductID, p.ProductName ORDER BY Revenue ASC LIMIT 5
   notes: >
     "Underperforming" is ambiguous — could mean lowest sales volume,
     lowest revenue, or highest stock relative to sales.
@@ -328,11 +326,9 @@
       SELECT c.CompanyName FROM Customers c
       LEFT JOIN Orders o ON c.CustomerID = o.CustomerID
       WHERE o.OrderID IS NULL
-      LIMIT 100
     - >
       SELECT CompanyName FROM Customers
       WHERE CustomerID NOT IN (SELECT CustomerID FROM Orders)
-      LIMIT 100
   notes: >
     "Inactive" is ambiguous — could mean never ordered or not ordered
     recently. Agent should state its assumption.

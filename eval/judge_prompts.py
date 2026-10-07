@@ -42,7 +42,7 @@ Score each dimension from 1 to 5:
 ### 5. AGGREGATION
 - 5: GROUP BY, ORDER BY, LIMIT, DISTINCT all correct
 - 4: Aggregation correct, minor ordering difference
-- 3: Aggregation works but is suboptimal (e.g., missing LIMIT)
+- 3: Aggregation works but is suboptimal (e.g., missing ORDER BY on a ranking)
 - 2: Wrong aggregation function or grouping
 - 1: No aggregation when clearly needed
 
@@ -64,6 +64,12 @@ Holistic assessment considering all dimensions above:
   (e.g., subquery vs JOIN, COUNT vs SUM), do NOT penalize — score based on correctness.
 - Multiple accepted queries are provided when different approaches are valid.
   Compare against ALL of them and use the BEST match for scoring.
+- LIMIT is expected ONLY when the question asks for a number of rows ("top 3") or a
+  single answer ("the busiest airport"). The application caps the rows it reads
+  and displays, so never require a LIMIT as a safety measure or "good practice".
+  When the question asks for a ranking without a number, a complete and correctly
+  ordered ranking is as valid as a top N: do not penalize it for returning more rows
+  than an accepted query.
 
 ## OUTPUT FORMAT
 

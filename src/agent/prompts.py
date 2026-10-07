@@ -116,7 +116,8 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Aggregation strategy: [describe levels — e.g. "first SUM per order, then AVG per country"]
 - Filters: [WHERE conditions if any]
 - Also close: [other listed values matching a filtered term, not filtered on — or None]
-- Ordering: [ORDER BY if needed — required when results will be limited]
+- Ordering: [ORDER BY if needed — required for rankings and when a limit is set]
+- Limit: [N only when the question asks for N rows or a single answer — otherwise None]
 
 ## RULES
 - Take join conditions from the "-- Joins:" lines in the table headers. Never invent a join.
@@ -129,6 +130,9 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   Even when one value matches exactly, scan the whole list: variants or abbreviations of
   the same concept are "also close" (e.g. "cancelled" → status = 'Cancelled',
   Also close: 'Cancelled by Customer'). List them under "Also close", not in Filters.
+- Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
+  ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
+  full ranking: Limit None.
 
 ## DATABASE SCHEMA
 {schema}
@@ -163,10 +167,10 @@ You ONLY write SQL — you never execute it.
 ## STRICT SQL RULES
 1. ONLY use tables and columns from the schema below.
 2. Never use SELECT *. Only select necessary columns.
-3. Always LIMIT results to {limit} rows. Only exceptions:
-   - Single aggregate value (COUNT, AVG, SUM): no LIMIT needed.
-   - Questions asking for a complete list: use LIMIT 100 as a safety cap.
-   - User specifies an explicit number (e.g. "top 10"): use that number.
+3. Add LIMIT only when the plan sets one, i.e. when the question asks for a number of rows
+   ("top 10" → LIMIT 10) or a single answer ("the busiest airport" → LIMIT 1). Otherwise
+   return every matching row: never add a LIMIT on your own, the application caps the
+   rows it reads.
 4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
 5. Text filters:
    - If the column lists its "Values:", map the user's term to the listed value and filter on it
@@ -225,8 +229,7 @@ FROM flight AS f
 JOIN airport AS ap ON f.departure_airport_id = ap.airport_id
 GROUP BY ap.airport_id, ap.airport_name
 ORDER BY departing_flights DESC
-LIMIT 5
- 
+
 ## DATABASE SCHEMA
 {schema}
 """
@@ -278,28 +281,33 @@ Your job is to transform these results into a natural, conversational response.
 - Label each value with what was measured (the aggregated quantity), not with the grouped entity:
   "Product A: 2 sales", never "Product A: 2 products".
 - Never use vague labels such as "units", "items" or "values".
-- If several results share the same value at the end of a ranking, say they are tied.
+- If several rows you show share the same value, say they are tied (in a ranking, their
+  order is arbitrary).
 
 ## ASSUMPTIONS
 Only if the SQL contains comments starting with "Assumption:", end the answer with this
 block, written in the user's language, heading included:
   **[heading]:**
-  * "[term]" → [interpretation] ([also close]: [values])
-One line per assumption comment. Add the "([also close]: [values])" part only when the
-comment lists also close values.
+  * "[term]" → [interpretation]
+One short line per assumption comment. Never invent assumptions that are not in the SQL.
+Only when the comment ends with "(also close: ...)", end its line with those same quoted
+values: ([also close]: 'Value A', 'Value B'). They tell the user what else they could
+ask for. Never add this part otherwise, and never put anything but quoted values in it.
 [heading] and [also close] are "Assumptions" and "also close", translated into the
 language of the user's question.
-One short line each. Never invent assumptions that are not in the SQL.
 Keep database values exactly as written, never translated (e.g. 'Cancelled by Customer' stays as is).
-Always keep the "also close" values: they tell the user what else they could ask for.
 If the SQL has no such comment, write nothing at all about assumptions.
 
 ## SPECIAL CASES
 - Empty results: say so, using the user's own terms.
 - Error in results: say politely that the question could not be answered.
 - No query executed (out of scope): say politely that the available data cannot answer it.
+- Truncated results: never present them as the complete result.
 
 ## FORMATTING
 - Several results: a clean Markdown list.
+- More than 10 rows: list the first 10, in the order received, then give the total from
+  the Results header: "10 shown out of N", or "10 shown out of more than N" when the
+  results are truncated (the full table is shown with the query results).
 - Keep it concise.
 """

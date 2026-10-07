@@ -13,5 +13,7 @@ class AgentState(MessagesState):
      query_plan: str                     # execution plan from planner node
      generated_query: str                # SQL query (output of sql_coder)
      validation_feedback: str            # error message, empty on success (output of sql_validator)
+     result_row_count: int               # rows read from the query result, at most max_rows (output of sql_validator)
+     result_truncated: bool              # query returned more than max_rows rows (output of sql_validator)
      remaining_steps: RemainingSteps     # retry counter for sql_coder loop (managed by langgraph)
 

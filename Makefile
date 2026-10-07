@@ -62,7 +62,7 @@ hive-ping:  ## Check the Python side: SQLAlchemy + PyHive connection
 
 hive-load:  ## Load a SQLite db into Hive (DB=Chinook)
 	uv run python scripts/export_to_hive.py $(DB)
-	docker cp data/hive_load hive:/tmp/hive_load
+	docker cp data/hive_load/. hive:/tmp/hive_load
 	docker exec hive beeline -u jdbc:hive2://localhost:10000 -f /tmp/hive_load/$(HIVE_DB)/load.hql
 
 hive-partitioned:  ## Create the read-mode test tables (Full/Last, Delta/All, CDC/Live) in Hive
