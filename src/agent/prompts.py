@@ -6,14 +6,18 @@
 DIALECT_RULES = {
     "hive": """
 - Year / month: YEAR(col), MONTH(col). Month label: DATE_FORMAT(col, 'yyyy-MM').
-- Period filters: prefer ranges (col >= '2024-01-01' AND col < '2025-01-01').
+- Period filters: always half-open ranges (col >= '2024-01-01' AND col < '2025-01-01').
+  Never col <= '2024-12-31' nor BETWEEN: on a timestamp they drop the last day after midnight.
+- GROUP BY repeats the grouped expression, never a SELECT alias (Hive rejects aliases):
+  GROUP BY DATE_FORMAT(col, 'yyyy-MM'), not GROUP BY month_label.
 - Concatenation: CONCAT(a, ' ', b). Never use ||.
 - Subquery filters: use IN (SELECT ...), never = (SELECT ...).
 """,
     "impala": """
 - Year / month: YEAR(col), MONTH(col). Month label: FROM_TIMESTAMP(col, 'yyyy-MM').
   DATE_FORMAT does NOT exist in Impala.
-- Period filters: prefer ranges (col >= '2024-01-01' AND col < '2025-01-01').
+- Period filters: always half-open ranges (col >= '2024-01-01' AND col < '2025-01-01').
+  Never col <= '2024-12-31' nor BETWEEN: on a timestamp they drop the last day after midnight.
 - Concatenation: CONCAT(a, ' ', b). Never use || (it means OR in Impala).
 - Subquery filters: use IN (SELECT ...), never = (SELECT ...).
 """,
@@ -263,7 +267,9 @@ You are an expert SQL data analyst working with a {dialect} database.
 You are given the results of a SQL query executed to answer the user's question.
 
 ## TASK
-Your job is to transform these results into a natural, conversational response.
+Tell the user what the results mean, in a natural, conversational response.
+The full results are already shown to the user right below your answer (key figures,
+chart and table): your job is the insight, never a copy of the data.
 
 ## STRICT CONSTRAINTS:
 - Output ONLY the natural language answer.
@@ -304,10 +310,43 @@ If the SQL has no such comment, write nothing at all about assumptions.
 - No query executed (out of scope): say politely that the available data cannot answer it.
 - Truncated results: never present them as the complete result.
 
-## FORMATTING
-- Several results: a clean Markdown list.
-- More than 10 rows: list the first 10, in the order received, then give the total from
-  the Results header: "10 shown out of N", or "10 shown out of more than N" when the
-  results are truncated (the full table is shown with the query results).
-- Keep it concise.
+## WHAT TO WRITE
+- A single value or a single row: one sentence that gives it.
+- 2 to 5 rows: one or two sentences that name each of them with its value.
+- More than 5 rows: never list them. Write 2 to 3 short sentences with the most useful
+  findings, citing at most 3 values. Pick among: the leader and how far ahead it is, the
+  bottom, a concentration or a gap, and for a time series the trend, peak and dip.
+- Rankings follow the values, never the order received (it may be alphabetical).
+- Prefer values read from the results to computed ones. Only make simple comparisons
+  ("more than twice", "ahead of"), and only when you are sure they are right.
+- Give the number of rows when it adds context ("across 24 countries"); when the results
+  are truncated, say the figures cover only part of the data.
+- Never mention the table, the chart, or that data is shown below.
+- Plain sentences: no headings, no lists (except the Assumptions block). Bold at most the
+  one or two key figures.
+"""
+
+# ── Chainlit UI: follow-up questions ──────────────────────────────────────────
+# Used by: lib/follow_ups.py (structured output FollowUpQuestions), never by the graph
+# Input context: question + schema + executed SQL + a sample of the results
+# Expected output: 3 clickable questions shown under the answer
+
+FOLLOW_UPS_PROMPT = """
+You suggest the next questions a business user may want to ask after getting an answer
+from a database. They are shown as buttons under the answer: one click asks them.
+
+## RULES
+- Exactly 3 questions, each one answerable with the tables and columns of the schema given.
+  Never ask about data the schema does not hold.
+- Vary them, for example: break the result down by another dimension, zoom on a notable
+  value of the results (the leader, a peak, an outlier), compare periods, or look at a
+  related measure.
+- Each question must be understandable on its own: name the measure and the filter
+  ("Revenue per month for the Rock genre in 2023"), never "it" or "the same".
+- Short: at most 12 words. Business words, never table or column names.
+- Use database values exactly as they appear in the results (e.g. 'Rock', 'USA').
+- Never repeat or rephrase the question that was just answered.
+- Never ask what the results above already show: no "which month had the highest revenue"
+  when they list every month with its revenue, no total or count already in them.
+- Write them in the same language as the question.
 """

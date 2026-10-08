@@ -12,10 +12,22 @@ databases:
     dialect: "hive"
     description: ${oc.select:db_descriptions.Chinook,""} # Optional
     max_rows: 100
+    tagline: "A digital music store: artists, albums, tracks, customers and invoices."  # Optional
+    starters:  # Optional: example questions of the welcome screen (icon: public/icons/<icon>.svg)
+      - {icon: kpi,  question: "What is the total revenue of all invoices?"}
+      - {icon: line, question: "What was the total revenue per month in 2023?"}
+      - {icon: bar,  question: "How many tracks are there per genre?"}
+      - {icon: rank, question: "Who are the top 5 artists by number of albums?"}
   - name: "Northwind"
     dialect: "hive"
     description: ${oc.select:db_descriptions.Northwind,""} # Optional
     max_rows: 100
+    tagline: "A food trading company: products, suppliers, customers, orders and employees."
+    starters:
+      - {icon: kpi,  question: "How many orders were placed in 2022?"}
+      - {icon: line, question: "What is the monthly revenue trend for 2022?"}
+      - {icon: bar,  question: "What is the total revenue per category?"}
+      - {icon: rank, question: "Who are the top 5 employees by total revenue generated?"}
 
 
 retrieval:

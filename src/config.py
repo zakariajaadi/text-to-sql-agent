@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -62,6 +62,8 @@ class DatabaseConfig:
     dialect:str
     description: str
     max_rows: int = 100   # safety cap on the rows read from a query result (never a LIMIT in the SQL)
+    tagline: str = ""                              # one-line presentation of the Chainlit welcome screen
+    starters: list = field(default_factory=list)  # example questions of the Chainlit welcome screen: {icon, question}
     uri: str = ""
     #schema: str | None = None          # base Hive (ex: "sales_db")
 

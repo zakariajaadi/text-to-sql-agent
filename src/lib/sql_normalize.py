@@ -1,6 +1,7 @@
 """
-Deterministic fixes applied to every generated query, for Hive and Impala.
-Used by: agent/nodes.py (sql_coder)
+Deterministic fixes applied to every generated query, for Hive and Impala,
+and extraction of the tables a query reads.
+Used by: agent/nodes.py (sql_coder), lib/chainlit_ui.py (result card)
 """
 
 import sqlglot
@@ -42,3 +43,19 @@ def normalize_sql(query: str, dialect: str) -> str:
         ordered.set("nulls_first", False)
 
     return "\n".join(comments + [tree.sql(dialect=target, identify=True, pretty=True)])
+
+
+def get_query_tables(query: str, dialect: str) -> list[str]:
+    """
+    Names of the tables the query reads, without CTE names
+    (joins written with commas, subqueries and CTE bodies included).
+    Empty when sqlglot can't parse the query.
+    """
+    try:
+        tree = sqlglot.parse_one(query, read=_SQLGLOT_DIALECTS.get(dialect, dialect))
+    except ParseError:
+        return []
+
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+    names     = (table.name for table in tree.find_all(exp.Table))
+    return list(dict.fromkeys(name for name in names if name and name.lower() not in cte_names))

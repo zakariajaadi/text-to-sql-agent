@@ -17,3 +17,8 @@ class TableColumns(BaseModel):
 # structural columns (join keys, read mode) are added by lib/column_pruning.py
 class ColumnSelection(BaseModel):
     tables: list[TableColumns] = Field(description="Selected columns of every table in the schemas, one entry per table")
+
+
+# Follow-up questions suggested under an answer (lib/follow_ups.py, Chainlit UI only)
+class FollowUpQuestions(BaseModel):
+    questions: list[str] = Field(description="3 short follow-up questions the user may ask next, answerable from the schema")

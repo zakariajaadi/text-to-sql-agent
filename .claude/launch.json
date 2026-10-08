@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chainlit",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "chainlit", "run", "app.py", "--headless", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "chainlit-preview",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "chainlit", "run", "app.py", "--headless", "--port", "8001"],
+      "port": 8001
+    }
+  ]
+}

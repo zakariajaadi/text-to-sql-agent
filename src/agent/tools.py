@@ -1,3 +1,7 @@
+from datetime import date, time
+from decimal import Decimal
+from typing import NamedTuple
+
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.utilities import SQLDatabase
 from langchain_community.utilities.sql_database import truncate_word
@@ -45,25 +49,52 @@ def get_list_tables_tool(db_name: str) -> BaseTool:
 
 # Capped execution — used by the sql_validator node
 
-def run_capped_query(db_name: str, query: str, max_rows: int) -> tuple[str, int, bool]:
+class QueryResult(NamedTuple):
+    content:   str          # rows in the sql_db_query tool format, read by format_answer
+    columns:   list[str]    # column names as returned by the driver
+    rows:      list[list]   # JSON-safe values, read by the Chainlit result card
+    truncated: bool         # the query returned more than max_rows rows
+
+
+def run_capped_query(db_name: str, query: str, max_rows: int) -> QueryResult:
     """
     Execute a query and read at most max_rows rows: the safety cap lives here, never
     in the SQL, so a LIMIT in the query only ever comes from the question itself.
 
-    Returns the rows in the sql_db_query tool format (str of tuples, "" when empty,
-    long values truncated), the number of rows read, and whether more were left unread.
-    Raises SQLAlchemyError when the query fails.
+    content follows the sql_db_query tool format (str of tuples, "" when empty, long
+    values truncated). Raises SQLAlchemyError when the query fails.
     """
     db = db_registry[db_name]
     with db._engine.connect() as conn:
-        rows = conn.execute(text(query)).fetchmany(max_rows + 1)
+        cursor  = conn.execute(text(query))
+        columns = list(cursor.keys())
+        rows    = cursor.fetchmany(max_rows + 1)
 
     truncated = len(rows) > max_rows
-    content = [
+    rows      = rows[:max_rows]
+    content   = [
         tuple(truncate_word(value, length=db._max_string_length) for value in row)
-        for row in rows[:max_rows]
+        for row in rows
     ]
-    return (str(content) if content else ""), len(content), truncated
+    return QueryResult(
+        content   = str(content) if content else "",
+        columns   = columns,
+        rows      = [[_to_json_safe(value) for value in row] for row in rows],
+        truncated = truncated,
+    )
+
+
+def _to_json_safe(value):
+    """Convert a driver value (Decimal, date, bytes...) to a JSON-serializable one."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, time)):  # datetime is a subclass of date
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 

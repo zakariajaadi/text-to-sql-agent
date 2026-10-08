@@ -3,19 +3,32 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
+import time
 import uuid
+from pathlib import Path
+
 import chainlit as cl
 from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphRecursionError
 from loguru import logger
 
 from agent.graph import build_graph
-from lib import get_node_step_title, normalize_chunk_content, process_node_output
+from lib import (
+    attach_result_card,
+    get_agent_step_summary,
+    get_node_step_title,
+    normalize_chunk_content,
+    process_node_output,
+    rename_retry_steps,
+    send_follow_ups,
+)
 from langsmith import Client
 from config import cfg 
 
 
 ls_client = Client()
+
+PUBLIC_ICONS = Path(__file__).parent / "public" / "icons"
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -24,19 +37,34 @@ async def on_chat_start():
     cl.user_session.set("agent", agent)
     if cfg.memory.enabled:
         cl.user_session.set("thread_id", str(uuid.uuid4()))
-
-    # Database picked by the user in the chat profile selector (see chat_profiles)
-    db_name = cl.user_session.get("chat_profile")
-    await cl.Message(content=f"👋 Posez-moi une question sur la base **{db_name}**.").send()
+    # No welcome message: Chainlit only shows the starters while the thread is empty
 
 
 @cl.set_chat_profiles
 async def chat_profiles():
-    """One profile per database: the user picks the database, switching starts a new conversation."""
+    """
+    One profile per database: the user picks the database, switching starts a new conversation.
+    Each profile shows its example questions (starters) on the welcome screen.
+    """
     return [
-        cl.ChatProfile(name=db.name, markdown_description=db.description or db.name)
+        cl.ChatProfile(
+            name=db.name,
+            markdown_description=db.tagline or db.description or db.name,
+            icon=_public_icon("database"),
+            starters=[
+                cl.Starter(label=s["question"], message=s["question"], icon=_public_icon(s.get("icon")))
+                for s in db.starters
+            ],
+        )
         for db in cfg.databases
     ]
+
+
+def _public_icon(name: str | None) -> str | None:
+    """URL of public/icons/<name>.svg, or None when there is no such icon."""
+    if name and (PUBLIC_ICONS / f"{name}.svg").exists():
+        return f"/public/icons/{name}.svg"
+    return None
 
 @cl.on_message
 async def on_message(message: cl.Message):
@@ -46,11 +74,18 @@ async def on_message(message: cl.Message):
     """
     agent = cl.user_session.get("agent")
     seen_msg_ids = set()
-    response_msg = None
     run_id= None
+    turn_start  = time.perf_counter()
+    node_starts = {}  # run_id of a running graph node → start time, to time its step
 
-    # Reset the streaming flag for this new message
-    cl.user_session.set("answer_streamed", False)
+    # Reset the per-turn UI state: answer message (streamed or not), query result, SQL retries
+    # and their steps, follow-up questions being suggested
+    cl.user_session.set("answer_msg", None)
+    cl.user_session.set("query_result", None)
+    cl.user_session.set("sql_retries", 0)
+    cl.user_session.set("retry_steps", [])
+    cl.user_session.set("retrieve_duration", None)
+    cl.user_session.set("follow_ups_task", None)
 
     try:
         
@@ -77,16 +112,26 @@ async def on_message(message: cl.Message):
                     run_id = event["run_id"]
 
 
-                # --- 1. Intermediate Node Completion ---
-                if kind == "on_chain_end":
-                    await process_node_output(event, seen_msg_ids)
-                    # Update the step header to reflect the current node
-                    title = get_node_step_title(event["metadata"].get("langgraph_node", ""))
+                # A graph node run is the chain named after its node (nested runs carry the
+                # node name in their metadata only)
+                node_name = event["metadata"].get("langgraph_node", "")
+                is_node   = bool(node_name) and event.get("name") == node_name
+
+                # --- 1. Node start: show it in the step header, start its timer ---
+                if kind == "on_chain_start" and is_node:
+                    node_starts[event["run_id"]] = time.perf_counter()
+                    title = get_node_step_title(node_name)
                     if title:
                         agent_step.name = title
                         await agent_step.update()
 
-                # --- 2. Live Token Streaming ---
+                # --- 2. Intermediate Node Completion ---
+                elif kind == "on_chain_end":
+                    start    = node_starts.pop(event["run_id"], None) if is_node else None
+                    duration = time.perf_counter() - start if start is not None else None
+                    await process_node_output(event, seen_msg_ids, duration)
+
+                # --- 3. Live Token Streaming ---
                 elif kind == "on_chat_model_stream":
                     node_name = event["metadata"].get("langgraph_node", "")
 
@@ -98,35 +143,40 @@ async def on_message(message: cl.Message):
                     content = normalize_chunk_content(chunk.content)
 
                     if content and not chunk.tool_call_chunks:
+                        response_msg = cl.user_session.get("answer_msg")
                         if not response_msg:
                             response_msg = cl.Message(content="")
                             await response_msg.send()
-                            cl.user_session.set("answer_streamed", True)
+                            cl.user_session.set("answer_msg", response_msg)
 
                         await response_msg.stream_token(content)
 
-            # Reset title to neutral once all nodes have completed
-            agent_step.name = "🤖 SQL Agent"
+            # Once all nodes have completed: tables the answer comes from and total time
+            agent_step.name = get_agent_step_summary(time.perf_counter() - turn_start)
             await agent_step.update()
 
     except ValueError as e:
         await cl.Message(content=f"⚠️ Unauthorized Query: {e}").send()
 
     except GraphRecursionError:
+        await rename_retry_steps("failed")
         await cl.Message(content="⚠️ Reach limit of attempts. The query is too complex or failed to converge.").send()
 
     except Exception as e:
         logger.error(f"Unexpected error: {repr(e)}")
         await cl.Message(content="Sorry, I encountered a technical error.").send()
     
-    # Attach feedback actions to the response message itself
+    # Attach the result card and feedback actions to the response message itself
+    response_msg = cl.user_session.get("answer_msg")
     if response_msg:
+        await attach_result_card(response_msg)
         if run_id:
             response_msg.actions = [
                 cl.Action(name="thumbs_up",   payload={"run_id": str(run_id)}, label="👍"),
                 cl.Action(name="thumbs_down", payload={"run_id": str(run_id)}, label="👎"),
             ]
         await response_msg.update()
+        await send_follow_ups(response_msg)
         
 
 

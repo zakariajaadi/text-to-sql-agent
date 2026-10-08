@@ -30,6 +30,7 @@ from config import (
 from lib import (
     cached_node,
     expand_fk,
+    extract_plan_tables,
     extract_sql,
     extract_text_content,
     get_last_cycle,
@@ -288,12 +289,18 @@ def planner(state: AgentState) -> dict:
     """
     LLM node — produces a structured execution plan for sql_coder.
     Runs on fast_model. Skipped when validation_feedback is set (retry loop).
+
+    The "-- Joins:" hints of a DDL name tables rerank_tables may have left out
+    (e.g. order_details for a revenue question). When the plan uses such a table,
+    its full DDL is loaded so sql_coder writes its columns from the schema, not from memory.
     """
-    
+
     schema = state["retrieved_schema"]
-    db_cfg = cfg.get_db(state["selected_db"])
+    db_name = state["selected_db"]
+    db_cfg = cfg.get_db(db_name)
     question = get_question(state)
 
+    # Free-text plan: a structured output would constrain the planner's reasoning
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
@@ -305,7 +312,23 @@ def planner(state: AgentState) -> dict:
     plan = extract_text_content(response)
     logger.debug(f"planner: {plan[:200]}")
 
-    return {"query_plan": plan}
+    # ── Load the plan's tables missing from the schema ────────────────────────
+    selected_schemas = state["selected_schemas"]
+    missing = [
+        table for table in extract_plan_tables(plan, schema_store[db_name])
+        if table not in selected_schemas
+    ]
+
+    if not missing:
+        return {"query_plan": plan}
+
+    logger.debug(f"planner: tables of the plan loaded from store: {missing}")
+    added = {table: schema_store[db_name][table] for table in missing}
+    return {
+        "query_plan":       plan,
+        "selected_schemas": {**selected_schemas, **added},   # retries use the full schema too
+        "retrieved_schema": "\n\n".join([schema, *added.values()]),
+    }
 
 @cached_node(
     key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
@@ -380,25 +403,24 @@ def sql_validator(state: AgentState) -> dict:
 
     # 1. Guardrail — only SELECT allowed
     if not is_safe_query(query):
+        error = "BLOCKED: Only SELECT queries are allowed. DML/DDL detected."
         return {
-            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
-                query=query,
-                error="BLOCKED: Only SELECT queries are allowed. DML/DDL detected.",
-                extra_context="",
-            )
+            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(query=query, error=error, extra_context=""),
+            "validation_error":    error,
         }
 
     # 2. Execute SQL query, reading at most max_rows rows
     try:
-        result, row_count, truncated = run_capped_query(db_name, query, db_cfg.max_rows)
+        result = run_capped_query(db_name, query, db_cfg.max_rows)
     except SQLAlchemyError as e:
-        # On failure return feedback to sql_coder
+        # On failure return feedback to sql_coder, and the bare error to the Chainlit UI
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
                 query=query,
                 error=f"Execution error: Error: {e}",
                 extra_context="",
-            )
+            ),
+            "validation_error":    str(e),
         }
 
     # On success, clear feedback and inject result into messages as a tool call + result,
@@ -407,13 +429,16 @@ def sql_validator(state: AgentState) -> dict:
     ai_msg    = AIMessage(content="", tool_calls=[{
         "name": tool_name, "args": {"query": query}, "id": "sql_validator_call", "type": "tool_call",
     }])
-    tool_msg  = ToolMessage(content=result, name=tool_name, tool_call_id="sql_validator_call")
+    tool_msg  = ToolMessage(content=result.content, name=tool_name, tool_call_id="sql_validator_call")
 
     return {
         "messages":            [ai_msg, tool_msg],
         "validation_feedback": "",  # clear feedback on success
-        "result_row_count":    row_count,
-        "result_truncated":    truncated,
+        "validation_error":    "",
+        "result_row_count":    len(result.rows),
+        "result_truncated":    result.truncated,
+        "result_columns":      result.columns,
+        "result_rows":         result.rows,
     }
 
 
