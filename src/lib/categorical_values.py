@@ -2,7 +2,7 @@
 
 """
 Categorical values — the distinct values of the `categorical_columns` declared in
-config/semantics/<db>.yaml, read from the database at index time (never stored in config).
+semantic_layer/<db>/tables.yaml, read from the database at index time (never stored in the semantic layer).
 Used by: schema_retrieval/schema_indexer.py (build_documents)
 """
 

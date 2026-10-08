@@ -44,7 +44,7 @@ from eval_lib import (
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from agent.graph import build_graph  # noqa: E402
-from config import db_registry # noqa: E402
+from resources import db_registry # noqa: E402
 
 
 # ── EvaluationRunner ──────────────────────────────────────────────────────────

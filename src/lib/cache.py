@@ -60,7 +60,7 @@ def cached_node(key_fn: Callable[[Dict], str],
         @wraps(fn)
         def wrapper(state: Dict, *args, **kwargs):
             # Import inside wrapper to avoid circular imports
-            from config import llm_cache
+            from resources import llm_cache
 
             # Bypass caching if cache is not initialized or disabled
             if llm_cache is None:

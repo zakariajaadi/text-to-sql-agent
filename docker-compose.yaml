@@ -19,8 +19,12 @@ services:
     volumes:
       - ./src:/app/src        # bind mount — live reload
       - ./data:/app/data      # chroma
-      - ./config:/app/config  # config.yaml, semantics, fk_relations, db_descriptions
+      - ./config:/app/config  # config.yaml
+      - ./semantic_layer:/app/semantic_layer  # tables, relationships
       - ./app.py:/app/app.py
+      - ./.chainlit:/app/.chainlit    # Chainlit config and translations
+      - ./public:/app/public          # custom CSS, elements, icons
+      - ./chainlit.md:/app/chainlit.md
     env_file:
       - .env
     environment:

@@ -10,7 +10,8 @@ import chainlit as cl
 import sqlparse
 from langchain_core.messages import AIMessage
 
-from config import cfg, schema_store
+from config import cfg
+from resources import schema_store
 from lib.column_pruning import get_column_names
 from lib.follow_ups import suggest_follow_ups
 from lib.messages import get_question

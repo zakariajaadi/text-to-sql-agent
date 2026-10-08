@@ -20,7 +20,7 @@ def load_schema(db_name: str) -> str:
     1. Try schema_store (enriched DDLs from Chroma)
     2. Fallback: introspect from SQLDatabase
     """
-    from config import schema_store, db_registry  # type: ignore[import-not-found]
+    from resources import schema_store, db_registry  # type: ignore[import-not-found]
 
     if db_name in schema_store and schema_store[db_name]:
         return "\n\n".join(schema_store[db_name].values())

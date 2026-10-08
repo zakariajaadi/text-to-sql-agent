@@ -35,10 +35,16 @@ COPY --from=dependencies /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy app code — src and config only, data is bind-mounted
+# Copy app code — src, config and semantic layer only, data is bind-mounted
 COPY src ./src
 COPY config ./config
+COPY semantic_layer ./semantic_layer
 COPY app.py .
+
+# Chainlit UI: config and translations, custom CSS / elements / icons, Readme page
+COPY .chainlit ./.chainlit
+COPY public ./public
+COPY chainlit.md .
 
 # Change ownership to app user
 RUN chown -R appuser:appuser /app

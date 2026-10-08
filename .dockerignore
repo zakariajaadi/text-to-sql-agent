@@ -1,0 +1,13 @@
+# Build context: only what the dockerfile copies is needed
+# (data/ is bind-mounted by docker-compose, the venv is rebuilt by uv)
+.venv
+data
+.git
+.env
+.claude
+.files
+.ruff_cache
+**/__pycache__
+src/.chainlit
+eval
+assets

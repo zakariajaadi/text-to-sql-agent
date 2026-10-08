@@ -10,7 +10,6 @@ llm_fast:
 databases:
   - name: "Chinook"
     dialect: "hive"
-    description: ${oc.select:db_descriptions.Chinook,""} # Optional
     max_rows: 100
     tagline: "A digital music store: artists, albums, tracks, customers and invoices."  # Optional
     starters:  # Optional: example questions of the welcome screen (icon: public/icons/<icon>.svg)
@@ -20,7 +19,6 @@ databases:
       - {icon: rank, question: "Who are the top 5 artists by number of albums?"}
   - name: "Northwind"
     dialect: "hive"
-    description: ${oc.select:db_descriptions.Northwind,""} # Optional
     max_rows: 100
     tagline: "A food trading company: products, suppliers, customers, orders and employees."
     starters:

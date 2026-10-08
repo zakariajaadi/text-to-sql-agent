@@ -9,7 +9,7 @@ from loguru import logger
 
 from agent.prompts import FOLLOW_UPS_PROMPT
 from agent.schemas import FollowUpQuestions
-from config import fast_model
+from resources import fast_model
 
 MAX_FOLLOW_UPS = 3
 SAMPLE_ROWS    = 25  # rows of the result shown to the LLM: enough to see what it already answers

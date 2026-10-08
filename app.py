@@ -49,7 +49,7 @@ async def chat_profiles():
     return [
         cl.ChatProfile(
             name=db.name,
-            markdown_description=db.tagline or db.description or db.name,
+            markdown_description=db.tagline or db.name,
             icon=_public_icon("database"),
             starters=[
                 cl.Starter(label=s["question"], message=s["question"], icon=_public_icon(s.get("icon")))

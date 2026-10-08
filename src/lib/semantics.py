@@ -1,21 +1,25 @@
 # src/lib/semantics.py
 
 """
-Semantics helpers — loading config/semantics/<db>.yaml and rendering table documents.
+Semantics helpers — loading semantic_layer/<db>/tables.yaml and rendering table documents.
 Used by: schema_retrieval/schema_indexer.py (build_documents), schema_retrieval/catalog_generators.py
 """
 
+from pathlib import Path
+
 import yaml
 
-from config import BASE_DIR
+from config import SEMANTIC_LAYER_DIR
 
-# Directory where semantics files are saved
-SEMANTICS_DIR = BASE_DIR / "config" / "semantics"
+
+def tables_path(db_name: str) -> Path:
+    """semantic_layer/<db>/tables.yaml: descriptions, categorical columns and read modes of the tables."""
+    return SEMANTIC_LAYER_DIR / db_name / "tables.yaml"
 
 
 def load_semantics(db_name: str) -> dict:
-    """Loads config/semantics/<db>.yaml, or an empty dict if missing."""
-    path = SEMANTICS_DIR / f"{db_name}.yaml"
+    """Loads semantic_layer/<db>/tables.yaml, or an empty dict if missing."""
+    path = tables_path(db_name)
     return (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
 
 
@@ -47,7 +51,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     values  = categorical_values or {}   # {column: [value, ...]}
     lines   = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
 
-    # Join conditions involving this table, from fk_relations.yaml
+    # Join conditions involving this table, from relationships.yaml
     joins = [
         f"{source} = {target}"
         for source, target in db_fk_relations
@@ -56,7 +60,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     if joins:
         lines.append(f"-- Joins: {', '.join(joins)}")
 
-    # How to read partitioned tables (manual, from config/semantics)
+    # How to read partitioned tables (manual, from tables.yaml)
     lines.extend(_render_read_mode(table_name, table_semantics))
     lines.append("")
 

@@ -25,7 +25,7 @@ from config import cfg
 def build_graph():
     builder = StateGraph(AgentState)
 
-    # ── Nodes ─────────────────────────────────────────────────────────────────
+    # Nodes 
     builder.add_node(condense_question)
     builder.add_node(resolve_database)
     builder.add_node(retrieve_schema)
@@ -36,7 +36,7 @@ def build_graph():
     builder.add_node(sql_validator)
     builder.add_node(format_answer)
 
-    # ── Edges ──────────────────────────────────────────────────────────────────
+    # Edges
     builder.add_edge(START,                "condense_question")
     builder.add_edge("condense_question",  "resolve_database")
     builder.add_edge("resolve_database",   "retrieve_schema")

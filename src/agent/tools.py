@@ -10,7 +10,7 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from sqlalchemy import text
 
-from config import db_registry, model
+from resources import db_registry, model
 
 # Factory  — constructs the 3 tools per database
 

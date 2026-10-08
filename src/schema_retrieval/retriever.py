@@ -1,6 +1,7 @@
 # src/schema_retrieval/retriever.py
 
-from config import cfg, embedding_model
+from config import cfg
+from resources import embedding_model
 from schema_retrieval.vector_store import VectorStoreManager
 
 

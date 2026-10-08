@@ -12,8 +12,15 @@ wheels/
 
 .env
 data/
-.chainlit/
+# Chainlit: keep the app config and the customized English translation
+.chainlit/*
+!.chainlit/config.toml
+!.chainlit/translations/
+.chainlit/translations/*
+!.chainlit/translations/en-US.json
+src/.chainlit/
 .files/
-.vscode/ 
+.vscode/
+.claude/
 
 eval/results.json

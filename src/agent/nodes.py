@@ -20,13 +20,7 @@ from agent.prompts import (
 from agent.schemas import ColumnSelection, RankedTablesAndScope
 from agent.state import AgentState
 from agent.tools import get_run_query_tool, run_capped_query
-from config import (
-    cfg,
-    fast_model,
-    fk_graphs,
-    model,
-    schema_store,
-)
+from config import cfg
 from lib import (
     cached_node,
     expand_fk,
@@ -38,6 +32,12 @@ from lib import (
     normalize_sql,
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
+from resources import (
+    fast_model,
+    fk_graphs,
+    model,
+    schema_store,
+)
 from schema_retrieval.retriever import get_schema_retriever
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
