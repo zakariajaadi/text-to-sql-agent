@@ -26,8 +26,8 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
 from config import SEMANTIC_LAYER_DIR, cfg
-from resources import fast_model, load_fk_relations, model
 from lib.semantics import load_semantics, render_table, tables_path
+from resources import fast_model, load_fk_relations, model
 from schema_retrieval.prompts import (
     FK_RELATIONS_PROMPT,
     TABLE_SEMANTICS_PROMPT,

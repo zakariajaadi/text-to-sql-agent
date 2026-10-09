@@ -19,6 +19,57 @@ body {
   background: url("/public/icons/agent.svg") center / contain no-repeat;
 }
 
+/* Welcome screen mascot (public/mascot.js): while the robot takes over, the avatar is a plain disc behind it;
+   once it has left, an empty dashed socket, so the gap above the description reads as "it lives here" */
+#welcome-screen img.rounded-full.mascot-home {
+  background: #E86441;
+  outline: 1.5px dashed transparent;
+  outline-offset: -1.5px;
+}
+#welcome-screen img.rounded-full.mascot-home.mascot-away {
+  background-color: transparent;
+  transition: background-color 400ms, outline-color 400ms;
+  outline-color: hsl(var(--primary) / 0.45);
+}
+
+/* The robot: a fixed overlay that never catches clicks, in the icon's style (white lines on orange).
+   Its pose is computed frame by frame in JS; the far arm and leg are a shade darker. */
+.mascot {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 64px;
+  z-index: 40;
+  pointer-events: none;
+  transition: opacity 250ms, filter 300ms;
+  will-change: transform;
+}
+.mascot.is-out {
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.25));
+}
+.mascot-svg {
+  display: block;
+  overflow: visible;
+}
+.mascot-svg .m-face { fill: #E86441; stroke: #fff; }
+.mascot-svg .m-antenna, .mascot-svg .m-ears, .mascot-svg .m-eyes { stroke: #fff; }
+.mascot-svg .m-leg, .mascot-svg .m-arm { stroke: #E86441; }
+.mascot-svg .m-back { stroke: #C24E31; }
+.mascot-svg .m-lids {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 70ms ease-in;
+}
+.mascot-svg .m-lids.is-closed {
+  transform: scaleY(0.15);
+}
+/* On a light background, the white antenna would vanish once out of the orange disc */
+html:not(.dark) .mascot.is-out .m-antenna {
+  stroke: #E86441;
+  transition: stroke 300ms;
+}
+
 /* Step titles: the "Used" prefix is emptied in .chainlit/translations/en-US.json,
    hide its empty <span> so it no longer shifts the title by the flex gap */
 [id^="step-"] > span:empty {

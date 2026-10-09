@@ -37,9 +37,9 @@ from langchain_core.documents import Document
 from loguru import logger
 
 from config import cfg
-from resources import embedding_model, load_fk_relations
 from lib.categorical_values import fetch_categorical_values
 from lib.semantics import load_semantics, render_table
+from resources import embedding_model, load_fk_relations
 from schema_retrieval import catalog_generators
 from schema_retrieval.vector_store import VectorStoreManager
 
