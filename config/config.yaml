@@ -11,21 +11,21 @@ databases:
   - name: "Chinook"
     dialect: "hive"
     max_rows: 100
-    tagline: "A digital music store: artists, albums, tracks, customers and invoices."  # Optional
+    tagline: "Un magasin de musique en ligne : artistes, albums, morceaux, clients et factures."  # Optional
     starters:  # Optional: example questions of the welcome screen (icon: public/icons/<icon>.svg)
-      - {icon: kpi,  question: "What is the total revenue of all invoices?"}
-      - {icon: line, question: "What was the total revenue per month in 2023?"}
-      - {icon: bar,  question: "How many tracks are there per genre?"}
-      - {icon: rank, question: "Who are the top 5 artists by number of albums?"}
+      - {icon: kpi,  question: "Quel est le chiffre d'affaires total ?"}
+      - {icon: line, question: "Chiffre d'affaires par mois en 2023 ?"}
+      - {icon: bar,  question: "Combien de morceaux par genre ?"}
+      - {icon: rank, question: "Top 5 des artistes par nombre d'albums ?"}
   - name: "Northwind"
     dialect: "hive"
     max_rows: 100
-    tagline: "A food trading company: products, suppliers, customers, orders and employees."
+    tagline: "Une entreprise de négoce alimentaire : produits, fournisseurs, clients, commandes et employés."
     starters:
-      - {icon: kpi,  question: "How many orders were placed in 2022?"}
-      - {icon: line, question: "What is the monthly revenue trend for 2022?"}
-      - {icon: bar,  question: "What is the total revenue per category?"}
-      - {icon: rank, question: "Who are the top 5 employees by total revenue generated?"}
+      - {icon: kpi,  question: "Combien de commandes en 2022 ?"}
+      - {icon: line, question: "Chiffre d'affaires mensuel en 2022 ?"}
+      - {icon: bar,  question: "Chiffre d'affaires par catégorie ?"}
+      - {icon: rank, question: "Top 5 des employés par chiffre d'affaires ?"}
 
 
 retrieval:

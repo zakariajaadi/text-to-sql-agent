@@ -155,16 +155,13 @@ async def on_message(message: cl.Message):
             agent_step.name = get_agent_step_summary(time.perf_counter() - turn_start)
             await agent_step.update()
 
-    except ValueError as e:
-        await cl.Message(content=f"⚠️ Unauthorized Query: {e}").send()
-
     except GraphRecursionError:
         await rename_retry_steps("failed")
-        await cl.Message(content="⚠️ Reach limit of attempts. The query is too complex or failed to converge.").send()
+        await cl.Message(content="⚠️ Nombre maximal de tentatives atteint. La requête est trop complexe ou n'a pas abouti.").send()
 
     except Exception as e:
         logger.error(f"Unexpected error: {repr(e)}")
-        await cl.Message(content="Sorry, I encountered a technical error.").send()
+        await cl.Message(content="Désolé, une erreur technique est survenue.").send()
     
     # Attach the result card and feedback actions to the response message itself
     response_msg = cl.user_session.get("answer_msg")

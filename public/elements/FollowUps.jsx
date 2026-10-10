@@ -54,7 +54,7 @@ export default function FollowUps() {
   return (
     <div style={{ marginTop: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, marginBottom: 8 }}>
-        <Sparkles size={13} color={C.primary} /> Ask next
+        <Sparkles size={13} color={C.primary} /> Questions suggérées
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {props.questions.map((q, i) => (

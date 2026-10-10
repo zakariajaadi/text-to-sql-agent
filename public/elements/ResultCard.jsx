@@ -19,15 +19,14 @@ const C = {
   stripe:  "hsl(var(--accent) / 0.45)",
 }
 
+// Separator of the card header items: its own element, so the flex gap spaces it evenly
+const Dot = () => <span style={{ fontSize: 13, color: C.muted }}>·</span>
+
 const nf       = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
 const isNum    = (v) => typeof v === "number" && Number.isFinite(v)
 // Dates come as ISO strings: drop a midnight time ("2021-01-01T00:00:00" → "2021-01-01")
 const fmt      = (v) =>
   v === null || v === undefined ? "—" : isNum(v) ? nf.format(v) : String(v).replace(/[T ]00:00:00(\.0+)?$/, "")
-const humanize = (s) => {
-  const t = String(s).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").trim()
-  return t.charAt(0).toUpperCase() + t.slice(1)
-}
 const pad2     = (v) => (isNum(v) && v < 100 ? String(v).padStart(2, "0") : String(v))
 const labelOf  = (row, idx, sep) =>
   idx.map((i) => row[i]).filter((v) => v !== null && v !== undefined).map(sep === "-" ? pad2 : fmt).join(sep)
@@ -57,7 +56,7 @@ function Kpis({ kpis }) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, padding: 16 }}>
       {kpis.map((k, i) => (
         <div key={i} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", background: C.stripe }}>
-          <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: ".05em" }}>{humanize(k.label)}</div>
+          <div style={{ fontSize: 12, color: C.muted, textTransform: "uppercase", letterSpacing: ".05em" }}>{k.label}</div>
           <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1.15, marginTop: 6, fontVariantNumeric: "tabular-nums", color: C.fg }}>
             <CountUp value={k.value} />
           </div>
@@ -109,7 +108,7 @@ function BarChart({ rows, x, y }) {
       ))}
       {rows.length > MAX_BARS && (
         <div style={{ fontSize: 12, color: C.muted, textAlign: "center", marginTop: 8 }}>
-          Top {MAX_BARS} of {rows.length} rows — the Table tab shows them all
+          {MAX_BARS} premières sur {rows.length} lignes. L'onglet Table les affiche toutes.
         </div>
       )}
     </div>
@@ -235,13 +234,13 @@ function Chart({ chart, columns, rows }) {
                 color: i === series ? C.primary : C.muted, background: "transparent",
               }}
             >
-              {humanize(columns[i])}
+              {columns[i]}
             </button>
           ))}
         </div>
       )}
       {chart.y.length === 1 && (
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{humanize(columns[series])}</div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 8 }}>{columns[series]}</div>
       )}
       <Plot key={series} rows={rows} x={chart.x} y={series} />
     </div>
@@ -313,7 +312,7 @@ function DataTable({ columns, rows, truncated }) {
       </div>
       {truncated && (
         <div style={{ fontSize: 12, color: C.muted, padding: "8px 12px", borderTop: `1px solid ${C.border}` }}>
-          Only the first {rows.length} rows were read (safety cap) — the query returned more.
+          Seules les {rows.length} premières lignes ont été lues. La requête en a renvoyé davantage.
         </div>
       )}
     </div>
@@ -364,24 +363,32 @@ export default function ResultCard() {
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
         <Database size={15} color={C.muted} />
         <span style={{ fontWeight: 600, fontSize: 14, color: C.fg }}>{dbName}</span>
+        <Dot />
         <span style={{ fontSize: 13, color: C.muted }}>
-          · {nf.format(rowCount)}{truncated ? "+" : ""} {rowCount === 1 ? "row" : "rows"} · {columns.length} {columns.length === 1 ? "column" : "columns"}
+          {nf.format(rowCount)}{truncated ? "+" : ""} {rowCount === 1 ? "ligne" : "lignes"}
+        </span>
+        <Dot />
+        <span style={{ fontSize: 13, color: C.muted }}>
+          {columns.length} {columns.length === 1 ? "colonne" : "colonnes"}
         </span>
         {tables && tables.length > 0 && (
-          <span title="Tables read by the query" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, color: C.muted, flexWrap: "wrap" }}>
-            · from
-            {tables.map((t) => (
-              <code key={t} style={{ fontSize: 12, padding: "1px 6px", borderRadius: 6, border: `1px solid ${C.border}`, color: C.fg }}>{t}</code>
-            ))}
-          </span>
+          <>
+            <Dot />
+            <span title="Tables lues par la requête" style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <code style={{ fontSize: 12, color: C.muted, letterSpacing: ".04em" }}>FROM</code>
+              {tables.map((t) => (
+                <code key={t} style={{ fontSize: 12, padding: "1px 6px", borderRadius: 6, border: "1px solid hsl(var(--border) / 0.6)", color: C.muted }}>{t}</code>
+              ))}
+            </span>
+          </>
         )}
         {retries > 0 && (
           <Badge
             variant="outline"
-            title="The first query failed validation; the agent read the error and rewrote it."
+            title="La première requête a échoué. L'agent a lu l'erreur et l'a corrigée."
             style={{ display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 500 }}
           >
-            <Wrench size={12} /> Self-corrected{retries > 1 ? ` ×${retries}` : ""}
+            <Wrench size={12} /> Auto-corrigée{retries > 1 ? ` ×${retries}` : ""}
           </Badge>
         )}
         <div style={{ flex: 1 }} />

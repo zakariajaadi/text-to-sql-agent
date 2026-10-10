@@ -1,32 +1,32 @@
 # SQL Agent
 
-Ask a question about your data in plain English. SQL Agent finds the right tables, writes the SQL query, runs it, and answers with the key figures, a chart and the full table.
+Posez une question sur vos données en langage courant. SQL Agent trouve les bonnes tables, écrit la requête SQL, l'exécute et répond avec les chiffres clés, un graphique et le tableau complet.
 
-## Databases
+## Bases de données
 
-Pick a database in the selector at the top left. Switching starts a new conversation.
+Choisissez une base dans le sélecteur en haut à gauche. Changer de base démarre une nouvelle conversation.
 
-| Database | What's inside |
+| Base | Contenu |
 |---|---|
-| **Chinook** | A digital music store: artists, albums, tracks, genres, playlists, customers, invoices |
-| **Northwind** | A food trading company: products, categories, suppliers, customers, orders, employees, shippers |
+| **Chinook** | Un magasin de musique en ligne : artistes, albums, morceaux, genres, playlists, clients, factures |
+| **Northwind** | Une entreprise de négoce alimentaire : produits, catégories, fournisseurs, clients, commandes, employés, transporteurs |
 
-## How it answers
+## Comment il répond
 
-1. **Understands the question.** A follow-up such as *"and in 2022?"* is rewritten into a complete question.
-2. **Selects the data.** The relevant tables and columns are retrieved from the schema.
-3. **Writes the query.** It plans the query, writes the SQL and checks it. Only read-only `SELECT` queries are allowed. If the database rejects the query, the agent reads the error and fixes it on its own.
-4. **Shows the result.** You get a short answer, plus a result card with:
-   - **Chart**: a line for trends over time, bars for rankings and breakdowns, big numbers for single values
-   - **Table**: every row, sortable by clicking a column header
-   - **SQL**: the exact query that was run
-   - **CSV**: a download of the results
+1. **Il comprend la question.** Une relance comme *« et en 2022 ? »* est réécrite en question complète.
+2. **Il sélectionne les données.** Les tables et colonnes utiles sont retrouvées dans le schéma.
+3. **Il écrit la requête.** Il planifie la requête, écrit le SQL et le vérifie. Seules les requêtes `SELECT` en lecture seule sont autorisées. Si la base rejette la requête, l'agent lit l'erreur et la corrige tout seul.
+4. **Il affiche le résultat.** Vous obtenez une réponse courte, et une fiche de résultat avec :
+   - **Graphique** : une courbe pour les évolutions dans le temps, des barres pour les classements et les répartitions, un grand chiffre pour une valeur unique
+   - **Tableau** : toutes les lignes, triables en cliquant sur l'en-tête d'une colonne
+   - **SQL** : la requête exacte qui a été exécutée
+   - **CSV** : un téléchargement des résultats
 
-Expand **SQL Agent** above an answer to follow each step.
+Dépliez **SQL Agent** au-dessus d'une réponse pour suivre chaque étape.
 
-## Tips
+## Conseils
 
-- Say what you want to measure and how to group it: *"revenue per country"*, *"orders per month in 2022"*.
-- Ask follow-up questions: the agent remembers the conversation.
-- If the agent had to interpret a term, it says so at the end of its answer.
-- At most 100 rows are read per query. The answer tells you when the results are partial.
+- Dites ce que vous voulez mesurer et comment le regrouper : *« chiffre d'affaires par pays »*, *« commandes par mois en 2022 »*.
+- Posez des questions de relance : l'agent se souvient de la conversation.
+- Si l'agent a dû interpréter un terme, il le signale à la fin de sa réponse.
+- Au plus 100 lignes sont lues par requête. La réponse vous indique quand les résultats sont partiels.

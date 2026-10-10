@@ -156,6 +156,7 @@ METRICS_SECTION = """## BUSINESS METRICS
 The question uses these metrics. Compute each one with its expression exactly as written
 (table aliases may replace table names). Never redefine a metric, never write an assumption
 about a term it defines. Use its default date for periods and trends, unless the question names another date.
+A metric name is not a column alias: name the result column like any other aggregate.
 {definitions}
 
 """
@@ -204,8 +205,13 @@ You ONLY write SQL — you never execute it.
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
-11. Always give aggregates and computed expressions a descriptive snake_case alias
-    (e.g. COUNT(*) AS flight_count, SUM(b.seat_price * b.passenger_count) AS total_revenue).
+11. Aliases are the column headers the user reads: write them in the language of the
+    question, in snake_case, without accents. Give one to every selected column and
+    expression: a business name, never the raw column name.
+    - Question in English: e.firstname AS first_name, COUNT(*) AS flight_count,
+      SUM(b.seat_price * b.passenger_count) AS total_revenue
+    - Question in French: e.firstname AS prenom, COUNT(*) AS nb_vols,
+      SUM(b.seat_price * b.passenger_count) AS chiffre_affaires_total
 
 ## {dialect} RULES
 {dialect_rules}
