@@ -1,10 +1,10 @@
-# eval/eval_lib/metrics.py
+# offline/eval/eval_lib/metrics.py
 # ===================
 # Pure functions — Metrics logic.
 
 import re
 
-from judge_schemas import DIMENSIONS
+from .judge_schemas import DIMENSIONS
 
 
 def compute_table_metrics(expected: list[str], selected: list[str]) -> dict:

@@ -1,6 +1,7 @@
 """
 Shared runtime resources, built once at import from the settings of config.py:
-LLMs, embedding model, semantic cache, database connections, FK graphs and schema store.
+LLMs, embedding model, vector store, semantic cache, database connections, FK graphs, schema store
+(and its retriever) and metrics.
 Importing this module needs the API keys, the databases and the Chroma index.
 """
 
@@ -9,11 +10,12 @@ from langchain.embeddings import init_embeddings
 from langchain_community.utilities import SQLDatabase
 from langchain_redis import RedisSemanticCache
 from loguru import logger
-from omegaconf import OmegaConf
 from sqlalchemy import inspect as sa_inspect
 
-from config import SEMANTIC_LAYER_DIR, DatabaseConfig, LLMConfig, cfg
-from schema_retrieval.vector_store import VectorStoreManager
+from config import DatabaseConfig, LLMConfig, cfg
+from lib.metrics import Metric, load_metrics
+from lib.semantics import load_fk_relations
+from lib.vector_store import VectorStoreManager
 
 # =============================================================================
 # Builders
@@ -39,8 +41,7 @@ def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
 def build_schema_store() -> dict[str, dict[str, str]]:
     """Load all enriched DDLs from Chroma into memory at startup."""
     try:
-        vsm   = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
-        store = vsm.get_store()
+        store = vector_store.get_store()
 
         result = {}
         for db_cfg in cfg.databases:
@@ -58,17 +59,8 @@ def build_schema_store() -> dict[str, dict[str, str]]:
         return {db_cfg.name: {} for db_cfg in cfg.databases}
 
 # =============================================================================
-# Load foreign key relations as a knowlege graph for a database
+# Foreign key relations as a knowledge graph for a database
 # =============================================================================
-
-def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
-    """Return (from_column, to_column) pairs, as table.column, declared in semantic_layer/<db>/relationships.yaml."""
-    path = SEMANTIC_LAYER_DIR / db_name / "relationships.yaml"
-    if not path.exists():
-        return []
-    relations = OmegaConf.load(path).get("relations") or []
-    return [(r["from"], r["to"]) for r in relations]
-
 
 def build_fk_graph(db: SQLDatabase, db_name: str) -> dict[str, list[str]]:
     """
@@ -119,6 +111,9 @@ embedding_model = init_embeddings(cfg.retrieval.embedding_model)
 logger.debug(f"Initialized LLM: {cfg.llm.model} | Fast LLM: {cfg.llm_fast.model}.")
 logger.debug(f"Initialized Embedding Model: {cfg.retrieval.embedding_model}")
 
+# Shared Chroma store of the indexed table documents — one store for all databases
+vector_store = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
+
 # Semantic cache — caches LLM responses for semantically similar questions
 llm_cache: RedisSemanticCache | None = (
     RedisSemanticCache(
@@ -153,3 +148,36 @@ fk_graphs: dict[str, dict[str, list[str]]] = {
 
 # Enriched DDLs loaded once at startup — avoids disk I/O at query time
 schema_store = build_schema_store()
+
+
+def get_schema_retriever(db_name: str, k: int | None = None):
+    """
+    Return a retriever scoped to a specific database via metadata filtering.
+
+    All schemas from all databases are stored in a single Chroma store.
+    The db_name filter ensures only tables belonging to the target database
+    are returned, preventing cross-database schema leakage.
+    """
+    return vector_store.as_retriever(
+        k=k or cfg.retrieval.top_k,
+        filter={"db_name": db_name},
+    )
+
+
+# Business metrics of each database, validated against the indexed schemas — an invalid one stops the app.
+# Built on first access (`from resources import metrics_store`, through the module __getattr__ below):
+# the indexer and the generators import this module too, and must keep working while metrics.yaml
+# references a table that is not indexed yet — `make index` is what fixes it.
+_metrics_store: dict[str, dict[str, Metric]] | None = None
+
+
+def __getattr__(name: str):
+    global _metrics_store
+    if name != "metrics_store":
+        raise AttributeError(f"module 'resources' has no attribute {name!r}")
+    if _metrics_store is None:
+        _metrics_store = {
+            db_cfg.name: load_metrics(db_cfg.name, db_cfg.dialect, schema_store[db_cfg.name])
+            for db_cfg in cfg.databases
+        }
+    return _metrics_store

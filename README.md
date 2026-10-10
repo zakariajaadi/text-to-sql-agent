@@ -1,3 +1,3 @@
 ## Graph Architecture
 
-![Graph](./assets/graph.png)
+![Graph](./docs/graph.png)

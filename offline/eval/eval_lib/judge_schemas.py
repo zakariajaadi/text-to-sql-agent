@@ -1,5 +1,5 @@
-# eval/judge_schemas.py
-# ===========================
+# offline/eval/eval_lib/judge_schemas.py
+# ====================================
 # Pydantic schemas and constants for the LLM-as-judge evaluation.
 
 from pydantic import BaseModel, Field

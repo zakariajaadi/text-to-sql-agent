@@ -1,5 +1,5 @@
 // Result card of a SQL answer: KPI tiles, chart, sortable table, SQL, CSV export.
-// Props are built by src/lib/result_card.py (build_result_card_props).
+// Props are built by src/ui/result_card.py (build_result_card_props).
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"

@@ -1,33 +1,31 @@
-# eval/run.py
+# offline/eval/run.py
 # ===========
 # EvaluationRunner — core orchestration for Text-to-SQL benchmarking.
 #
-# Usage (CLI):
-#   python eval/run.py                                  # run all
-#   python eval/run.py --difficulty hard                # filter by difficulty
-#   python eval/run.py --limit 5                        # run first N only
+# Usage (CLI, from the project root, PYTHONPATH=src — see `make eval`):
+#   python -m offline.eval.run --db Northwind                   # datasets/northwind.yaml → results/northwind.json
+#   python -m offline.eval.run --difficulty hard                # filter by difficulty
+#   python -m offline.eval.run --limit 5                        # run first N only
 #
 # Usage (importable):
-#   from run import EvaluationRunner
-#   from lib import results_to_df, print_summary
-#   runner = EvaluationRunner(db="chinook")
+#   from offline.eval.run import EvaluationRunner
+#   from offline.eval.eval_lib import results_to_df, print_summary
+#   runner = EvaluationRunner(db="Chinook")
 #   runner.run(difficulty="hard")
 #   df = results_to_df(runner.results)
 #   print_summary(runner.summary)
 
 import argparse
 import os
-import sys
 import time
 from pathlib import Path
 
-from judge_prompts import JUDGE_SYSTEM_PROMPT, JUDGE_USER_PROMPT
-from judge_schemas import JudgeEvaluation
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from eval_lib import (
+from agent.graph import build_graph
+from offline.eval.eval_lib import (
     compute_summary,
     compute_table_metrics,
     execution_accuracy,
@@ -39,12 +37,21 @@ from eval_lib import (
     save_results,
     uniform_score,
 )
+from offline.eval.eval_lib.judge_prompts import JUDGE_SYSTEM_PROMPT, JUDGE_USER_PROMPT
+from offline.eval.eval_lib.judge_schemas import JudgeEvaluation
+from resources import db_registry
 
-# Ensure src/ is importable
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# Inputs and outputs of the eval, one file per database (Chinook → datasets/chinook.yaml, results/chinook.json)
+EVAL_DIR = Path(__file__).resolve().parent
 
-from agent.graph import build_graph  # noqa: E402
-from resources import db_registry # noqa: E402
+
+def dataset_path(db: str) -> Path:
+    return EVAL_DIR / "datasets" / f"{db.lower()}.yaml"
+
+
+def results_path(db: str) -> Path:
+    """Tracked by git: after a run, `git diff` shows the change against the last committed results."""
+    return EVAL_DIR / "results" / f"{db.lower()}.json"
 
 
 # ── EvaluationRunner ──────────────────────────────────────────────────────────
@@ -62,7 +69,7 @@ class EvaluationRunner:
       5. save_results()   → persist as JSON             (from lib)
     """
 
-    def __init__(self, db: str = "chinook"):
+    def __init__(self, db: str = "Chinook"):
         # 1. Build the agent graph (same graph used in production)
         self.db = db
         self.graph = build_graph()
@@ -88,7 +95,7 @@ class EvaluationRunner:
 
     # ── Core ──────────────────────────────────────────────────────────────────
 
-    def run(self, benchmark: str = "eval/datasets/chinook.yaml",
+    def run(self, benchmark: str | Path | None = None,
             difficulty: str = None, limit: int = None) -> list[dict]:
         """
         Main entry point — runs the full evaluation pipeline.
@@ -97,7 +104,7 @@ class EvaluationRunner:
         3. Compute aggregate summary
         """
         # 1. Load questions
-        questions = load_questions(benchmark, difficulty)
+        questions = load_questions(benchmark or dataset_path(self.db), difficulty)
         if limit:
             questions = questions[:limit]
 
@@ -253,11 +260,11 @@ class EvaluationRunner:
 
 def main():
     parser = argparse.ArgumentParser(description="Run Text-to-SQL evaluation")
-    parser.add_argument("--benchmark", default="eval/datasets/chinook.yaml")
     parser.add_argument("--db", default="Chinook")
+    parser.add_argument("--benchmark", help="Questions file (default: datasets/<db>.yaml)")
     parser.add_argument("--difficulty", choices=["simple", "medium", "hard"])
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--output", default="eval/results.json")
+    parser.add_argument("--output", help="Results file (default: results/<db>.json)")
     args = parser.parse_args()
 
     # 1. Run evaluation
@@ -270,7 +277,7 @@ def main():
     print_summary(runner.summary)
 
     # 3. Persist
-    save_results(runner.results, runner.summary, args.output)
+    save_results(runner.results, runner.summary, args.output or results_path(args.db))
 
 
 if __name__ == "__main__":

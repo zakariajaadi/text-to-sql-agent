@@ -11,12 +11,12 @@ import sqlparse
 from langchain_core.messages import AIMessage
 
 from config import cfg
-from resources import schema_store
 from lib.column_pruning import get_column_names
-from lib.follow_ups import suggest_follow_ups
 from lib.messages import get_question
-from lib.result_card import build_result_card_props
-from lib.sql_normalize import get_query_tables
+from lib.sql_tools import get_query_tables
+from resources import schema_store
+from ui.follow_ups import suggest_follow_ups
+from ui.result_card import build_result_card_props
 
 FOLLOW_UPS_TIMEOUT_S = 10  # past this, the answer simply comes without suggestions
 
@@ -111,10 +111,14 @@ async def process_node_output(event: dict, seen_msg_ids: set, duration: float | 
     # ── planner: show plan during debugging ──
     if node_name == "planner" and "query_plan" in output:
         # Tables the plan uses beyond the candidates, loaded by planner
-        candidates = event["data"].get("input", {}).get("selected_schemas", {})
+        state      = event["data"].get("input", {})
+        candidates = state.get("selected_schemas", {})
         loaded     = [t for t in output.get("selected_schemas", {}) if t not in candidates]
+        metrics    = state.get("selected_metrics") or []   # business metrics picked by rerank_tables
         async with cl.Step(name=f"📐 Query plan{took}", type="run") as s:
             s.output = output["query_plan"]
+            if metrics:
+                s.output += f"\n\n**Metrics:** {', '.join(metrics)}"
             if loaded:
                 s.output += f"\n\n**Loaded for the plan:** {', '.join(loaded)}"
         return

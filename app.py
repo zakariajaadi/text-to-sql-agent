@@ -13,7 +13,7 @@ from langgraph.errors import GraphRecursionError
 from loguru import logger
 
 from agent.graph import build_graph
-from lib import (
+from ui.streaming import (
     attach_result_card,
     get_agent_step_summary,
     get_node_step_title,

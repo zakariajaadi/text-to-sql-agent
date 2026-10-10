@@ -1,7 +1,8 @@
 """
-Deterministic fixes applied to every generated query, for Hive and Impala,
-and extraction of the tables a query reads.
-Used by: agent/nodes.py (sql_coder), lib/chainlit_ui.py (result card)
+SQL helpers built on sqlglot: deterministic fixes applied to every generated query (Hive, Impala),
+tables a query reads, and whether a query computes a given expression.
+Used by: agent/nodes.py (sql_coder), ui/streaming.py (result card), lib/metrics.py,
+offline/semantic_gen/metrics.py
 """
 
 import sqlglot
@@ -45,6 +46,11 @@ def normalize_sql(query: str, dialect: str) -> str:
     return "\n".join(comments + [tree.sql(dialect=target, identify=True, pretty=True)])
 
 
+def sqlglot_dialect(dialect: str):
+    """sqlglot dialect of a configured database dialect (Impala has its own class, see above)."""
+    return _SQLGLOT_DIALECTS.get(dialect, dialect)
+
+
 def get_query_tables(query: str, dialect: str) -> list[str]:
     """
     Names of the tables the query reads, without CTE names
@@ -52,10 +58,33 @@ def get_query_tables(query: str, dialect: str) -> list[str]:
     Empty when sqlglot can't parse the query.
     """
     try:
-        tree = sqlglot.parse_one(query, read=_SQLGLOT_DIALECTS.get(dialect, dialect))
+        tree = sqlglot.parse_one(query, read=sqlglot_dialect(dialect))
     except ParseError:
         return []
 
     cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     names     = (table.name for table in tree.find_all(exp.Table))
     return list(dict.fromkeys(name for name in names if name and name.lower() not in cte_names))
+
+
+def contains_expression(query: str, expression: str, dialect: str) -> bool:
+    """
+    True when the query computes the expression, whatever the table aliases and the quoting
+    (e.g. SUM(od.unitprice * od.quantity) contains SUM(order_details.unitprice * order_details.quantity)).
+    False when either side can't be parsed.
+    """
+    read = sqlglot_dialect(dialect)
+    try:
+        tree   = sqlglot.parse_one(query, read=read)
+        target = sqlglot.parse_one(expression, read=read)
+    except ParseError:
+        return False
+
+    def unqualified(node: exp.Expression) -> str:
+        node = node.copy()
+        for column in node.find_all(exp.Column):
+            column.set("table", None)
+        return node.sql(dialect=read, identify=True)
+
+    wanted = unqualified(target)
+    return any(unqualified(node) == wanted for node in tree.find_all(type(target)))

@@ -1,4 +1,4 @@
-# benchmarks/lib/__init__.py
+# offline/eval/eval_lib/__init__.py
 
 from .loaders import load_questions, load_schema
 from .metrics import compute_table_metrics, extract_tables, uniform_score

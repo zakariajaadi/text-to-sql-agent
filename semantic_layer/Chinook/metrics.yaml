@@ -1,0 +1,34 @@
+# Business metrics, generated (make metrics) and reviewed manually (lib/metrics.py).
+# The generator only ADDS metrics, it never modifies or removes existing ones.
+#   description    : what the metric measures, read by the LLM to pick it
+#   synonyms       : other words for it in the questions, any language
+#   expr           : aggregate SQL expression, every column written table.column
+#   time_dimension : default date for periods and trends (optional)
+# To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
+# Checked at startup: an unknown table or column stops the app.
+
+revenue:
+  description: Amount invoiced to customers, computed from the invoice lines so it can be broken down by track, album, artist or genre.
+  synonyms: [sales, turnover, income, amount invoiced, chiffre d'affaires, CA, ventes, recettes]
+  expr: SUM(invoiceline.unitprice * invoiceline.quantity)
+  time_dimension: invoice.invoicedate
+
+invoice_count:
+  description: Number of distinct invoices (purchases).
+  synonyms: [number of invoices, purchases, number of purchases, nombre de factures, achats]
+  expr: COUNT(DISTINCT invoice.invoiceid)
+  time_dimension: invoice.invoicedate
+
+average_invoice_value:
+  description: Average amount of an invoice (per invoice, not per invoice line).
+  synonyms: [average basket, average purchase, average invoice, panier moyen, facture moyenne]
+  expr: SUM(invoiceline.unitprice * invoiceline.quantity) / COUNT(DISTINCT invoiceline.invoiceid)
+  time_dimension: invoice.invoicedate
+
+tracks_sold:
+  description: Number of track units sold.
+  synonyms: [units sold, tracks purchased, quantity sold, titres vendus, ventes en volume]
+  expr: SUM(invoiceline.quantity)
+  time_dimension: invoice.invoicedate
+
+ignore: []

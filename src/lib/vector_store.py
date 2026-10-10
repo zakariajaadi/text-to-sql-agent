@@ -1,4 +1,9 @@
-# src/schema_retrieval/vector_store.py
+# src/lib/vector_store.py
+
+"""
+Persistent Chroma vector store holding the indexed table documents.
+Used by: resources.py (shared instance used by the schema store, the schema retriever and offline/indexer)
+"""
 
 from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings

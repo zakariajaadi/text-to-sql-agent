@@ -9,5 +9,5 @@ data
 .ruff_cache
 **/__pycache__
 src/.chainlit
-eval
-assets
+offline
+docs

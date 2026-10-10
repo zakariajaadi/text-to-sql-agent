@@ -1,6 +1,6 @@
 """
 Result card — props of the ResultCard custom element (public/elements/ResultCard.jsx)
-Used by: lib/chainlit_ui.py (attached to the final answer message)
+Used by: ui/streaming.py (attached to the final answer message)
 
 The visualization is picked by deterministic rules on the result shape, never by an LLM:
   - 1 row with measures          → KPI tiles

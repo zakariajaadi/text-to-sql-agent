@@ -11,6 +11,7 @@ from agent.prompts import (
     CONDENSE_QUESTION_PROMPT,
     DIALECT_RULES,
     FORMAT_ANSWER_PROMPT,
+    METRICS_SECTION,
     PLANNER_PROMPT,
     PRUNE_COLUMNS_PROMPT,
     RERANK_TABLES_PROMPT,
@@ -32,17 +33,33 @@ from lib import (
     normalize_sql,
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
+from lib.metrics import (
+    Metric,
+    render_metric_catalog,
+    render_metric_definitions,
+)
+from lib.sql_tools import contains_expression
 from resources import (
     fast_model,
     fk_graphs,
+    get_schema_retriever,
+    metrics_store,
     model,
     schema_store,
 )
-from schema_retrieval.retriever import get_schema_retriever
+
+
+def get_selected_metrics(state: AgentState) -> list[Metric]:
+    """Metrics rerank_tables picked for this question."""
+    db_metrics = metrics_store[state["selected_db"]]
+    return [db_metrics[name] for name in state.get("selected_metrics") or [] if name in db_metrics]
+
+
+def render_metrics_section(metrics: list[Metric]) -> str:
+    """BUSINESS METRICS section of the planner and sql_coder prompts, empty when no metric is selected."""
+    return METRICS_SECTION.format(definitions=render_metric_definitions(metrics)) if metrics else ""
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
-
-
 
 def condense_question(state: AgentState) -> dict:
     """
@@ -83,7 +100,7 @@ def resolve_database(state: AgentState) -> dict:
 
     The database is chosen by the caller, once per conversation:
         - Chainlit: the chat profile picked by the user (app.py)
-        - eval:     the benchmark database (eval/run.py)
+        - eval:     the benchmark database (offline/eval/run.py)
 
     Without a caller choice, the only configured database is used.
     With several databases, it fails loudly rather than guess.
@@ -133,11 +150,12 @@ def retrieve_schema(state: AgentState) -> dict:
 
 def rerank_tables(state: AgentState) -> dict:
     """
-    LLM-driven node — narrows candidates to only the tables needed
-    and checks if the question is in scope.
+    LLM-driven node — narrows candidates to only the tables needed,
+    picks the business metrics the question asks for, and checks if the question is in scope.
 
     Three-pass table resolution after LLM selection:
-        Pass 1 — load LLM-selected tables missing from vector retrieval (via DDL semantic reasoning)
+        Pass 1 — load LLM-selected tables and the tables of the selected metrics
+                 missing from vector retrieval
         Pass 2 — FK expansion to recover bridge/fact tables
         Pass 3 — load FK-expanded tables missing from candidates (schema store)
 
@@ -150,8 +168,9 @@ def rerank_tables(state: AgentState) -> dict:
     candidates = state["candidate_schemas"].copy()
     db_name    = state["selected_db"]
     db_cfg     = cfg.get_db(db_name)
+    db_metrics = metrics_store[db_name]
 
-    # ── 1. LLM reranking: table selection + scope check ───────────────────────
+    # ── 1. LLM reranking: table and metric selection + scope check ────────────
     schemas_text = "\n\n".join(
         f"### {name}\n{ddl}" for name, ddl in candidates.items()
     )
@@ -160,19 +179,25 @@ def rerank_tables(state: AgentState) -> dict:
     response = structured_llm.invoke([
         SystemMessage(content=RERANK_TABLES_PROMPT.format(
             dialect=db_cfg.dialect,
+            metrics=render_metric_catalog(db_metrics),
             schemas=schemas_text,
         )),
         HumanMessage(content=question),
     ])
 
-    logger.debug(f"rerank_tables: {response.tables} | in_scope={response.is_in_scope} — {response.reason}")
+    # Metric names are exact keys of metrics.yaml: anything else is ignored
+    selected_metrics = [m for m in dict.fromkeys(response.metrics) if m in db_metrics]
+    metric_tables    = [t for m in selected_metrics for t in db_metrics[m].tables]
 
-    # ── 2. Load LLM-selected tables missing from candidates ───────────────────
+    logger.debug(f"rerank_tables: {response.tables} | metrics={selected_metrics} | "
+                 f"in_scope={response.is_in_scope} — {response.reason}")
+
+    # ── 2. Load LLM-selected and metric tables missing from candidates ────────
     # LLM may select tables known via schema descriptions but not returned by Chroma
-    for table in list(response.tables):
+    for table in [*response.tables, *metric_tables]:
         if table not in candidates and table in schema_store[db_name]:
             candidates[table] = schema_store[db_name][table]
-            logger.debug(f"[rerank_tables] Loaded LLM-selected table from store: {table}")
+            logger.debug(f"[rerank_tables] Loaded selected table from store: {table}")
 
     # Override scope if all LLM-selected tables are now available
     # (an empty selection means out of scope — all() is True on an empty list)
@@ -180,12 +205,14 @@ def rerank_tables(state: AgentState) -> dict:
         response.is_in_scope = True
         logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
 
-    selected_names = [t for t in response.tables if t in candidates]
+    # Metric tables come right after the LLM's choice, before FK expansion bridges them
+    selected_names = [t for t in dict.fromkeys([*response.tables, *metric_tables]) if t in candidates]
 
     if not selected_names:
         logger.warning("LLM returned no valid tables — fallback to all candidates.")
         return {
             "selected_schemas":    candidates,
+            "selected_metrics":    selected_metrics,
             "is_in_scope":         response.is_in_scope,
             "llm_selected_tables": list(response.tables),
         }
@@ -211,6 +238,7 @@ def rerank_tables(state: AgentState) -> dict:
 
     return {
         "selected_schemas":    selected_schemas,
+        "selected_metrics":    selected_metrics,
         "is_in_scope":         response.is_in_scope,
         "llm_selected_tables": list(response.tables),
     }
@@ -231,6 +259,7 @@ def prune_columns(state: AgentState) -> dict:
 
     Recall guarantees — pruning must never remove a column the query needs:
         - structural columns (join keys, read mode) are always kept
+        - columns of the selected metrics (expression and default date) are always kept
         - column names invented by the LLM are ignored
         - a table the LLM skipped, or a failed LLM call, keeps its full DDL
     """
@@ -267,8 +296,9 @@ def prune_columns(state: AgentState) -> dict:
             # Pruning is an optimization: its failure must never block the answer
             logger.warning(f"prune_columns: LLM call failed, tables kept whole — {e}")
 
-    # ── 3. Prune the wide tables, structural columns always kept ──────────────
+    # ── 3. Prune the wide tables, structural and metric columns always kept ───
     pruned_schemas = dict(selected_schemas)   # narrow tables pass through unchanged
+    metrics        = get_selected_metrics(state)
 
     for table, ddl in wide_schemas.items():
         column_names     = set(get_column_names(ddl))
@@ -279,7 +309,9 @@ def prune_columns(state: AgentState) -> dict:
             logger.warning(f"prune_columns: no valid column selected for {table} — kept whole")
             continue
 
-        columns_to_keep       = semantic_columns | get_structural_columns(table, ddl, query_tables=set(selected_schemas))
+        metric_columns        = {column for m in metrics for t, column in m.columns if t == table}
+        columns_to_keep       = (semantic_columns | metric_columns
+                                 | get_structural_columns(table, ddl, query_tables=set(selected_schemas)))
         pruned_schemas[table] = prune_ddl(ddl, columns_to_keep)
         logger.debug(f"prune_columns: {table} {len(column_names)} → {len(columns_to_keep)} columns")
 
@@ -304,6 +336,7 @@ def planner(state: AgentState) -> dict:
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
+            metrics=render_metrics_section(get_selected_metrics(state)),
             schema=schema,
         )),
         HumanMessage(content=question),
@@ -355,10 +388,12 @@ def sql_coder(state: AgentState) -> dict:
     else:
         schema = state["retrieved_schema"]
 
-    # Format prompt with schema and dialect — both db-specific
+    # Format prompt with schema, dialect and the selected metrics — all db-specific
+    metrics = get_selected_metrics(state)
     system_prompt = SQL_CODER_PROMPT.format(
         dialect=db_cfg.dialect,
         dialect_rules=DIALECT_RULES.get(db_cfg.dialect, ""),
+        metrics=render_metrics_section(metrics),
         schema=schema,
     )
 
@@ -382,6 +417,11 @@ def sql_coder(state: AgentState) -> dict:
     # Quote query identifiers (reserved words on Hive/Impala)
     # Deterministic fixes (Hive/Impala): backticks, NULLs last, assumption comments kept
     query = normalize_sql(query, db_cfg.dialect)
+
+    # Light check: a selected metric must be computed with its own expression (logged only)
+    for metric in metrics:
+        if not contains_expression(query, metric.expr, db_cfg.dialect):
+            logger.warning(f"sql_coder: metric '{metric.name}' not computed with its expression {metric.expr}")
 
     return {"generated_query": query}
 

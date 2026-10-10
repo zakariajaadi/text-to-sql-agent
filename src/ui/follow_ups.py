@@ -1,6 +1,6 @@
 """
 Follow-up questions — suggested under each answer, one click asks them
-Used by: lib/chainlit_ui.py (started when sql_validator succeeds, so the LLM call runs
+Used by: ui/streaming.py (started when sql_validator succeeds, so the LLM call runs
 while format_answer writes the answer). UI only: the agent graph and the eval never call it.
 """
 

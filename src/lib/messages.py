@@ -1,14 +1,12 @@
 """
 LangChain messages helpers
-Used by: agent/nodes.py (check_query, generate_query)
+Used by: agent/nodes.py, ui/streaming.py, ui/follow_ups.py
 
 """
 
 import re
 
-from langchain_core.messages import HumanMessage, ToolMessage
-
-from agent.tools import get_run_query_tool
+from langchain_core.messages import HumanMessage
 
 
 def get_last_cycle(messages: list) -> list:
@@ -39,19 +37,6 @@ def extract_plan_tables(plan: str, tables) -> list[str]:
         table for table in tables
         if re.search(rf"(?<![\w.]){re.escape(table)}(?!\w)", line, re.IGNORECASE)
     ]
-
-
-def extract_schema_message(messages: list, db_name: str) -> ToolMessage | None:
-    """
-    Scan state messages and return the ToolMessage produced by get_schema for a given db.
-    Returns the last one found (in case of multi-turn conversations).
-    """
-    schema_tool = get_run_query_tool(db_name)
-    result = None
-    for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.name == schema_tool.name:
-            result = msg
-    return result
 
 
 def get_question(state: dict) -> str:

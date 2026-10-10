@@ -75,6 +75,11 @@ Given a user question and a list of candidate table schemas:
 4. Return ONLY the relevant table names.
 5. Set is_in_scope=True if the selected tables can answer the question.
 6. Set is_in_scope=False if no table or column relates to the question.
+7. In metrics, list the business metrics below that the question asks for, by name or synonym,
+   in any language. Their tables are added automatically. Leave it empty if none applies.
+
+## BUSINESS METRICS
+{metrics}
 
 ## CANDIDATE SCHEMAS:
 {schemas}
@@ -138,8 +143,21 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
 
-## DATABASE SCHEMA
+{metrics}## DATABASE SCHEMA
 {schema}
+"""
+
+# ── Shared section: business metrics ──────────────────────────────────────────
+# Used by: planner and sql_coder nodes, only when rerank_tables selected metrics
+# Inserted at {metrics} in PLANNER_PROMPT and SQL_CODER_PROMPT (empty string otherwise)
+# Input: one "- name = expression (default date: table.column)" line per metric (lib/metrics.py)
+
+METRICS_SECTION = """## BUSINESS METRICS
+The question uses these metrics. Compute each one with its expression exactly as written
+(table aliases may replace table names). Never redefine a metric, never write an assumption
+about a term it defines. Use its default date for periods and trends, unless the question names another date.
+{definitions}
+
 """
 
 # ── Node: sql_coder ───────────────────────────────────────────────────────────
@@ -235,7 +253,7 @@ JOIN airport AS ap ON f.departure_airport_id = ap.airport_id
 GROUP BY ap.airport_id, ap.airport_name
 ORDER BY departing_flights DESC
 
-## DATABASE SCHEMA
+{metrics}## DATABASE SCHEMA
 {schema}
 """
 
@@ -328,7 +346,7 @@ If the SQL has no such comment, write nothing at all about assumptions.
 """
 
 # ── Chainlit UI: follow-up questions ──────────────────────────────────────────
-# Used by: lib/follow_ups.py (structured output FollowUpQuestions), never by the graph
+# Used by: ui/follow_ups.py (structured output FollowUpQuestions), never by the graph
 # Input context: question + schema + executed SQL + a sample of the results
 # Expected output: 3 clickable questions shown under the answer
 

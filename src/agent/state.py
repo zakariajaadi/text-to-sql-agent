@@ -10,6 +10,7 @@ class AgentState(MessagesState):
      selected_schemas: dict[str, str]    # table_name → full DDL of the tables kept by rerank_tables, FK-expanded (output of rerank_tables, extended by planner)
      retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns, extended by planner)
      llm_selected_tables: list[str]      # tables selected by reranker LLM, before FK expansion, used by eval for precision/recall
+     selected_metrics: list[str]         # business metrics the question asks for, from semantic_layer/<db>/metrics.yaml (output of rerank_tables)
      query_plan: str                     # execution plan from planner node
      generated_query: str                # SQL query (output of sql_coder)
      validation_feedback: str            # error message, empty on success (output of sql_validator)

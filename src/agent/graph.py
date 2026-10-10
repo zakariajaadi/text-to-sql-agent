@@ -65,7 +65,7 @@ def build_graph():
 
 def save_graph_png(agent, orientation: str = "LR") -> Path:
 
-    output_path = Path(__file__).resolve().parents[2] / "assets" / "graph.png"
+    output_path = Path(__file__).resolve().parents[2] / "docs" / "graph.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     mermaid_str = agent.get_graph().draw_mermaid().replace("graph TD", f"graph {orientation}")

@@ -1,13 +1,14 @@
 # src/lib/semantics.py
 
 """
-Semantics helpers — loading semantic_layer/<db>/tables.yaml and rendering table documents.
-Used by: schema_retrieval/schema_indexer.py (build_documents), schema_retrieval/catalog_generators.py
+Semantics helpers — loading semantic_layer/<db>/tables.yaml and relationships.yaml, rendering table documents.
+Used by: resources.py (FK graphs), offline/ (indexer, generators)
 """
 
 from pathlib import Path
 
 import yaml
+from omegaconf import OmegaConf
 
 from config import SEMANTIC_LAYER_DIR
 
@@ -23,6 +24,15 @@ def load_semantics(db_name: str) -> dict:
     return (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
 
 
+def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
+    """Return (from_column, to_column) pairs, as table.column, declared in semantic_layer/<db>/relationships.yaml."""
+    path = SEMANTIC_LAYER_DIR / db_name / "relationships.yaml"
+    if not path.exists():
+        return []
+    relations = OmegaConf.load(path).get("relations") or []
+    return [(r["from"], r["to"]) for r in relations]
+
+
 def render_table(table_name: str, table_ddl: str, table_semantics: dict,
                  db_fk_relations: list[tuple[str, str]],
                  categorical_values: dict[str, list[str]] | None = None) -> str:
@@ -31,7 +41,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
 
     Prepends a comment header to the DDL and appends each documented column's
     description, and its categorical values if any (read from the database by
-    lib/categorical_values.py), as an inline comment:
+    offline/indexer/categorical_values.py), as an inline comment:
 
         -- Table: invoice
         -- Description: One row per customer purchase.

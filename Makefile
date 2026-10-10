@@ -1,5 +1,5 @@
 # Usage: make <target> [DB=Chinook]
-# Typical first run: hive-up → hive-load → semantics → relations → (review) → index → app
+# Typical first run: hive-up → hive-load → semantics → relations → metrics → (review) → index → app
 
 # ==============================================================================
 # Variables
@@ -12,7 +12,7 @@ RUN        = PYTHONPATH=src uv run python
 .DEFAULT_GOAL := help
 .PHONY: help \
         hive-up hive-check hive-ping hive-load hive-partitioned \
-        semantics relations index schema \
+        semantics relations metrics index schema \
         app app-docker app-logs app-stop \
         eval lint
 
@@ -37,31 +37,32 @@ hive-ping:  ## Check the Python side: SQLAlchemy + PyHive connection
 	print('dialect:', db.dialect); print(db.run('SELECT 1 + 1'))"
 
 hive-load:  ## Load a SQLite db into Hive (DB=Chinook)
-	uv run python scripts/export_to_hive.py $(DB)
+	uv run python offline/hive/export_to_hive.py $(DB)
 	docker cp data/hive_load/. hive:/tmp/hive_load
 	docker exec hive beeline -u $(HIVE_JDBC) -f /tmp/hive_load/$(HIVE_DB)/load.hql
 
 hive-partitioned:  ## Create the read-mode test tables (Full/Last, Delta/All, CDC/Live)
-	docker cp scripts/partitioned_tables.hql hive:/tmp/partitioned_tables.hql
+	docker cp offline/hive/partitioned_tables.hql hive:/tmp/partitioned_tables.hql
 	docker exec hive beeline -u $(HIVE_JDBC) -f /tmp/partitioned_tables.hql
 
-##@ Semantic layer: semantics → relations → (review) → index
+##@ Semantic layer: semantics → relations → metrics → (review) → index
 
 semantics:  ## Generate table/column descriptions and categorical columns (review semantic_layer/<DB>/tables.yaml)
-	$(RUN) -m schema_retrieval.schema_indexer semantics --db $(DB)
+	$(RUN) -m offline.cli semantics --db $(DB)
 
 relations:  ## Generate FK relations (review semantic_layer/<DB>/relationships.yaml)
-	$(RUN) -m schema_retrieval.schema_indexer fk-relations --db $(DB)
+	$(RUN) -m offline.cli fk-relations --db $(DB)
+
+metrics:  ## Propose business metrics (review semantic_layer/<DB>/metrics.yaml)
+	$(RUN) -m offline.cli metrics --db $(DB)
 
 index:  ## Index the tables into Chroma, with the values of the categorical columns (no LLM)
-	$(RUN) -m schema_retrieval.schema_indexer --db $(DB)
+	$(RUN) -m offline.cli index --db $(DB)
 
 schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])
 	$(if $(TABLE),,$(error TABLE is required, e.g. make schema TABLE=invoice))
-	@$(RUN) -c "from config import cfg; from resources import embedding_model; \
-	from schema_retrieval.vector_store import VectorStoreManager; \
-	store = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory).get_store(); \
-	docs = store.get(ids=['$(DB)_$(TABLE)'])['documents']; \
+	@$(RUN) -c "from resources import vector_store; \
+	docs = vector_store.get_store().get(ids=['$(DB)_$(TABLE)'])['documents']; \
 	print(docs[0] if docs else 'Not found: $(DB)_$(TABLE)')"
 
 ##@ App
@@ -80,8 +81,8 @@ app-stop:  ## Stop the app container (Hive and Redis keep running)
 
 ##@ Quality
 
-eval:  ## Run the eval (pass options with ARGS="--limit 5")
-	uv run python eval/run.py $(ARGS)
+eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options: ARGS="--limit 5")
+	$(RUN) -m offline.eval.run --db $(DB) $(ARGS)
 
 lint:  ## Lint with ruff
-	uv run ruff check src eval
+	uv run ruff check src offline

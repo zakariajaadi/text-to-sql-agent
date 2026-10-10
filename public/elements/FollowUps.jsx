@@ -1,5 +1,5 @@
 // Clickable follow-up questions shown under an answer: one click asks the question.
-// Props are built by src/lib/chainlit_ui.py (send_follow_ups): { questions: string[] }
+// Props are built by src/ui/streaming.py (send_follow_ups): { questions: string[] }
 import { useEffect, useState } from "react"
 import { CornerDownRight, Sparkles } from "lucide-react"
 

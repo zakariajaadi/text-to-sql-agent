@@ -1,0 +1,34 @@
+# Business metrics, generated (make metrics) and reviewed manually (lib/metrics.py).
+# The generator only ADDS metrics, it never modifies or removes existing ones.
+#   description    : what the metric measures, read by the LLM to pick it
+#   synonyms       : other words for it in the questions, any language
+#   expr           : aggregate SQL expression, every column written table.column
+#   time_dimension : default date for periods and trends (optional)
+# To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
+# Checked at startup: an unknown table or column stops the app.
+
+revenue:
+  description: Amount sold, discounts applied, computed from the order lines. Freight is not included.
+  synonyms: [sales, turnover, income, revenue generated, chiffre d'affaires, CA, ventes]
+  expr: SUM(order_details.unitprice * order_details.quantity * (1 - order_details.discount))
+  time_dimension: orders.orderdate
+
+order_count:
+  description: Number of distinct orders.
+  synonyms: [number of orders, orders placed, nombre de commandes, commandes passées]
+  expr: COUNT(DISTINCT orders.orderid)
+  time_dimension: orders.orderdate
+
+average_order_value:
+  description: Average revenue of an order (per order, not per order line), discounts applied.
+  synonyms: [AOV, average basket, average order, panier moyen, commande moyenne]
+  expr: SUM(order_details.unitprice * order_details.quantity * (1 - order_details.discount)) / COUNT(DISTINCT order_details.orderid)
+  time_dimension: orders.orderdate
+
+freight_cost:
+  description: Shipping costs charged on the orders.
+  synonyms: [freight, shipping cost, shipping fees, frais de port, coût de livraison]
+  expr: SUM(orders.freight)
+  time_dimension: orders.orderdate
+
+ignore: []

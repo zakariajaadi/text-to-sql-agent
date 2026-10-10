@@ -1,5 +1,5 @@
-# eval/prompts.py
-# =====================
+# offline/eval/eval_lib/judge_prompts.py
+# =====================================
 # Evaluation prompts for the LLM-as-judge benchmark system.
 
 JUDGE_SYSTEM_PROMPT = """

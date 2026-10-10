@@ -1,4 +1,4 @@
-# eval/eval_lib/execution.py
+# offline/eval/eval_lib/execution.py
 # =====================
 # Execution accuracy — ground-truth comparison of SQL result sets.
 #

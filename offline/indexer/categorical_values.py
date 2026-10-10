@@ -1,9 +1,9 @@
-# src/lib/categorical_values.py
+# offline/indexer/categorical_values.py
 
 """
 Categorical values — the distinct values of the `categorical_columns` declared in
 semantic_layer/<db>/tables.yaml, read from the database at index time (never stored in the semantic layer).
-Used by: schema_retrieval/schema_indexer.py (build_documents)
+Used by: offline/indexer/schema_indexer.py (build_documents)
 """
 
 from langchain_community.utilities import SQLDatabase
@@ -17,8 +17,8 @@ MAX_CATEGORICAL_VALUES = 25
 MAX_VALUE_LENGTH       = 50
 
 
-def fetch_categorical_values(db: SQLDatabase, db_name: str, table: str,
-                             columns: list[str]) -> dict[str, list[str]]:
+def fetch_categorical_columns_values(db: SQLDatabase, db_name: str, table: str,
+                                     columns: list[str]) -> dict[str, list[str]]:
     """
     Sorted distinct values of each categorical column of a table, one GROUP BY per column.
     Columns whose values do not fit in the prompt are left out, with a warning.
@@ -29,7 +29,7 @@ def fetch_categorical_values(db: SQLDatabase, db_name: str, table: str,
     values = {}
     for column in columns:
         try:
-            counts = _value_counts(db, table, column)
+            counts = _column_value_counts(db, table, column)
         except Exception as e:
             # Values are an optional enrichment: one failing column must not abort the run
             logger.warning(f"[{db_name}] No values for {table}.{column}: query failed — {str(e)[:200]}")
@@ -43,7 +43,7 @@ def fetch_categorical_values(db: SQLDatabase, db_name: str, table: str,
     return values
 
 
-def _value_counts(db: SQLDatabase, table: str, column: str) -> dict[str, int]:
+def _column_value_counts(db: SQLDatabase, table: str, column: str) -> dict[str, int]:
     """Row count of each distinct non-null value, capped at MAX_CATEGORICAL_VALUES + 1 values."""
     quote    = db._engine.dialect.identifier_preparer.quote
     tbl, col = quote(table), quote(column)

@@ -1,13 +1,13 @@
-# src/schema_retrieval/prompts.py
+# offline/semantic_gen/prompts.py
 
 """
-Prompts for the offline schema pipeline (schema_indexer.py, catalog_generators.py).
-They run at indexing time, via make targets — never at query time.
-Pipeline order: semantics → values → fk-relations → (review) → index
+Prompts of the semantic layer generators (tables.py, relationships.py, metrics.py).
+They run offline, via make targets — never at query time.
+Pipeline order: semantics → relations → metrics → (review) → index
 """
 
-# ── Offline: catalog_generators.generate_semantics ──────────────────────
-# Used by: catalog_generators.generate_semantics()
+# ── Offline: tables.generate_table_semantics ──────────────────────────────
+# Used by: tables.generate_table_semantics()
 # Input context: DDL + sample rows for a single table, full table list for the database
 # Expected output: TableSemantics — merged into semantic_layer/<db>/tables.yaml, then reviewed
 
@@ -52,8 +52,8 @@ columns:
 {ddl}
 """
 
-# ── Offline: catalog_generators.infer_fk_relations ──────────────────────
-# Used by: catalog_generators.infer_fk_relations()
+# ── Offline: relationships.infer_fk_relations ─────────────────────────────
+# Used by: relationships.infer_fk_relations()
 # Input context: schemas of all tables in a database (DDL + reviewed semantics)
 # Expected output: FKRelations — merged into semantic_layer/<db>/relationships.yaml, then reviewed
 
@@ -73,6 +73,53 @@ of another table (or of the same table, for hierarchies).
    (e.g. booking.traveler_ref holding a passenger id under another name).
 5. Only include relationships you are confident about. Never link columns that merely
    share a generic name (name, title, date).
+
+## SCHEMAS
+{schemas}
+"""
+
+# ── Offline: metrics.generate_metrics ─────────────────────────────────────
+# Used by: metrics.generate_metrics()
+# Input context: tables holding measures and the tables they join to (DDL + reviewed semantics),
+#                column roles found deterministically, metrics already defined or rejected
+# Expected output: MetricProposals — validated, merged into semantic_layer/<db>/metrics.yaml, then reviewed
+
+METRICS_PROMPT = """
+You are a business intelligence expert defining the key metrics of the {db_name} database ({dialect}).
+Analysts will ask questions about these metrics; an agent will compute them with your expressions as is.
+
+## TASK
+Propose the business metrics analysts would most often ask about: amounts, volumes, counts,
+averages and ratios. At most 8, the most useful first. Fewer is fine.
+
+## RULES
+1. expr is ONE aggregate SQL expression (SUM, COUNT, AVG, MIN, MAX, or a ratio of aggregates),
+   never a full query. Write every column as table.column, spelled exactly as in the schemas.
+2. Build amounts from the most detailed fact table (e.g. order lines, not order headers), so the
+   metric can be broken down by product, category or any related entity.
+3. Apply the adjustments the schema documents (discounts, refunds, signs...) and say in the
+   description what the metric includes and excludes (e.g. "discounts applied, freight excluded").
+4. Averages per entity divide by the distinct count of that entity: "per order, not per order line"
+   → SUM(...) / COUNT(DISTINCT order_lines.order_id). Never AVG over line-level rows for them.
+5. Count entities with COUNT(DISTINCT table.id), never COUNT(*).
+6. time_dimension: the business date of the event the metric measures (order date, invoice date),
+   from the fact table or from a table it joins to through the "-- Joins:" lines. Empty if none.
+7. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.
+8. Names in snake_case, unique, built from the words of this database's tables and columns
+   (count of invoice rows → invoice_count, not order_count), without prefixes such as
+   total_ or sales_ (revenue, not total_revenue or sales_revenue).
+   Never propose a metric listed in EXISTING METRICS or REJECTED METRICS, nor another name
+   for one of their expressions.
+9. Synonyms: 3 to 8 words users may use for the metric, in English and in {languages}.
+
+## COLUMN ROLES
+{roles}
+
+## EXISTING METRICS
+{existing}
+
+## REJECTED METRICS
+{rejected}
 
 ## SCHEMAS
 {schemas}

@@ -1,4 +1,4 @@
-# Semantic layer, generated (schema_indexer semantics) and reviewed manually.
+# Semantic layer, generated (make semantics) and reviewed manually.
 # The generator only ADDS missing content, it never overwrites reviewed content.
 #   description, columns : business meaning of the table and of each column
 #   categorical_columns  : columns holding a closed set of labels (country, status...),

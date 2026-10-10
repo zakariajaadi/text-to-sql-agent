@@ -1,4 +1,4 @@
-# eval/eval_lib/reporting.py
+# offline/eval/eval_lib/reporting.py
 # =====================
 # Output functions — DataFrame conversion, summary stats, JSON export.
 # Transforms raw results into human-readable or machine-readable formats.
@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
-from judge_schemas import DIMENSIONS, SCORE_LABELS
+from .judge_schemas import DIMENSIONS, SCORE_LABELS
 
 
 def results_to_df(results: list[dict]) -> pd.DataFrame:
@@ -124,7 +124,7 @@ def print_summary(summary: dict):
     print(f"{'=' * 50}")
 
 
-def save_results(results: list[dict], summary: dict, path: str = "eval/results.json"):
+def save_results(results: list[dict], summary: dict, path: str | Path):
     """Save results and summary to JSON for comparison."""
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
