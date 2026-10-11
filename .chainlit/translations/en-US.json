@@ -99,7 +99,7 @@
         },
         "messages": {
             "status": {
-                "using": "Using",
+                "using": "",
                 "used": ""
             },
             "actions": {

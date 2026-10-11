@@ -70,7 +70,7 @@ html:not(.dark) .mascot.is-out .m-antenna {
   transition: stroke 300ms;
 }
 
-/* Step titles: the "Used" prefix is emptied in .chainlit/translations/en-US.json,
+/* Step titles: the "Using" and "Used" prefixes are emptied in .chainlit/translations/en-US.json,
    hide its empty <span> so it no longer shifts the title by the flex gap */
 [id^="step-"] > span:empty {
   display: none;

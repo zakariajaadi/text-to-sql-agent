@@ -132,7 +132,7 @@
     let last = start;
     for (;;) {
       await nextFrame();
-      if (m.cancelled) throw ABORT;
+      if (!m || m.cancelled) throw ABORT; // teardown() cancels then clears m
       const now = performance.now(), dt = Math.min(1 / 30, Math.max(1 / 240, (now - last) / 1000));
       last = now;
       const done = step(dt, (now - start) / 1000);

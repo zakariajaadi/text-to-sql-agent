@@ -1,14 +1,31 @@
 """
-Chainlit UI helpers
-Used by: app.py (on_message, astream_events loop)
+Chainlit rendering of one agent turn: the astream_events of the graph become live steps.
+Used by: app.py (on_message, one TurnRenderer per question)
+
+One parent step per question, open while the agent works, collapsed once the answer starts.
+While the agent works, the parent step is named after the running stage, then after its summary.
+Each stage of the graph gets its own step, in the order it runs: named after the action while it
+runs ("Écriture de la requête SQL…"), then after its result and duration:
+
+    ▸ SQL Agent · 2 tables · 7,3 s
+        Question reformulée : « Chiffre d'affaires par mois en 2022 ? » · 0,6 s     only when rewritten
+        Tables utilisées : invoice, invoiceline · métrique revenue · 1,1 s          vector search + rerank
+        Schéma complet conservé, 14 colonnes
+        Plan de requête établi · 1,1 s                                              streamed
+        Requête SQL écrite · 2,1 s
+        12 lignes retournées · 2,4 s
+
+A rejected query shows as it runs: "Requête rejetée par Hive", "Requête SQL corrigée", then the rows.
 """
 
 import asyncio
 import re
+import time
 
 import chainlit as cl
 import sqlparse
-from langchain_core.messages import AIMessage
+from chainlit.utils import utc_now
+from langchain_core.messages import HumanMessage
 
 from config import cfg
 from lib.column_pruning import get_column_names
@@ -20,12 +37,321 @@ from ui.result_card import build_result_card_props
 
 FOLLOW_UPS_TIMEOUT_S = 10  # past this, the answer simply comes without suggestions
 
-# Name of the step shown when the database rejects a query, renamed once the retry loop ends
-RETRY_STEP_NAMES = {
-    "running": "🔁 Query rejected, fixing it...",
-    "fixed":   "🔁 Query fixed automatically",
-    "failed":  "❌ Query could not be fixed",
+# Graph node → name of its step while it runs ({engine}: Hive...). Consecutive nodes of a stage
+# share its step, nodes absent here have none (format_answer writes the answer)
+NODE_STAGES = {
+    "condense_question": "Reformulation de la question…",
+    "retrieve_schema":   "Recherche des tables utiles…",
+    "rerank_tables":     "Recherche des tables utiles…",
+    "prune_columns":     "Réduction du schéma…",
+    "planner":           "Planification de la requête…",
+    "sql_coder":         "Écriture de la requête SQL…",
+    "sql_validator":     "Exécution sur {engine}…",
 }
+
+# Stages shown only once their node ends with something to show (the question was rewritten)
+LATE_STAGES = {"condense_question"}
+
+
+class TurnRenderer:
+    """
+    Turns the graph events of one question into Chainlit steps and the answer message.
+    Holds the whole state of the turn: steps, query result, rejected attempts, answer.
+    """
+
+    def __init__(self, db_name: str):
+        self.db_name = db_name
+        self.engine  = cfg.get_db(db_name).dialect.capitalize() if db_name else "la base"
+        self.run_id  = None   # root run of the graph, for the LangSmith feedback
+
+        self.turn_start  = time.perf_counter()
+        self.node_starts = {}  # run_id of a running graph node → start time
+
+        self.agent_step  = None   # parent step
+        self.stage       = None   # name of the running stage step
+        self.stage_step  = None
+        self.stage_start = 0.0
+
+        self.rejected = 0      # queries rejected by the database
+        self.result   = None   # query result of the result card
+
+        self.answer_msg      = None
+        self.follow_ups_task = None
+
+    # ── Graph events ──────────────────────────────────────────────────────────
+
+    async def start(self) -> None:
+        # Child of Chainlit's "on_message" step, like the answer message: shown before the answer
+        current = cl.context.current_step
+        self.agent_step = cl.Step(name="SQL Agent", type="run", default_open=True, auto_collapse=True,
+                                  parent_id=current.id if current else None)
+        self.agent_step.start = utc_now()
+        await self.agent_step.send()
+
+    async def handle(self, event: dict) -> None:
+        """Route one astream_events (v2) event."""
+        kind = event["event"]
+        if self.run_id is None:
+            self.run_id = event.get("run_id")
+
+        # A graph node run is the chain named after its node (nested runs carry the
+        # node name in their metadata only)
+        node    = event["metadata"].get("langgraph_node", "")
+        is_node = bool(node) and event.get("name") == node
+
+        if kind == "on_chain_start" and is_node:
+            self.node_starts[event["run_id"]] = time.perf_counter()
+            await self._on_node_start(node)
+
+        elif kind == "on_chain_end" and is_node:
+            start    = self.node_starts.pop(event["run_id"], None)
+            duration = time.perf_counter() - start if start is not None else None
+            output   = event["data"].get("output")
+            handler  = getattr(self, f"_end_{node}", None)
+            if handler and isinstance(output, dict):
+                stage = await handler(event["data"].get("input") or {}, output)
+                if stage and node in LATE_STAGES:
+                    await self._open_stage(NODE_STAGES[node].format(engine=self.engine))
+                if stage and self.stage_step:
+                    # A late stage opens as its node ends: its step lasts as long as the node
+                    await self._close_stage(*stage, duration=duration if node in LATE_STAGES else None)
+
+        elif kind == "on_chat_model_stream":
+            await self._on_token(node, event["data"]["chunk"])
+
+    async def finish(self, status: str = "done") -> None:
+        """
+        Close the step still open and collapse the parent step under its summary.
+        status: "done", "failed" (graph error) or "stopped" (user clicked stop). Idempotent.
+        """
+        if not self.agent_step or self.agent_step.end:
+            return
+        if self.stage_step:
+            outcome = {"failed": "échec", "stopped": "arrêté"}.get(status)
+            title   = self.stage.removesuffix("…")
+            await self._close_stage(f"{title} · {outcome}" if outcome else title, error=status == "failed")
+
+        parts = ["SQL Agent"]
+        if self.result and self.result["tables"]:
+            n = len(self.result["tables"])
+            parts.append(f"{n} table{'s' if n > 1 else ''}")
+        if status == "stopped":
+            parts.append("arrêté")
+        parts.append(_seconds(time.perf_counter() - self.turn_start))
+
+        self.agent_step.name     = " · ".join(parts)
+        self.agent_step.is_error = status == "failed"
+        self.agent_step.end      = utc_now()
+        await self.agent_step.update()
+
+    async def finalize_answer(self) -> None:
+        """Attach the result card and the feedback actions to the answer, then the follow-ups."""
+        if not self.answer_msg:
+            return
+        self._attach_result_card()
+        if self.run_id:
+            payload = {"run_id": str(self.run_id)}
+            self.answer_msg.actions = [
+                cl.Action(name="thumbs_up",   payload=payload, label="👍"),
+                cl.Action(name="thumbs_down", payload=payload, label="👎"),
+            ]
+        await self.answer_msg.update()
+        await self._send_follow_ups()
+
+    # ── Node starts and tokens ────────────────────────────────────────────────
+
+    async def _on_node_start(self, node: str) -> None:
+        # The answer starts: the agent's work is over, collapse its step
+        if node == "format_answer":
+            await self.finish()
+        elif node in NODE_STAGES and node not in LATE_STAGES:
+            title = NODE_STAGES[node].format(engine=self.engine)
+            if self.stage_step and self.stage == title:
+                return  # next node of the same stage, its step stays open
+            await self._open_stage(title)
+
+    async def _on_token(self, node: str, chunk) -> None:
+        content = normalize_chunk_content(chunk.content)
+        if not content or chunk.tool_call_chunks:
+            return
+
+        # The plan is written live in its step
+        if node == "planner" and self.stage_step:
+            await self.stage_step.stream_token(content)
+
+        # The answer is written live in its message
+        elif node == "format_answer":
+            if not self.answer_msg:
+                self.answer_msg = cl.Message(content="")
+                await self.answer_msg.send()
+            await self.answer_msg.stream_token(content)
+
+    # ── Node ends: (final title, detail, error) of the stage step ────────────
+
+    async def _end_condense_question(self, input: dict, output: dict) -> tuple | None:
+        """Show the rewritten question, only when the question was actually rewritten."""
+        original  = next((m.content for m in reversed(input.get("messages", []))
+                          if isinstance(m, HumanMessage)), "")
+        condensed = output.get("standalone_question", "")
+        if not original or not condensed or original.strip().lower() == condensed.strip().lower():
+            return None
+        return f"Question reformulée : « {condensed} »", f"**Question :** {original}\n\n**Reformulée :** {condensed}"
+
+    async def _end_rerank_tables(self, input: dict, output: dict) -> tuple:
+        candidates = list(input.get("candidate_schemas", {}))
+        selected   = list(output.get("selected_schemas", {}))
+        chosen     = output.get("llm_selected_tables") or []
+        metrics    = output.get("selected_metrics") or []
+
+        if not output.get("is_in_scope", True):
+            return "Aucune table utile : question hors périmètre", f"Aucune table de {self.db_name} ne permet de répondre à cette question."
+
+        title = f"Tables utilisées : {', '.join(selected)}"
+        if metrics:
+            title += f" · métrique{'s' if len(metrics) > 1 else ''} {', '.join(metrics)}"
+
+        detail = [f"**Choisies parmi {len(candidates)} candidates :** "
+                  f"{', '.join(t for t in selected if t in chosen) or '—'}"]
+        added = [t for t in selected if t not in chosen]
+        if added:
+            # Tables of the selected metrics, and bridge tables reached by foreign keys
+            detail.append(f"**Ajoutées (métriques, clés étrangères) :** {', '.join(added)}")
+        if metrics:
+            detail.append(f"**Métriques :** {', '.join(metrics)}")
+        dropped = [t for t in candidates if t not in selected]
+        if dropped:
+            detail.append(f"**Écartées :** {', '.join(dropped)}")
+        return title, "\n\n".join(detail)
+
+    async def _end_prune_columns(self, input: dict, output: dict) -> tuple:
+        before = sum(len(get_column_names(ddl)) for ddl in input.get("selected_schemas", {}).values())
+        after  = len(get_column_names(output.get("retrieved_schema", "")))
+        if after < before:
+            return f"Schéma réduit : {before} → {after} colonnes", ""
+        return f"Schéma complet conservé, {before} colonnes", ""
+
+    async def _end_planner(self, input: dict, output: dict) -> tuple:
+        # Tables the plan uses beyond the selection, loaded by planner
+        candidates = input.get("selected_schemas", {})
+        loaded     = [t for t in output.get("selected_schemas", {}) if t not in candidates]
+        detail     = output.get("query_plan", "")
+        if loaded:
+            detail += f"\n\n**Tables ajoutées par le plan :** {', '.join(loaded)}"
+        title = "Plan de requête établi"
+        if loaded:
+            title += f" · {', '.join(loaded)} ajoutée{'s' if len(loaded) > 1 else ''}"
+        return title, detail
+
+    async def _end_sql_coder(self, input: dict, output: dict) -> tuple:
+        title = "Requête SQL corrigée" if input.get("validation_feedback") else "Requête SQL écrite"
+        return title, _sql_block(output.get("generated_query", ""))
+
+    async def _end_sql_validator(self, input: dict, output: dict) -> tuple | None:
+        if output.get("validation_feedback"):
+            # Only the database error is shown, never the instructions written for sql_coder
+            self.rejected += 1
+            error = _short_db_error(output.get("validation_error", ""))
+            return f"Requête rejetée par {self.engine}", f"```\n{error}\n```\nL'agent corrige la requête à partir de cette erreur.", True
+
+        if "result_rows" not in output:
+            return None
+        rows  = output["result_rows"]
+        query = input.get("generated_query", "")
+        self.result = {
+            "columns":   output["result_columns"],
+            "rows":      rows,
+            "truncated": output.get("result_truncated", False),
+            "sql":       query,
+            "tables":    _tables_in_sql(query, input["selected_db"]),
+        }
+        # Suggest follow-up questions while format_answer writes the answer
+        self.follow_ups_task = asyncio.create_task(suggest_follow_ups(
+            question = get_question(input),
+            schema   = input.get("retrieved_schema", ""),
+            sql      = query,
+            columns  = output["result_columns"],
+            rows     = rows,
+        ))
+        detail = f"**Colonnes :** {', '.join(output['result_columns'])}"
+        if self.result["truncated"]:
+            detail += f"\n\nSeules les {len(rows)} premières lignes sont lues (limite de sécurité)."
+        rows_label = _rows_label(self.result)
+        return f"{rows_label} retournée{'s' if rows_label.endswith('s') else ''}", detail
+
+    async def _end_format_answer(self, input: dict, output: dict) -> None:
+        """Send the answer when it was not streamed (semantic cache hit)."""
+        messages = output.get("messages") or []
+        if self.answer_msg or not messages:
+            return
+        content = normalize_chunk_content(messages[-1].content)
+        if content:
+            self.answer_msg = cl.Message(content=content)
+            await self.answer_msg.send()
+
+    # ── Steps ─────────────────────────────────────────────────────────────────
+
+    async def _open_stage(self, title: str) -> None:
+        """Open a stage step, named after its action while it runs."""
+        if self.stage_step:  # the previous node ended without a result to show
+            await self._close_stage()
+        self.stage       = title
+        self.stage_start = time.perf_counter()
+        self.stage_step  = cl.Step(name=title, type="run", parent_id=self.agent_step.id)
+        self.stage_step.start = utc_now()
+        await self.stage_step.send()
+        # The parent shows the running action while it is collapsed
+        self.agent_step.name = title
+        await self.agent_step.update()
+
+    async def _close_stage(self, title: str = "", detail: str = "", error: bool = False,
+                           duration: float | None = None) -> None:
+        """End the running stage step, named after its result and duration."""
+        if duration is None:
+            duration = time.perf_counter() - self.stage_start
+        title = title or self.stage.removesuffix("…")
+        step  = self.stage_step
+        step.name     = " · ".join(part for part in (title, _took(duration)) if part)
+        step.is_error = error
+        if detail:
+            step.output = detail
+        step.end = utc_now()
+        await step.update()
+        self.stage = self.stage_step = None
+
+    # ── Answer elements ───────────────────────────────────────────────────────
+
+    def _attach_result_card(self) -> None:
+        """Attach the ResultCard element (chart / table / SQL) of this turn's query to the answer."""
+        if not self.result or not self.result["rows"]:
+            return
+        props = build_result_card_props(
+            columns   = self.result["columns"],
+            rows      = self.result["rows"],
+            sql       = self.result["sql"],
+            truncated = self.result["truncated"],
+            tables    = self.result["tables"],
+            retries   = self.rejected,
+            db_name   = self.db_name or "",
+        )
+        self.answer_msg.elements = [cl.CustomElement(name="ResultCard", props=props, display="inline")]
+
+    async def _send_follow_ups(self) -> None:
+        """
+        Send the FollowUps element (clickable next questions) under the answer already sent.
+        Sent on its own once the suggestions are ready, so it never delays the answer and card.
+        """
+        if not self.follow_ups_task:
+            return
+        try:
+            questions = await asyncio.wait_for(self.follow_ups_task, timeout=FOLLOW_UPS_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return
+        if not questions:
+            return
+
+        element = cl.CustomElement(name="FollowUps", props={"questions": questions}, display="inline")
+        self.answer_msg.elements.append(element)
+        await element.send(for_id=self.answer_msg.id)
 
 
 def normalize_chunk_content(content) -> str:
@@ -41,239 +367,7 @@ def normalize_chunk_content(content) -> str:
     return content if isinstance(content, str) else ""
 
 
-async def process_node_output(event: dict, seen_msg_ids: set, duration: float | None = None) -> None:
-    """
-    Extract and handle new messages from a LangGraph node output.
-    Filters out already-processed messages using a set of IDs.
-    duration: seconds the node took (None for nested runs), appended to the step name.
-    """
-    node_name = event["metadata"].get("langgraph_node")
-    if not node_name:
-        return
-    took = _took(duration)
-
-    output = event["data"].get("output")
-
-    # Guard: output must be a dict to inspect node-specific keys
-    if not isinstance(output, dict):
-        return
-
-    # ── condense_question: show rewritten question (only when rewritten) ──
-    if node_name == "condense_question" and "standalone_question" in output:
-        original = next(
-            (m.content for m in reversed(event["data"].get("input", {}).get("messages", []))
-             if hasattr(m, "content")),
-            ""
-        )
-        condensed = output["standalone_question"]
-        # Only show step if the question was actually rewritten
-        if original and condensed and original.strip().lower() != condensed.strip().lower():
-            async with cl.Step(name=f"💬 Question rewritten{took}", type="run") as s:
-                s.output = f"**Original:** {original}\n**Rewritten:** {condensed}"
-        return
-
-    # ── retrieve_schema: skip (merged into rerank_tables display) ──
-    if node_name == "retrieve_schema":
-        if duration is not None:
-            cl.user_session.set("retrieve_duration", duration)
-        return
-
-    # ── rerank_tables: show the candidate tables passed to planner/sql_coder (the SQL may use fewer) ──
-    if node_name == "rerank_tables" and "selected_schemas" in output:
-        table_names = list(output["selected_schemas"])
-        in_scope = output.get("is_in_scope", True)
-        emoji = "🟢" if in_scope else "🔴"
-        # The step covers both retrieve_schema (vector search) and rerank_tables (LLM)
-        if duration is not None:
-            took = _took(duration + (cl.user_session.get("retrieve_duration") or 0))
-        tables = f"{len(table_names)} candidate table{'s' if len(table_names) != 1 else ''}"
-        async with cl.Step(name=f"{emoji} {tables}{took}", type="run") as s:
-            s.output = ", ".join(table_names)
-        return
-    
-    # ── prune_columns: fixed title, column count before → after in the body ──
-    if node_name == "prune_columns" and "retrieved_schema" in output:
-        selected_schemas = event["data"].get("input", {}).get("selected_schemas", {})
-        columns_before   = sum(len(get_column_names(ddl)) for ddl in selected_schemas.values())
-        columns_after    = len(get_column_names(output["retrieved_schema"]))
-
-        async with cl.Step(name=f"✂️ Column pruning{took}", type="run") as s:
-            if columns_after < columns_before:
-                s.output = f"{columns_before} → {columns_after} columns"
-            else:
-                s.output = f"No column pruned ({columns_before} columns)"
-        return
-
-    # ── planner: skip (internal, no UI step) ──
-    #if node_name == "planner":
-    #    return
-    
-    # ── planner: show plan during debugging ──
-    if node_name == "planner" and "query_plan" in output:
-        # Tables the plan uses beyond the candidates, loaded by planner
-        state      = event["data"].get("input", {})
-        candidates = state.get("selected_schemas", {})
-        loaded     = [t for t in output.get("selected_schemas", {}) if t not in candidates]
-        metrics    = state.get("selected_metrics") or []   # business metrics picked by rerank_tables
-        async with cl.Step(name=f"📐 Query plan{took}", type="run") as s:
-            s.output = output["query_plan"]
-            if metrics:
-                s.output += f"\n\n**Metrics:** {', '.join(metrics)}"
-            if loaded:
-                s.output += f"\n\n**Loaded for the plan:** {', '.join(loaded)}"
-        return
-        
-    # ── sql_coder: show generated SQL (strip step comments) ──
-    if node_name == "sql_coder" and "generated_query" in output:
-        query = output["generated_query"]
-        formatted = sqlparse.format(query, reindent=True, keyword_case="upper")
-        # After a rejected query, sql_coder rewrites it from the database error
-        name = "⚙️ Corrected SQL" if cl.user_session.get("sql_retries") else "⚙️ Generated SQL"
-        async with cl.Step(name=f"{name}{took}", type="run") as s:
-            s.output = f"```sql\n{formatted}\n```"
-        return
-
-    # ── sql_validator: show failure, or keep the result for the result card ──
-    if node_name == "sql_validator":
-        feedback = output.get("validation_feedback", "")
-        if feedback:
-            # Show the database error only, never the instructions written for sql_coder
-            cl.user_session.set("sql_retries", cl.user_session.get("sql_retries", 0) + 1)
-            async with cl.Step(name=RETRY_STEP_NAMES["running"], type="tool") as s:
-                s.output = (
-                    f"The database rejected the query:\n```\n{_short_db_error(output.get('validation_error', ''))}\n```\n"
-                    "The agent reads this error and rewrites the query."
-                )
-            cl.user_session.get("retry_steps").append(s)
-            return
-
-        if "result_rows" in output:
-            await rename_retry_steps("fixed")
-            rows  = output["result_rows"]
-            state = event["data"].get("input", {})
-            cl.user_session.set("query_result", {
-                "columns":   output["result_columns"],
-                "rows":      rows,
-                "truncated": output.get("result_truncated", False),
-                "sql":       state.get("generated_query", ""),
-                "tables":    _tables_in_sql(state.get("generated_query", ""), state["selected_db"]),
-            })
-            # Suggest follow-up questions while format_answer writes the answer
-            cl.user_session.set("follow_ups_task", asyncio.create_task(suggest_follow_ups(
-                question = get_question(state),
-                schema   = state.get("retrieved_schema", ""),
-                sql      = state.get("generated_query", ""),
-                columns  = output["result_columns"],
-                rows     = rows,
-            )))
-            more = "+" if output.get("result_truncated") else ""
-            label = "row" if len(rows) == 1 and not more else "rows"
-            async with cl.Step(name=f"📊 {len(rows)}{more} {label} returned{took}", type="tool"):
-                pass
-        return
-
-    # ── Standard message-based processing (format_answer) ──
-    if not isinstance(output, dict) or "messages" not in output:
-        return
-
-    for msg in output["messages"]:
-        msg_id = id(msg)
-        if msg_id not in seen_msg_ids:
-            seen_msg_ids.add(msg_id)
-            await handle_step(msg, node_name)
-
-
-async def handle_step(msg, node_name: str = "") -> None:
-    """Route a single message to the appropriate Chainlit UI step."""
-
-    if isinstance(msg, AIMessage) and not msg.tool_calls and msg.content:
-        content = msg.content if isinstance(msg.content, str) else str(msg.content)
-
-        if node_name == "format_answer":
-            if not cl.user_session.get("answer_msg"):
-                answer_msg = cl.Message(content=content)
-                await answer_msg.send()
-                cl.user_session.set("answer_msg", answer_msg)
-
-
-async def attach_result_card(answer_msg: cl.Message) -> None:
-    """Attach the ResultCard element (chart / table / SQL) of this turn's query to the answer."""
-    result = cl.user_session.get("query_result")
-    if not result or not result["rows"]:
-        return
-
-    props = build_result_card_props(
-        columns   = result["columns"],
-        rows      = result["rows"],
-        sql       = result["sql"],
-        truncated = result["truncated"],
-        tables    = result["tables"],
-        retries   = cl.user_session.get("sql_retries", 0),
-        db_name   = cl.user_session.get("chat_profile") or "",
-    )
-    answer_msg.elements = [cl.CustomElement(name="ResultCard", props=props, display="inline")]
-
-
-async def rename_retry_steps(outcome: str) -> None:
-    """Rename this turn's rejected-query steps once the retry loop ends ("fixed" or "failed")."""
-    for step in cl.user_session.get("retry_steps") or []:
-        step.name = RETRY_STEP_NAMES[outcome]
-        await step.update()
-
-
-async def send_follow_ups(answer_msg: cl.Message) -> None:
-    """
-    Send the FollowUps element (clickable next questions) under an answer already sent.
-    Sent on its own once the suggestions are ready, so it never delays the answer and card.
-    """
-    task = cl.user_session.get("follow_ups_task")
-    if not task:
-        return
-    try:
-        questions = await asyncio.wait_for(task, timeout=FOLLOW_UPS_TIMEOUT_S)
-    except asyncio.TimeoutError:
-        return
-    if not questions:
-        return
-
-    element = cl.CustomElement(name="FollowUps", props={"questions": questions}, display="inline")
-    answer_msg.elements.append(element)
-    await element.send(for_id=answer_msg.id)
-
-
-def get_agent_step_summary(elapsed: float) -> str:
-    """Final name of the agent step: tables the answer comes from and total time."""
-    result = cl.user_session.get("query_result")
-    parts  = ["SQL Agent"]
-    if result and result["tables"]:
-        n = len(result["tables"])
-        parts.append(f"{n} table{'s' if n > 1 else ''}")
-    parts.append(f"{elapsed:.1f} s")
-    return " · ".join(parts)
-
-
-def get_node_step_title(node_name: str) -> str:
-    return {
-        "condense_question": "💬 Condensing question...",
-        "retrieve_schema":   "🔍 Retrieving candidates...",
-        "rerank_tables":     "🎯 Selecting tables...",
-        "prune_columns":     "✂️ Pruning columns...",
-        "planner":           "📐 Planning query...",
-        "sql_coder":         "⚙️ Writing SQL...",
-        "sql_validator":     "✅ Validating & executing...",
-        "format_answer":     "✍️ Formatting answer...",
-    }.get(node_name, "")
-
-
 # ── Private helpers ───────────────────────────────────────────────────────────
-
-
-# def _strip_step_comments(sql: str) -> str:
-#     """Remove '-- Step N:' comments, keep '-- Assumption:' comments."""
-#     return "\n".join(
-#         line for line in sql.splitlines()
-#         if not re.match(r"^\s*--\s*Step\s+\d+", line, re.IGNORECASE)
-#     )
 
 
 def _short_db_error(error: str, max_len: int = 240) -> str:
@@ -298,9 +392,27 @@ def _short_db_error(error: str, max_len: int = 240) -> str:
     return message if len(message) <= max_len else message[:max_len].rstrip() + "…"
 
 
+def _sql_block(sql: str) -> str:
+    formatted = sqlparse.format(sql, reindent=True, keyword_case="upper")
+    return f"```sql\n{formatted}\n```"
+
+
+def _rows_label(result: dict) -> str:
+    """ "5 lignes", "100+ lignes", "aucune ligne" """
+    n = len(result["rows"])
+    if n == 0:
+        return "aucune ligne"
+    more = "+" if result["truncated"] else ""
+    return f"{n}{more} ligne{'s' if n > 1 or more else ''}"
+
+
+def _seconds(duration: float) -> str:
+    return f"{duration:.1f} s".replace(".", ",")
+
+
 def _took(duration: float | None) -> str:
-    """Step name suffix with the node duration (" · 1.2 s"), empty when unknown or negligible."""
-    return f" · {duration:.1f} s" if duration is not None and duration >= 0.1 else ""
+    """Duration of a step name ("1,2 s"), empty when unknown or negligible."""
+    return _seconds(duration) if duration is not None and duration >= 0.1 else ""
 
 
 def _tables_in_sql(sql: str, db_name: str) -> list[str]:

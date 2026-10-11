@@ -14,7 +14,7 @@ RUN        = PYTHONPATH=src uv run python
         hive-up hive-check hive-ping hive-load hive-partitioned \
         semantics relations metrics index schema \
         app app-docker app-logs app-stop \
-        eval lint
+        eval test lint
 
 ##@ Help
 
@@ -83,6 +83,9 @@ app-stop:  ## Stop the app container (Hive and Redis keep running)
 
 eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options: ARGS="--limit 5")
 	$(RUN) -m offline.eval.run --db $(DB) $(ARGS)
+
+test:  ## Run the unit tests
+	uv run pytest
 
 lint:  ## Lint with ruff
 	uv run ruff check src offline
