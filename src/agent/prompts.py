@@ -112,6 +112,20 @@ needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregation
 {schemas}
 """
 
+# ── Shared section: business metrics ──────────────────────────────────────────
+# Used by: planner and sql_coder nodes, only when rerank_tables selected metrics
+# Inserted at {metrics_section} in PLANNER_PROMPT and SQL_CODER_PROMPT (empty string otherwise)
+# Input: one "- name = expression (default date: table.column)" line per metric (lib/metrics.py)
+
+METRICS_SECTION = """
+## BUSINESS METRICS
+The question uses these metrics. Compute each one with its expression exactly as written
+(table aliases may replace table names). Never redefine a metric, never write an assumption
+about a term it defines. Use its default date for periods and trends, unless the question names another date.
+A metric name is not a column alias: name the result column like any other aggregate.
+{definitions}
+"""
+
 PLANNER_PROMPT = """
 You are working with a {dialect} database.
 
@@ -143,22 +157,9 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
 
-{metrics}## DATABASE SCHEMA
+{metrics_section}
+## DATABASE SCHEMA
 {schema}
-"""
-
-# ── Shared section: business metrics ──────────────────────────────────────────
-# Used by: planner and sql_coder nodes, only when rerank_tables selected metrics
-# Inserted at {metrics} in PLANNER_PROMPT and SQL_CODER_PROMPT (empty string otherwise)
-# Input: one "- name = expression (default date: table.column)" line per metric (lib/metrics.py)
-
-METRICS_SECTION = """## BUSINESS METRICS
-The question uses these metrics. Compute each one with its expression exactly as written
-(table aliases may replace table names). Never redefine a metric, never write an assumption
-about a term it defines. Use its default date for periods and trends, unless the question names another date.
-A metric name is not a column alias: name the result column like any other aggregate.
-{definitions}
-
 """
 
 # ── Node: sql_coder ───────────────────────────────────────────────────────────
@@ -259,7 +260,8 @@ JOIN airport AS ap ON f.departure_airport_id = ap.airport_id
 GROUP BY ap.airport_id, ap.airport_name
 ORDER BY departing_flights DESC
 
-{metrics}## DATABASE SCHEMA
+{metrics_section}
+## DATABASE SCHEMA
 {schema}
 """
 

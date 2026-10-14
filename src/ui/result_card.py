@@ -2,7 +2,7 @@
 Result card — props of the ResultCard custom element (public/elements/ResultCard.jsx)
 Used by: ui/streaming.py (attached to the final answer message)
 
-The KPI tiles or chart come from ui/charts.py, picked by rules on the result shape.
+The KPI tiles or chart come from ui/charts.py, picked by rules on the result shape and the question.
 """
 
 import sqlparse
@@ -18,10 +18,11 @@ def build_result_card_props(
     tables:    list[str],
     retries:   int,
     db_name:   str,
+    question:  str,
 ) -> dict:
     """Assemble the JSON props of the ResultCard element."""
     columns = [_display_name(c) for c in columns]
-    viz     = pick_visualization(columns, rows)
+    viz     = pick_visualization(columns, rows, question=question, truncated=truncated)
 
     return {
         "columns":   columns,

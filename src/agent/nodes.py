@@ -336,7 +336,7 @@ def planner(state: AgentState) -> dict:
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
-            metrics=render_metrics_section(get_selected_metrics(state)),
+            metrics_section=render_metrics_section(get_selected_metrics(state)),
             schema=schema,
         )),
         HumanMessage(content=question),
@@ -393,7 +393,7 @@ def sql_coder(state: AgentState) -> dict:
     system_prompt = SQL_CODER_PROMPT.format(
         dialect=db_cfg.dialect,
         dialect_rules=DIALECT_RULES.get(db_cfg.dialect, ""),
-        metrics=render_metrics_section(metrics),
+        metrics_section=render_metrics_section(metrics),
         schema=schema,
     )
 

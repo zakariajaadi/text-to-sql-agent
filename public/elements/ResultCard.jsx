@@ -70,7 +70,13 @@ function Kpis({ kpis }) {
 // values per series. These components only draw it.
 
 const SERIES_COLORS = ["hsl(215 65% 55%)", "hsl(165 50% 40%)", "hsl(265 50% 62%)"]
+// Pie slices, largest first: the primary color, then the series colors, then two more
+const SLICE_COLORS  = [C.primary, ...SERIES_COLORS, "hsl(38 80% 52%)", "hsl(330 55% 58%)"]
 const pctFmt        = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1, signDisplay: "exceptZero" })
+const shareFmt      = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 })
+const compactFmt    = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 })
+// A number in a narrow space: in full when short, else compact ("448 386 633,17" → "448,4 M")
+const shortFmt      = (v) => (fmt(v).length <= 9 ? fmt(v) : compactFmt.format(v))
 
 // Series color: the last series (e.g. the latest year) takes the primary color
 const seriesColor = (k, count) => (k === count - 1 ? C.primary : SERIES_COLORS[k % SERIES_COLORS.length])
@@ -296,13 +302,93 @@ function LineChart({ labels, series }) {
   )
 }
 
-const VIEWS = [{ value: "compare", label: "Comparer" }, { value: "timeline", label: "Chronologique" }]
+// Donut of shares: one slice per category, largest first, then the folded tail ("Autres (20)")
+// in a neutral color. Slices are arcs of a circle's stroke that sweep in. The legend gives each
+// slice's value and share; hovering either highlights the slice.
+function PieChart({ parts }) {
+  const [grown, setGrown] = useState(false)
+  const [hover, setHover] = useState(null)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setGrown(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  const slices = [
+    ...parts.labels.map((label, i) => ({ label, value: parts.values[i], color: SLICE_COLORS[i % SLICE_COLORS.length] })),
+    ...(parts.others ? [{ label: `Autres (${parts.others.count})`, value: parts.others.value, color: C.muted }] : []),
+  ]
+  const total = slices.reduce((sum, s) => sum + s.value, 0)
+  let start = 0
+  for (const s of slices) {
+    s.share = s.value / total
+    s.start = start
+    start  += s.share
+  }
+
+  const S = 200, R = 74, W = 30, CIRC = 2 * Math.PI * R
+  const GAP = slices.length > 1 ? 2 : 0  // px of card background between slices
+  const shown = hover === null ? null : slices[hover]
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 28, flexWrap: "wrap", padding: "8px 4px" }}>
+      <div style={{ position: "relative", width: S, height: S, flexShrink: 0 }}>
+        <svg width={S} height={S} viewBox={`0 0 ${S} ${S}`} style={{ display: "block" }}>
+          {slices.map((s, i) => (
+            <circle
+              key={i}
+              cx={S / 2} cy={S / 2} r={R} fill="none" stroke={s.color}
+              strokeWidth={hover === i ? W + 8 : W}
+              strokeDasharray={`${grown ? Math.max(s.share * CIRC - GAP, 0.5) : 0} ${CIRC}`}
+              transform={`rotate(${-90 + s.start * 360} ${S / 2} ${S / 2})`}
+              opacity={hover === null || hover === i ? 1 : 0.45}
+              style={{ cursor: "default", transition: `stroke-dasharray 800ms cubic-bezier(.2,.8,.2,1) ${i * 60}ms, stroke-width 150ms, opacity 150ms` }}
+              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            />
+          ))}
+        </svg>
+        {/* Center: the total, or the hovered slice */}
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none", textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: C.muted, maxWidth: 2 * R - W, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {shown ? shown.label : "Total"}
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.fg, fontVariantNumeric: "tabular-nums" }}>
+            {shown ? shareFmt.format(shown.share) : shortFmt(total)}
+          </div>
+          {shown && <div style={{ fontSize: 12, color: C.muted, fontVariantNumeric: "tabular-nums" }}>{shortFmt(shown.value)}</div>}
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0, flex: "1 1 280px", maxWidth: 380 }}>
+        {slices.map((s, i) => (
+          <div
+            key={i}
+            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            style={{
+              display: "grid", gridTemplateColumns: "10px minmax(0, 1fr) auto auto", alignItems: "center", gap: 10,
+              padding: "4px 8px", borderRadius: 6, fontSize: 13, background: hover === i ? C.stripe : "transparent",
+            }}
+          >
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: s.color }} />
+            <span title={s.label} style={{ color: C.fg, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
+            <span style={{ color: C.muted, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{fmt(s.value)}</span>
+            <span style={{ color: C.fg, fontWeight: 600, fontVariantNumeric: "tabular-nums", textAlign: "right", minWidth: 48 }}>{shareFmt.format(s.share)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const VIEWS  = [{ value: "compare", label: "Comparer" }, { value: "timeline", label: "Chronologique" }]
+const SHAPES = [{ value: "bars", label: "Barres" }, { value: "parts", label: "Parts" }]
 
 function Chart({ chart }) {
   const [measure, setMeasure] = useState(0)
   const [view, setView]       = useState("compare")
+  const [shape, setShape]     = useState(chart.parts_first ? "parts" : "bars")
   const data   = (view === "timeline" ? chart.timeline : chart.measures)[measure]
   const series = data.series.map((s, k) => ({ ...s, color: seriesColor(k, data.series.length) }))
+  // The pie choice is kept across measures, drawn only for those that read as shares
+  const pie    = shape === "parts" && !!data.parts
   const Plot   = chart.type === "line" ? LineChart : BarChart
   return (
     <div style={{ padding: "4px 16px 16px" }}>
@@ -311,9 +397,12 @@ function Chart({ chart }) {
           ? <Pills options={chart.measures.map((m, i) => ({ value: i, label: m.name }))} value={measure} onChange={setMeasure} />
           : <div style={{ fontSize: 12, color: C.muted }}>{data.name}</div>}
         {chart.timeline && <Pills options={VIEWS} value={view} onChange={setView} />}
+        {data.parts && <Pills options={SHAPES} value={shape} onChange={setShape} />}
       </div>
       {series.length > 1 && <Legend series={series} />}
-      <Plot key={`${measure}-${view}`} labels={data.labels} series={series} />
+      {pie
+        ? <PieChart key={`${measure}-pie`} parts={data.parts} />
+        : <Plot key={`${measure}-${view}`} labels={data.labels} series={series} />}
     </div>
   )
 }

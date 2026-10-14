@@ -16,6 +16,7 @@ databases:
       - {icon: kpi,  question: "Quel est le chiffre d'affaires total ?"}
       - {icon: line, question: "Chiffre d'affaires par mois en 2023 ?"}
       - {icon: bar,  question: "Combien de morceaux par genre ?"}
+      - {icon: pie,  question: "Répartition des morceaux par genre"}
       - {icon: rank, question: "Top 5 des artistes par nombre d'albums ?"}
   - name: "Northwind"
     dialect: "hive"

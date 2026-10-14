@@ -5,8 +5,8 @@ import pytest
 from ui.charts import pick_visualization
 
 
-def chart(columns, rows):
-    return pick_visualization(columns, rows)["chart"]
+def chart(columns, rows, **kwargs):
+    return pick_visualization(columns, rows, **kwargs)["chart"]
 
 
 def view(chart, key="measures"):
@@ -118,6 +118,76 @@ def test_unrelated_measures_are_switched_not_overlaid():
     c = chart(["mois", "ca", "nb_commandes"], [[m, 1.5, 3] for m in (1, 2)])
     assert [m["name"] for m in c["measures"]] == ["ca", "nb_commandes"]
     assert all(len(m["series"]) == 1 for m in c["measures"])
+
+
+# ── Pie: shares of a whole, on a toggle ──────────────────────────────────────
+
+
+def parts(c, measure=0):
+    return c["measures"][measure]["parts"]
+
+
+def test_categories_of_a_sum_are_pie_slices_largest_first():
+    c = chart(["country", "total_sales", "nb_orders"], [["Maroc", 4.0, 2], ["France", 9.5, 3], ["Spain", 1.5, 1]])
+    assert parts(c) == {"labels": ["France", "Maroc", "Spain"], "values": [9.5, 4.0, 1.5], "others": None}
+    assert parts(c, 1)["values"] == [3, 2, 1]
+
+
+def test_the_tail_is_folded_into_others():
+    # Chinook: tracks per genre, 25 genres
+    c = chart(["genre", "nb_tracks"], [[f"genre {i}", 100 - i] for i in range(25)])
+    assert parts(c)["labels"] == ["genre 0", "genre 1", "genre 2", "genre 3", "genre 4"]
+    assert parts(c)["others"] == {"count": 20, "value": sum(100 - i for i in range(5, 25))}
+
+
+def test_a_single_category_is_never_folded():
+    c = chart(["genre", "nb_tracks"], [[f"genre {i}", 10 - i] for i in range(6)])
+    assert len(parts(c)["labels"]) == 6
+    assert parts(c)["others"] is None
+
+
+@pytest.mark.parametrize("columns, rows", [
+    # Averages, prices and rates don't add up
+    (["genre", "prix_moyen_des_morceaux"], [["Rock", 0.99], ["Jazz", 1.99]]),
+    (["Country", "AvgTotal"], [["France", 5.5], ["Maroc", 4.5]]),
+    (["CategoryName", "UnitPrice"], [["Beverages", 18.0], ["Seafood", 9.5]]),
+    (["country", "taux_retour"], [["France", 0.1], ["Maroc", 0.2]]),
+    (["country", "part_%"], [["France", 60.0], ["Maroc", 40.0]]),
+    # A negative or zero value has no slice
+    (["country", "margin"], [["France", 9.5], ["Maroc", -1.0]]),
+    (["country", "total"], [["France", 9.5], ["Maroc", 0]]),
+])
+def test_values_that_make_no_whole_have_no_pie(columns, rows):
+    assert parts(chart(columns, rows)) is None
+
+
+def test_rows_cut_by_the_row_limit_have_no_pie():
+    assert parts(chart(["country", "total"], [["France", 9.5], ["Maroc", 4.0]], truncated=True)) is None
+
+
+def test_crossed_and_time_charts_have_no_pie():
+    crossed  = chart(["genre", "annee", "ventes"], [[g, y, 1.0] for g in ("Jazz", "Rock") for y in (2022, 2023)])
+    timeline = chart(["mois", "ca"], [[m, 1.0] for m in (1, 2, 3)])
+    for c in (crossed, timeline):
+        assert "parts" not in c["measures"][0]
+        assert "parts_first" not in c
+
+
+@pytest.mark.parametrize("question, parts_first", [
+    ("Répartition du chiffre d'affaires par pays", True),
+    ("Quelle part du CA fait chaque pays ?", True),
+    ("Proportion des ventes par pays", True),
+    ("Chiffre d'affaires par pays", False),
+    ("Combien de partenaires par pays ?", False),
+])
+def test_a_question_about_a_distribution_opens_the_pie(question, parts_first):
+    c = chart(["country", "total"], [["France", 9.5], ["Maroc", 4.0]], question=question)
+    assert c["parts_first"] is parts_first
+
+
+def test_the_pie_opens_first_only_when_there_is_one():
+    c = chart(["genre", "prix_moyen"], [["Rock", 0.99], ["Jazz", 1.99]], question="Répartition du prix moyen par genre")
+    assert c["parts_first"] is False
 
 
 # ── KPIs and no chart ────────────────────────────────────────────────────────

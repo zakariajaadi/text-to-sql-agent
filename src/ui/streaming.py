@@ -7,12 +7,12 @@ While the agent works, the parent step is named after the running stage, then af
 Each stage of the graph gets its own step, in the order it runs: named after the action while it
 runs ("Écriture de la requête SQL…"), then after its result and duration:
 
-    ▸ SQL Agent · 2 tables · 7,3 s
+    ▸ SQL Agent · 2 tables lues · 7,3 s
         Question reformulée : « Chiffre d'affaires par mois en 2022 ? » · 0,6 s     only when rewritten
-        Tables utilisées : invoice, invoiceline · métrique revenue · 1,1 s          vector search + rerank
+        Contexte de l'agent : 2 tables · métrique revenue · 1,1 s                   vector search + rerank
         Schéma complet conservé, 14 colonnes
         Plan de requête établi · 1,1 s                                              streamed
-        Requête SQL écrite · 2,1 s
+        Requête SQL écrite · lit invoice, invoiceline · 2,1 s
         12 lignes retournées · 2,4 s
 
 A rejected query shows as it runs: "Requête rejetée par Hive", "Requête SQL corrigée", then the rows.
@@ -31,7 +31,7 @@ from config import cfg
 from lib.column_pruning import get_column_names
 from lib.messages import get_question
 from lib.sql_tools import get_query_tables
-from resources import schema_store
+from resources import metrics_store, schema_store
 from ui.follow_ups import suggest_follow_ups
 from ui.result_card import build_result_card_props
 
@@ -134,7 +134,7 @@ class TurnRenderer:
         parts = ["SQL Agent"]
         if self.result and self.result["tables"]:
             n = len(self.result["tables"])
-            parts.append(f"{n} table{'s' if n > 1 else ''}")
+            parts.append(f"{n} table{'s' if n > 1 else ''} lue{'s' if n > 1 else ''}")
         if status == "stopped":
             parts.append("arrêté")
         parts.append(_seconds(time.perf_counter() - self.turn_start))
@@ -206,21 +206,40 @@ class TurnRenderer:
         if not output.get("is_in_scope", True):
             return "Aucune table utile : question hors périmètre", f"Aucune table de {self.db_name} ne permet de répondre à cette question."
 
-        title = f"Tables utilisées : {', '.join(selected)}"
+        # The schema given to planner and sql_coder, not the tables the query reads: the title
+        # counts them, only the tables actually read are named (SQL step, parent step, result card)
+        title = f"Contexte de l'agent : {len(selected)} table{'s' if len(selected) > 1 else ''}"
         if metrics:
             title += f" · métrique{'s' if len(metrics) > 1 else ''} {', '.join(metrics)}"
 
-        detail = [f"**Choisies parmi {len(candidates)} candidates :** "
-                  f"{', '.join(t for t in selected if t in chosen) or '—'}"]
-        added = [t for t in selected if t not in chosen]
-        if added:
-            # Tables of the selected metrics, and bridge tables reached by foreign keys
-            detail.append(f"**Ajoutées (métriques, clés étrangères) :** {', '.join(added)}")
-        if metrics:
-            detail.append(f"**Métriques :** {', '.join(metrics)}")
-        dropped = [t for t in candidates if t not in selected]
+        # A state, not a story: the candidates split into the tables given to the agent, each with
+        # the reason it is there, and the dropped ones, so both counts add up to the candidates
+        picked = [t for t in selected if t in chosen]
+        added  = [t for t in selected if t not in picked]
+        metric_tables = {t for m in metrics for t in metrics_store[self.db_name][m].tables}
+        by_metric     = [t for t in added if t in metric_tables]
+        by_link       = [t for t in added if t not in metric_tables]   # bridges between two selected tables
+        dropped       = [t for t in candidates if t not in selected]
+        outside       = [t for t in selected if t not in candidates]   # loaded from the store
+
+        metric_label = f"la métrique {metrics[0]}" if len(metrics) == 1 else f"les métriques {', '.join(metrics)}"
+        reasons = [
+            (f"Choisie{'s' if len(picked) > 1 else ''} par l'agent", picked),
+            (f"Ajoutée{'s' if len(by_metric) > 1 else ''} pour {metric_label}", by_metric),
+            (f"Ajoutée{'s' if len(by_link) > 1 else ''} par les liens entre tables", by_link),
+        ]
+        if not picked:  # no valid table from the LLM: rerank_tables falls back to all the candidates
+            reasons = [("Toutes les candidates", selected)]
+        given = "\n".join(f"- {reason} : {', '.join(tables)}" for reason, tables in reasons if tables)
+        detail = [
+            f"**Trouvées par la recherche :** {len(candidates)} table{'s' if len(candidates) > 1 else ''}",
+            f"**Fournies à l'agent ({len(selected)}) :**\n{given}",
+        ]
         if dropped:
-            detail.append(f"**Écartées :** {', '.join(dropped)}")
+            detail.append(f"**Écartées ({len(dropped)}) :** {', '.join(dropped)}")
+        if outside:
+            # The tables that make the counts exceed the candidates
+            detail.append(f"**Hors recherche :** {', '.join(outside)}")
         return title, "\n\n".join(detail)
 
     async def _end_prune_columns(self, input: dict, output: dict) -> tuple:
@@ -243,8 +262,17 @@ class TurnRenderer:
         return title, detail
 
     async def _end_sql_coder(self, input: dict, output: dict) -> tuple:
-        title = "Requête SQL corrigée" if input.get("validation_feedback") else "Requête SQL écrite"
-        return title, _sql_block(output.get("generated_query", ""))
+        query  = output.get("generated_query", "")
+        title  = "Requête SQL corrigée" if input.get("validation_feedback") else "Requête SQL écrite"
+        detail = _sql_block(query)
+        tables = _tables_in_sql(query, input["selected_db"])
+        if tables:
+            title += f" · lit {', '.join(tables)}"
+            # The tables of the agent's context this query doesn't read
+            unused = [t for t in input.get("selected_schemas", {}) if t not in tables]
+            if unused:
+                detail = f"**Non utilisées du contexte :** {', '.join(unused)}\n\n{detail}"
+        return title, detail
 
     async def _end_sql_validator(self, input: dict, output: dict) -> tuple | None:
         if output.get("validation_feedback"):
@@ -255,18 +283,20 @@ class TurnRenderer:
 
         if "result_rows" not in output:
             return None
-        rows  = output["result_rows"]
-        query = input.get("generated_query", "")
+        rows     = output["result_rows"]
+        query    = input.get("generated_query", "")
+        question = get_question(input)
         self.result = {
             "columns":   output["result_columns"],
             "rows":      rows,
             "truncated": output.get("result_truncated", False),
             "sql":       query,
             "tables":    _tables_in_sql(query, input["selected_db"]),
+            "question":  question,
         }
         # Suggest follow-up questions while format_answer writes the answer
         self.follow_ups_task = asyncio.create_task(suggest_follow_ups(
-            question = get_question(input),
+            question = question,
             schema   = input.get("retrieved_schema", ""),
             sql      = query,
             columns  = output["result_columns"],
@@ -332,6 +362,7 @@ class TurnRenderer:
             tables    = self.result["tables"],
             retries   = self.rejected,
             db_name   = self.db_name or "",
+            question  = self.result["question"],
         )
         self.answer_msg.elements = [cl.CustomElement(name="ResultCard", props=props, display="inline")]
 

@@ -2,7 +2,7 @@
 Charts — what the result card draws for a query result: KPI tiles or a ready-to-draw chart
 Used by: ui/result_card.py (props of the ResultCard element)
 
-Picked by deterministic rules on the result shape, never by an LLM, in three steps:
+Picked by deterministic rules on the result shape and the question words, never by an LLM, in three steps:
   1. classify   each column: temporal (year, quarter, month, date, period), measure, id or label
   2. normalize  to one shape per meaning, so the SQL wording doesn't change the chart:
                 - a month date next to a year column ("2022-01" beside 2022) becomes the month (1)
@@ -13,8 +13,8 @@ Picked by deterministic rules on the result shape, never by an LLM, in three ste
                   - 2 crossed dimensions, one with 2..MAX_GROUPS values → one series per value
                     (lines on a temporal axis, grouped bars otherwise), e.g. year × month
                   - temporal column(s) + measures          → line chart
-                  - label column(s) + measures             → bar chart, largest first
-                  - anything else                          → table only
+                  - label column(s) + measures             → bar chart, largest first (pie on a toggle)
+                  - anything else                         → table only
 
 The chart is sent ready to draw, so the element only renders it:
   {"type": "line" | "bar",
@@ -22,6 +22,15 @@ The chart is sent ready to draw, so the element only renders it:
    "timeline": same list as "measures" | None}
 One entry per measure the user can switch between. "timeline" is the chronological view of a
 year comparison (2022 vs 2023 by month → 24 months in a row), offered as a toggle.
+
+A bar chart of categories also reads as shares of a whole, drawn as a pie on a toggle. Each of
+its measures then carries its slices, and the chart says which view opens first:
+  measure["parts"]:     {"labels": [...], "values": [...], "others": {"count": int, "value": num} | None}
+                        or None when the values make no whole (an average, a price, a value ≤ 0,
+                        rows cut by the row limit). Past MAX_SLICES categories, the smallest are
+                        folded into "others".
+  chart["parts_first"]: the question asks for a distribution ("répartition", "part"...): the pie
+                        opens first. Otherwise bars do: a ranking reads better than angles.
 """
 
 import re
@@ -31,6 +40,7 @@ MAX_KPIS     = 4
 MAX_MEASURES = 4    # measures the user can switch between
 MAX_LABELS   = 2    # label columns joined into one bar label (first name + last name)
 MAX_GROUPS   = 4    # most series a dimension may split the chart into
+MAX_SLICES   = 6    # most slices of a pie, "others" included
 
 MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
 
@@ -43,6 +53,18 @@ _PERIOD_NAME  = re.compile(r"(^|_)(date|day|jour|period|periode|période|quarter
 _ID_NAME      = re.compile(r"(^|_)id$|[a-z]Id$|^id_", re.IGNORECASE)
 _MONTH_DATE   = re.compile(r"^(?P<year>\d{4})-(?P<month>\d{2})(-01([T ]00:00:00(\.0+)?)?)?$")
 _YEAR_SUFFIX  = re.compile(r"^(?P<base>.*?)[_ ]?(?P<year>(19|20)\d{2})$|^(?P<year2>(19|20)\d{2})[_ ]?(?P<base2>.*)$")
+_NAME_WORDS   = re.compile(r"[A-Z]?[a-zà-ÿ]+|[A-Z]+(?![a-z])|\d+")  # unit_price, UnitPrice → unit, price
+
+# Words of a measure whose values don't add up across categories: a pie of them has no whole
+_NOT_PARTS = {
+    "avg", "average", "mean", "moy", "moyen", "moyenne", "median", "mediane", "médiane", "min", "max",
+    "prix", "price", "taux", "rate", "ratio", "pct", "percent", "percentage", "pourcent", "pourcentage",
+}
+# Words of a question asking how a whole splits: the pie opens first
+_PARTS_QUESTION = re.compile(
+    r"\b(r[ée]partitions?|parts?|proportions?|pourcentages?|distributions?|ventilations?|shares?|breakdowns?)\b",
+    re.IGNORECASE,
+)
 
 # Temporal units from coarsest to finest: the sort order of a time axis. "period" (free text,
 # e.g. "2022-S1") has no known order and keeps the query's row order.
@@ -58,8 +80,12 @@ class Field:
     values: list        # one per row
 
 
-def pick_visualization(columns: list[str], rows: list[list]) -> dict:
-    """Return {"chart": {...} | None, "kpis": [...] | None} for a query result."""
+def pick_visualization(columns: list[str], rows: list[list], question: str = "", truncated: bool = False) -> dict:
+    """
+    Return {"chart": {...} | None, "kpis": [...] | None} for a query result.
+    question: the user's question, its words pick the first view of a pie.
+    truncated: the rows were cut by the row limit, so they make no whole to share.
+    """
     none = {"chart": None, "kpis": None}
     if not rows or not columns:
         return none
@@ -70,7 +96,9 @@ def pick_visualization(columns: list[str], rows: list[list]) -> dict:
 
     if len(rows) == 1:
         return {"chart": None, "kpis": _kpis(fields)}
-    return {"chart": _chart(_melt_year_pivot(_month_of_dated_year(fields))), "kpis": None}
+    chart = _chart(_melt_year_pivot(_month_of_dated_year(fields)), whole=not truncated,
+                   asks_parts=bool(_PARTS_QUESTION.search(question)))
+    return {"chart": chart, "kpis": None}
 
 
 # ── 1. Classify ───────────────────────────────────────────────────────────────
@@ -169,7 +197,7 @@ def _kpis(fields: list[Field]) -> list[dict]:
     ][:MAX_KPIS]
 
 
-def _chart(fields: list[Field]) -> dict | None:
+def _chart(fields: list[Field], whole: bool, asks_parts: bool) -> dict | None:
     measures = [f for f in fields if f.kind == "measure"][:MAX_MEASURES]
     temporal = [f for f in fields if f.kind == "temporal"]
     labels   = [f for f in fields if f.kind == "label"]
@@ -189,8 +217,33 @@ def _chart(fields: list[Field]) -> dict | None:
     # Categories, or ids when nothing names the rows (e.g. "CustomerId, total")
     labels = labels or [f for f in fields if f.kind == "id"]
     if labels:
-        return {"type": "bar", "measures": [_by_size(_sequence(labels[:MAX_LABELS], m)) for m in measures], "timeline": None}
+        bars = [_by_size(_sequence(labels[:MAX_LABELS], m)) for m in measures]
+        bars = [{**b, "parts": _parts(b) if whole else None} for b in bars]
+        parts_first = asks_parts and any(b["parts"] for b in bars)
+        return {"type": "bar", "measures": bars, "timeline": None, "parts_first": parts_first}
     return None
+
+
+def _parts(data: dict) -> dict | None:
+    """
+    Pie slices of a single-series bar chart, or None when its values make no whole: a measure
+    that doesn't add up (an average, a price, a rate) or a value ≤ 0 has no share.
+    Bars come largest first: past MAX_SLICES, the tail is folded into one "others" slice.
+    """
+    [series] = data["series"]
+    values   = series["values"]
+    words    = {w.lower() for w in _NAME_WORDS.findall(data["name"])}
+    if "%" in data["name"] or words & _NOT_PARTS or not all(v is not None and v > 0 for v in values):
+        return None
+
+    if len(values) <= MAX_SLICES:
+        return {"labels": data["labels"], "values": values, "others": None}
+    kept = MAX_SLICES - 1
+    return {
+        "labels": data["labels"][:kept],
+        "values": values[:kept],
+        "others": {"count": len(values) - kept, "value": sum(values[kept:])},
+    }
 
 
 def _crossed(dims: list[Field]) -> tuple[Field, Field] | None:

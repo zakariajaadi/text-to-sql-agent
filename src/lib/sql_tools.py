@@ -8,7 +8,7 @@ offline/semantic_gen/metrics.py
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.hive import Hive
-from sqlglot.errors import ParseError
+from sqlglot.errors import ParseError, TokenError
 
 
 class Impala(Hive):
@@ -37,7 +37,7 @@ def normalize_sql(query: str, dialect: str) -> str:
 
     try:
         tree = sqlglot.parse_one(sql, read=target)
-    except ParseError:
+    except (ParseError, TokenError):  # unparseable SQL, e.g. an unclosed quote
         return query
 
     for ordered in tree.find_all(exp.Ordered):
@@ -59,7 +59,7 @@ def get_query_tables(query: str, dialect: str) -> list[str]:
     """
     try:
         tree = sqlglot.parse_one(query, read=sqlglot_dialect(dialect))
-    except ParseError:
+    except (ParseError, TokenError):  # unparseable SQL, e.g. an unclosed quote
         return []
 
     cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
@@ -77,7 +77,7 @@ def contains_expression(query: str, expression: str, dialect: str) -> bool:
     try:
         tree   = sqlglot.parse_one(query, read=read)
         target = sqlglot.parse_one(expression, read=read)
-    except ParseError:
+    except (ParseError, TokenError):  # unparseable SQL, e.g. an unclosed quote
         return False
 
     def unqualified(node: exp.Expression) -> str:
