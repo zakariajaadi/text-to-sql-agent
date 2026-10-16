@@ -33,6 +33,10 @@ dependencies = [
 kerberos = [
     "impyla[kerberos]>=0.24.0",
 ]
+# A recent SQLite for Chroma where the system one is too old (RHEL 8 / UBI 8), see src/lib/sqlite_compat.py
+sqlite = [
+    "pysqlite3-binary>=0.5.4; sys_platform == 'linux'",
+]
 
 [dependency-groups]
 dev = [

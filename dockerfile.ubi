@@ -26,7 +26,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra kerberos --python python3.12
+RUN uv sync --frozen --no-dev --extra kerberos --extra sqlite --python python3.12
 
 ENV PATH="/app/.venv/bin:$PATH"
 
@@ -39,6 +39,9 @@ COPY chainlit.md .
 
 RUN chown -R 1001:0 /app
 USER 1001
+
+# The UBI entrypoint script activates the image's own Python environment, which would shadow /app/.venv
+ENTRYPOINT []
 
 EXPOSE 8000
 
