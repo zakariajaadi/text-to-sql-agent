@@ -1,11 +1,11 @@
-/* Welcome screen mascot: after a few seconds of inactivity, the robot of the agent avatar wakes up, looks around,
+/* Welcome screen mascot: after half a minute of inactivity, the robot of the agent avatar wakes up, looks around,
    jumps out of its circle unfolding its arms and legs, lands on the message composer, runs to its left corner and
    sits on the edge, legs dangling. At rest it swings its legs, blinks and follows the pointer, or the text being
    typed, with its eyes. Plays once per page load, only on the welcome screen. Inactivity means no click, key,
    scroll or touch: a pointer resting or drifting over the page does not count. Styles live in custom.css.
    Replay from the console: sqlAgentMascot.replay() */
 (() => {
-  const IDLE_MS = 5000;
+  const IDLE_MS = 30000;
 
   // The robot is the agent icon (public/icons/agent.svg): a 24-unit grid drawn at 4/3 in the 64px avatar, so at
   // scale 1 its head covers the avatar's exactly. Poses are in these units.

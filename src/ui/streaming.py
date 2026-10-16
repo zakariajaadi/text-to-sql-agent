@@ -10,6 +10,7 @@ runs ("Écriture de la requête SQL…"), then after its result and duration:
     ▸ SQL Agent · 2 tables lues · 7,3 s
         Question reformulée : « Chiffre d'affaires par mois en 2022 ? » · 0,6 s     only when rewritten
         Contexte de l'agent : 2 tables · métrique revenue · 1,1 s                   vector search + rerank
+        Valeur trouvée : « Sao Paulo »                                              only when values were found
         Schéma complet conservé, 14 colonnes
         Plan de requête établi · 1,1 s                                              streamed
         Requête SQL écrite · lit invoice, invoiceline · 2,1 s
@@ -43,14 +44,19 @@ NODE_STAGES = {
     "condense_question": "Reformulation de la question…",
     "retrieve_schema":   "Recherche des tables utiles…",
     "rerank_tables":     "Recherche des tables utiles…",
+    "match_values":      "Recherche des valeurs…",
     "prune_columns":     "Réduction du schéma…",
     "planner":           "Planification de la requête…",
     "sql_coder":         "Écriture de la requête SQL…",
     "sql_validator":     "Exécution sur {engine}…",
 }
 
-# Stages shown only once their node ends with something to show (the question was rewritten)
-LATE_STAGES = {"condense_question"}
+# Stages shown only once their node ends with something to show (the question was rewritten,
+# values were found)
+LATE_STAGES = {"condense_question", "match_values"}
+
+# Values named in the title of the match_values step, the others are counted
+MAX_TITLE_VALUES = 3
 
 
 class TurnRenderer:
@@ -212,15 +218,14 @@ class TurnRenderer:
         if metrics:
             title += f" · métrique{'s' if len(metrics) > 1 else ''} {', '.join(metrics)}"
 
-        # A state, not a story: the candidates split into the tables given to the agent, each with
-        # the reason it is there, and the dropped ones, so both counts add up to the candidates
+        # A state, not a story: the tables given to the agent, each with the reason it is there,
+        # then the candidates of the vector search left out
         picked = [t for t in selected if t in chosen]
         added  = [t for t in selected if t not in picked]
         metric_tables = {t for m in metrics for t in metrics_store[self.db_name][m].tables}
         by_metric     = [t for t in added if t in metric_tables]
         by_link       = [t for t in added if t not in metric_tables]   # bridges between two selected tables
         dropped       = [t for t in candidates if t not in selected]
-        outside       = [t for t in selected if t not in candidates]   # loaded from the store
 
         metric_label = f"la métrique {metrics[0]}" if len(metrics) == 1 else f"les métriques {', '.join(metrics)}"
         reasons = [
@@ -231,16 +236,29 @@ class TurnRenderer:
         if not picked:  # no valid table from the LLM: rerank_tables falls back to all the candidates
             reasons = [("Toutes les candidates", selected)]
         given = "\n".join(f"- {reason} : {', '.join(tables)}" for reason, tables in reasons if tables)
-        detail = [
-            f"**Trouvées par la recherche :** {len(candidates)} table{'s' if len(candidates) > 1 else ''}",
-            f"**Fournies à l'agent ({len(selected)}) :**\n{given}",
-        ]
+        detail = [f"**Fournies à l'agent ({len(selected)}) :**\n{given}"]
         if dropped:
             detail.append(f"**Écartées ({len(dropped)}) :** {', '.join(dropped)}")
-        if outside:
-            # The tables that make the counts exceed the candidates
-            detail.append(f"**Hors recherche :** {', '.join(outside)}")
         return title, "\n\n".join(detail)
+
+    async def _end_match_values(self, input: dict, output: dict) -> tuple | None:
+        """Show the values of the database found for the question, only when some were found."""
+        matched = output.get("matched_values") or {}
+        values  = list(dict.fromkeys(v for columns in matched.values() for vs in columns.values() for v in vs))
+        if not values:
+            return None
+
+        plural = "s" if len(values) > 1 else ""
+        title  = f"Valeur{plural} trouvée{plural} : " + ", ".join(f"« {v} »" for v in values[:MAX_TITLE_VALUES])
+        if len(values) > MAX_TITLE_VALUES:
+            title += f" +{len(values) - MAX_TITLE_VALUES}"
+
+        # Where each value was found: the columns planner can filter on
+        detail = "\n".join(
+            f"- {table}.{column} : {', '.join(f'`{v}`' for v in vs)}"
+            for table, columns in matched.items() for column, vs in columns.items()
+        )
+        return title, detail
 
     async def _end_prune_columns(self, input: dict, output: dict) -> tuple:
         before = sum(len(get_column_names(ddl)) for ddl in input.get("selected_schemas", {}).values())
@@ -278,6 +296,10 @@ class TurnRenderer:
         if output.get("validation_feedback"):
             # Only the database error is shown, never the instructions written for sql_coder
             self.rejected += 1
+            if output.get("validation_check") == "values":
+                # Caught before execution: a filtered value the data doesn't hold
+                return ("Valeur absente des données", f"```\n{output.get('validation_error', '')}\n```\n"
+                        "L'agent corrige le filtre avant d'exécuter la requête.", True)
             error = _short_db_error(output.get("validation_error", ""))
             return f"Requête rejetée par {self.engine}", f"```\n{error}\n```\nL'agent corrige la requête à partir de cette erreur.", True
 

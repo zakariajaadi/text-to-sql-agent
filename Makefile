@@ -56,7 +56,7 @@ relations:  ## Generate FK relations (review semantic_layer/<DB>/relationships.y
 metrics:  ## Propose business metrics (review semantic_layer/<DB>/metrics.yaml)
 	$(RUN) -m offline.cli metrics --db $(DB)
 
-index:  ## Index the tables into Chroma, with the values of the categorical columns (no LLM)
+index:  ## Index the tables into Chroma and the categorical values into data/values/<DB>.sqlite (no LLM)
 	$(RUN) -m offline.cli index --db $(DB)
 
 schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])

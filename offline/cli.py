@@ -9,7 +9,7 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
     (review the YAML files)
-    index         → Chroma schema index (default command)
+    index         → Chroma schema index + value index data/values/<db>.sqlite (default command)
 
 Without --db, the command runs on every configured database.
 """

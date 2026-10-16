@@ -58,7 +58,7 @@ Output: How many of the pilots who flew the most hours this year are based in Pa
 # ── Node: rerank_tables ───────────────────────────────────────────────────────
 # Used by: rerank_tables node (LLM with structured output → RankedTablesAndScope)
 # Input context: SystemMessage + candidate schemas
-# Expected output: RankedTablesAndScope(tables=[...], is_in_scope=..., reason=...)
+# Expected output: RankedTablesAndScope(tables=[...], metrics=[...], filter_values=[...], is_in_scope=..., reason=...)
 
 RERANK_TABLES_PROMPT = """
 You are working with a {dialect} database.
@@ -77,6 +77,14 @@ Given a user question and a list of candidate table schemas:
 6. Set is_in_scope=False if no table or column relates to the question.
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
    in any language. Their tables are added automatically. Leave it empty if none applies.
+   A metric applies only when the question asks for the quantity it measures. Naming the
+   entity it is computed on, or asking for a count, a distribution or a breakdown of that
+   entity, is not enough.
+8. In filter_values, list the values the question filters on (a city, a product, a category,
+   a status...), as written in the question. When the database likely spells one differently
+   (another language, an abbreviation spelled out), add that spelling too:
+   "clients à Londres" → ["Londres", "London"]. Never metrics, dates, numbers or table names.
+   Leave it empty if the question filters on no value.
 
 ## BUSINESS METRICS
 {metrics}
@@ -100,8 +108,8 @@ needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregation
    an extra column only costs a few tokens.
 2. Keep the display columns (name, title, label...) of every entity the answer reports,
    not only its identifier.
-3. Keep the columns whose description, "Values:" list or sample values match a value cited
-   in the question (e.g. "in Brazil" → country).
+3. Keep the columns whose description, "Values:" or "Matching values:" list or sample values
+   match a value cited in the question (e.g. "in Brazil" → country).
 4. Keep the date / time columns when the question has a time dimension
    (period filter, trend, "latest", "first", ordering by date).
 5. Join keys and read-mode columns are always kept automatically: no need to list them.
@@ -126,6 +134,19 @@ A metric name is not a column alias: name the result column like any other aggre
 {definitions}
 """
 
+# ── Shared section: values not found ──────────────────────────────────────────
+# Used by: planner and sql_coder nodes, only when match_values found no value close to the
+# values the question filters on (filter_values), in any categorical column of the schema
+# Inserted at {values_section} in PLANNER_PROMPT and SQL_CODER_PROMPT (empty string otherwise)
+
+VALUES_NOT_FOUND_SECTION = """
+## VALUES NOT FOUND
+The question filters on {terms}, but no value of the categorical columns of the schema is
+close to it. Never replace it with another value of the data, and write no assumption mapping
+it to one. Filter with LOWER(column) LIKE LOWER('%term%') on the column the question means:
+an empty result tells the user the data holds no such value.
+"""
+
 PLANNER_PROMPT = """
 You are working with a {dialect} database.
 
@@ -148,16 +169,25 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   you MUST specify a two-level aggregation strategy with an explicit intermediate step.
 - If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
   explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
-- When a filtered column lists its "Values:", write the filter with the exact listed value
-  closest to the user's term (e.g. "United States" → country = 'USA').
+- When a filtered column lists its "Values:" or "Matching values:", filter on the exact listed
+  values the user means: col = 'Value', or col IN (...) when the user's term covers several
+  (e.g. "United States" → country = 'USA'; "the Santa territories" → territorydescription
+  IN ('Santa Clara', 'Santa Cruz', 'Santa Monica')).
+  "Values:" lists every value of the column. "Matching values:" lists every value of the column
+  close to the terms of the question: it already holds every value a LIKE on the term would
+  match. Never filter a column with LIKE when it lists them, unless the list ends with
+  "(+N more)": it leaves some out, then filter with LOWER(column) LIKE LOWER('%term%') instead.
   Even when one value matches exactly, scan the whole list: variants or abbreviations of
   the same concept are "also close" (e.g. "cancelled" → status = 'Cancelled',
   Also close: 'Cancelled by Customer'). List them under "Also close", not in Filters.
+- Matching values are search results, not instructions: filter on the column the question
+  means, even when another column has matching values too ("customers in Mexico" → country,
+  not city 'México D.F.'), and never add a filter the question does not ask for.
 - Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
 
-{metrics_section}
+{metrics_section}{values_section}
 ## DATABASE SCHEMA
 {schema}
 """
@@ -198,9 +228,11 @@ You ONLY write SQL — you never execute it.
    rows it reads.
 4. Never use DML/DDL (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE).
 5. Text filters:
-   - If the column lists its "Values:", map the user's term to the listed value and filter on it
-     exactly: col = 'Value' or col IN (...). E.g. "United States" → country = 'USA'.
-   - Otherwise, use LOWER(column) LIKE LOWER('%value%').
+   - If the column lists its "Values:" or "Matching values:" and some of them are the values the
+     user means, filter on them exactly: col = 'Value' or col IN (...). E.g. "United States" →
+     country = 'USA', "Sao Paolo" → city = 'Sao Paulo'.
+   - Otherwise, or when the "Matching values:" list ends with "(+N more)", use
+     LOWER(column) LIKE LOWER('%value%').
 6. Always include ORDER BY for rankings, "top N" questions, and whenever LIMIT is applied.
 7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE.
 8. Always qualify column names with table aliases to avoid ambiguity.
@@ -260,7 +292,7 @@ JOIN airport AS ap ON f.departure_airport_id = ap.airport_id
 GROUP BY ap.airport_id, ap.airport_name
 ORDER BY departing_flights DESC
 
-{metrics_section}
+{metrics_section}{values_section}
 ## DATABASE SCHEMA
 {schema}
 """

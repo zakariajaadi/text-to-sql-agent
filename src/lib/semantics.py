@@ -2,7 +2,7 @@
 
 """
 Semantics helpers — loading semantic_layer/<db>/tables.yaml and relationships.yaml, rendering table documents.
-Used by: resources.py (FK graphs), offline/ (indexer, generators)
+Used by: resources.py (FK graphs), offline/ (indexer, generators), agent/nodes.py (match_values)
 """
 
 from pathlib import Path
@@ -88,6 +88,41 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
                 comment = f"{comment} Values: {', '.join(repr(str(v)) for v in values[name])}".strip()
             if comment:
                 line = f"{line.rstrip()}  -- {comment}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def add_matching_values(table_ddl: str, values: dict[str, list[str]],
+                        more: dict[str, int] | None = None) -> str:
+    """
+    Append to the inline comment of each given column the values of the value index that
+    match the question (agent/nodes.py match_values):
+
+        `city` STRING,  -- City of the company. Matching values: 'Sao Paulo'
+        `name` STRING,  -- Agency name. Matching values: 'CASA ANFA', ..., 'CASA OASIS' (+12 more)
+
+    values: {column: [value, ...]}; the other columns are left as they are.
+    more:   {column: n}, the close values left out of the list.
+    """
+    more = more or {}
+    if not values:
+        return table_ddl
+
+    lines     = []
+    in_create = False
+    for line in table_ddl.splitlines():
+        if line.startswith("CREATE TABLE"):
+            in_create = True
+        elif line.startswith(")"):
+            in_create = False
+        elif in_create and line.strip():
+            name = line.strip().split()[0].strip('`"[]')
+            if name in values:
+                matching = f"Matching values: {', '.join(repr(str(v)) for v in values[name])}"
+                if more.get(name):
+                    matching += f" (+{more[name]} more)"
+                line     = f"{line.rstrip()} {matching}" if "--" in line else f"{line.rstrip()}  -- {matching}"
         lines.append(line)
 
     return "\n".join(lines)

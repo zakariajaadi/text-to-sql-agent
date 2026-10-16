@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=3.0.1",
     "pyhive[hive-pure-sasl]>=0.7.0",
     "python-dotenv>=1.2.2",
+    "rapidfuzz>=3.14.6",
     "redis>=7.4.0",
     "requests>=2.32.5",
     "sqlglot>=30.20.0",

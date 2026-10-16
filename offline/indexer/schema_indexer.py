@@ -1,7 +1,9 @@
 # offline/indexer/schema_indexer.py
 
 """
-Builds the Chroma schema index read by the agent at query time (resources.get_schema_retriever).
+Builds the indexes read by the agent at query time:
+    - the Chroma schema index (resources.get_schema_retriever)
+    - the value index of the categorical columns (lib/value_index.py)
 
 Each table becomes one document (DDL + description header + inline column comments)
 indexed in a shared Chroma store. No LLM is involved: descriptions come from the reviewed
@@ -9,7 +11,7 @@ semantic_layer/<db>/tables.yaml, the values of its categorical columns are read 
 database, and undocumented tables are indexed with their raw DDL.
 
 Run it last, once the generated YAML files are reviewed (see offline/cli.py).
-Pipeline order: build_documents → index
+Pipeline order: fetch_values → build_documents → index → index_values
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +20,11 @@ from langchain_core.documents import Document
 from loguru import logger
 
 from lib.semantics import load_fk_relations, load_semantics, render_table
-from offline.indexer.categorical_values import fetch_categorical_columns_values
+from lib.value_index import write_value_index
+from offline.indexer.categorical_values import (
+    fetch_categorical_columns_values,
+    fits_in_prompt,
+)
 from resources import db_registry, vector_store
 
 
@@ -48,33 +54,49 @@ class SchemaIndexer:
         # Single shared Chroma store — same persist_directory for all databases
         self.vsm = vector_store
 
-    def build_documents(self) -> list[Document]:
+    def fetch_values(self) -> dict[str, dict[str, dict[str, int]]]:
+        """
+        Values of the categorical columns of the documented tables, read from the database:
+        {table: {column: {value: row count}}}.
+
+        Table after table: each GROUP BY runs a Hive job, and concurrent jobs fail on a local Tez.
+        """
+        semantics = load_semantics(self.db_name)
+
+        values = {}
+        for table in [t for t in self.db.get_usable_table_names() if t in semantics]:
+            columns = semantics[table].get("categorical_columns") or []
+            logger.info(f"[{self.db_name}] Fetching values: {table} ({len(columns)} column(s))")
+            values[table] = fetch_categorical_columns_values(self.db, self.db_name, table, columns)
+        return values
+
+    def build_documents(self, values: dict[str, dict[str, dict[str, int]]]) -> list[Document]:
         """
         Build one Document per table, ready to be embedded into Chroma — no LLM.
 
         Tables documented in `semantic_layer/<db>/tables.yaml` are rendered by `render_table()`
         (description header + inline column comments, with the values of the categorical
-        columns read from the database). Undocumented tables are indexed with their raw DDL,
+        columns that fit in the prompt). Undocumented tables are indexed with their raw DDL,
         and a warning suggests running `semantics` for them.
+
+        values: the categorical values, from fetch_values
         """
         tables       = self.db.get_usable_table_names()
         semantics    = load_semantics(self.db_name)
         fk_relations = load_fk_relations(self.db_name)
-
-        # Values of the categorical columns, table after table: each GROUP BY runs a Hive
-        # job, and concurrent jobs fail on a local Tez
-        values = {}
-        for table in [t for t in tables if t in semantics]:
-            columns = semantics[table].get("categorical_columns") or []
-            logger.info(f"[{self.db_name}] Fetching values: {table} ({len(columns)} column(s))")
-            values[table] = fetch_categorical_columns_values(self.db, self.db_name, table, columns)
 
         def build_document(table: str) -> Document:
             # DDL + sample rows: one database round-trip per table
             ddl = self.db.get_table_info(table_names=[table]).strip()
 
             if table in semantics:
-                content = render_table(table, ddl, semantics[table], fk_relations, values[table])
+                # Long value lists are left to the value index, searched at query time
+                inline  = {
+                    column: sorted(counts)
+                    for column, counts in values.get(table, {}).items()
+                    if fits_in_prompt(counts)
+                }
+                content = render_table(table, ddl, semantics[table], fk_relations, inline)
                 logger.info(f"[{self.db_name}] Built: {table}")
             else:
                 content = ddl
@@ -114,7 +136,18 @@ class SchemaIndexer:
 
         logger.info(f"[{self.db_name}] Indexed {len(documents)} schemas to Chroma.")
 
+    def index_values(self, values: dict[str, dict[str, dict[str, int]]]):
+        """Write the value index of this database (lib/value_index.py), every categorical column included."""
+        inline = {
+            (table, column)
+            for table, columns in values.items()
+            for column, counts in columns.items()
+            if fits_in_prompt(counts)
+        }
+        write_value_index(self.db_name, values, inline)
+
     def run(self):
-        """Run the full pipeline: build_documents → index."""
-        documents = self.build_documents()
-        self.index(documents)
+        """Run the full pipeline: fetch_values → build_documents → index → index_values."""
+        values = self.fetch_values()
+        self.index(self.build_documents(values))
+        self.index_values(values)

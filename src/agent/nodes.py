@@ -17,6 +17,7 @@ from agent.prompts import (
     RERANK_TABLES_PROMPT,
     SQL_CODER_PROMPT,
     SQL_VALIDATOR_FEEDBACK,
+    VALUES_NOT_FOUND_SECTION,
 )
 from agent.schemas import ColumnSelection, RankedTablesAndScope
 from agent.state import AgentState
@@ -38,7 +39,9 @@ from lib.metrics import (
     render_metric_catalog,
     render_metric_definitions,
 )
-from lib.sql_tools import contains_expression
+from lib.semantics import add_matching_values
+from lib.sql_tools import contains_expression, get_query_tables, get_value_filters
+from lib.value_index import find_matching_values, find_unknown_values
 from resources import (
     fast_model,
     fk_graphs,
@@ -58,6 +61,14 @@ def get_selected_metrics(state: AgentState) -> list[Metric]:
 def render_metrics_section(metrics: list[Metric]) -> str:
     """BUSINESS METRICS section of the planner and sql_coder prompts, empty when no metric is selected."""
     return METRICS_SECTION.format(definitions=render_metric_definitions(metrics)) if metrics else ""
+
+
+def render_values_section(state: AgentState) -> str:
+    """VALUES NOT FOUND section of the planner and sql_coder prompts, empty unless match_values found none."""
+    if not state.get("values_not_found"):
+        return ""
+    terms = ", ".join(f"'{term}'" for term in state.get("filter_values") or [])
+    return VALUES_NOT_FOUND_SECTION.format(terms=terms)
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
@@ -109,6 +120,8 @@ def resolve_database(state: AgentState) -> dict:
     resets = {
         "generated_query":     "",
         "validation_feedback": "",
+        "matched_values":      {},
+        "values_not_found":    False,
     }
 
     db_name = state.get("selected_db")
@@ -188,9 +201,10 @@ def rerank_tables(state: AgentState) -> dict:
     # Metric names are exact keys of metrics.yaml: anything else is ignored
     selected_metrics = [m for m in dict.fromkeys(response.metrics) if m in db_metrics]
     metric_tables    = [t for m in selected_metrics for t in db_metrics[m].tables]
+    filter_values    = list(dict.fromkeys(v.strip() for v in response.filter_values if v.strip()))
 
     logger.debug(f"rerank_tables: {response.tables} | metrics={selected_metrics} | "
-                 f"in_scope={response.is_in_scope} — {response.reason}")
+                 f"filter_values={filter_values} | in_scope={response.is_in_scope} — {response.reason}")
 
     # ── 2. Load LLM-selected and metric tables missing from candidates ────────
     # LLM may select tables known via schema descriptions but not returned by Chroma
@@ -213,6 +227,7 @@ def rerank_tables(state: AgentState) -> dict:
         return {
             "selected_schemas":    candidates,
             "selected_metrics":    selected_metrics,
+            "filter_values":       filter_values,
             "is_in_scope":         response.is_in_scope,
             "llm_selected_tables": list(response.tables),
         }
@@ -239,6 +254,7 @@ def rerank_tables(state: AgentState) -> dict:
     return {
         "selected_schemas":    selected_schemas,
         "selected_metrics":    selected_metrics,
+        "filter_values":       filter_values,
         "is_in_scope":         response.is_in_scope,
         "llm_selected_tables": list(response.tables),
     }
@@ -248,6 +264,42 @@ def route_by_scope(state: AgentState) -> Literal["in_scope", "out_of_scope"]:
     if state["is_in_scope"]:
         return "in_scope"
     return "out_of_scope"
+
+def match_values(state: AgentState) -> dict:
+    """
+    Deterministic node — finds the values the question filters on (filter_values, from
+    rerank_tables) in the value index (lib/value_index.py), and writes them in the DDL of
+    their column, for planner and sql_coder to filter on the exact value:
+
+        `city` STRING,  -- City of the company. Matching values: 'Sao Paulo'
+
+    Only the columns of the selected tables are searched, and only the ones whose values are
+    not listed in the schema get matching values: a listed column already shows every value.
+    A term best matched by a listed column adds nothing ('Mexico' → country, listed).
+
+    When no term is close to any value, planner and sql_coder are told (values_not_found):
+    they must not swap the term for another value of the data ('santa' → state = 'SP').
+    """
+    db_name          = state["selected_db"]
+    selected_schemas = state["selected_schemas"]
+    terms            = state.get("filter_values") or []
+
+    found = find_matching_values(db_name, terms, list(selected_schemas))
+
+    if not found.values:
+        return {"matched_values": {}, "values_not_found": found.not_found}
+
+    logger.debug(f"match_values: {terms} → {found.values} (left out: {found.more})")
+    return {
+        "matched_values":   found.values,
+        "values_not_found": False,
+        # Retries of sql_coder read selected_schemas: they keep the matching values too
+        "selected_schemas": {
+            table: add_matching_values(ddl, found.values.get(table, {}), found.more.get(table))
+            for table, ddl in selected_schemas.items()
+        },
+    }
+
 
 def prune_columns(state: AgentState) -> dict:
     """
@@ -260,6 +312,7 @@ def prune_columns(state: AgentState) -> dict:
     Recall guarantees — pruning must never remove a column the query needs:
         - structural columns (join keys, read mode) are always kept
         - columns of the selected metrics (expression and default date) are always kept
+        - columns where match_values found a value of the question are always kept
         - column names invented by the LLM are ignored
         - a table the LLM skipped, or a failed LLM call, keeps its full DDL
     """
@@ -296,9 +349,10 @@ def prune_columns(state: AgentState) -> dict:
             # Pruning is an optimization: its failure must never block the answer
             logger.warning(f"prune_columns: LLM call failed, tables kept whole — {e}")
 
-    # ── 3. Prune the wide tables, structural and metric columns always kept ───
+    # ── 3. Prune the wide tables, structural, metric and matched columns always kept
     pruned_schemas = dict(selected_schemas)   # narrow tables pass through unchanged
     metrics        = get_selected_metrics(state)
+    matched_values = state.get("matched_values") or {}
 
     for table, ddl in wide_schemas.items():
         column_names     = set(get_column_names(ddl))
@@ -310,7 +364,8 @@ def prune_columns(state: AgentState) -> dict:
             continue
 
         metric_columns        = {column for m in metrics for t, column in m.columns if t == table}
-        columns_to_keep       = (semantic_columns | metric_columns
+        matched_columns       = set(matched_values.get(table, {}))
+        columns_to_keep       = (semantic_columns | metric_columns | matched_columns
                                  | get_structural_columns(table, ddl, query_tables=set(selected_schemas)))
         pruned_schemas[table] = prune_ddl(ddl, columns_to_keep)
         logger.debug(f"prune_columns: {table} {len(column_names)} → {len(columns_to_keep)} columns")
@@ -337,6 +392,7 @@ def planner(state: AgentState) -> dict:
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
             metrics_section=render_metrics_section(get_selected_metrics(state)),
+            values_section=render_values_section(state),
             schema=schema,
         )),
         HumanMessage(content=question),
@@ -394,6 +450,7 @@ def sql_coder(state: AgentState) -> dict:
         dialect=db_cfg.dialect,
         dialect_rules=DIALECT_RULES.get(db_cfg.dialect, ""),
         metrics_section=render_metrics_section(metrics),
+        values_section=render_values_section(state),
         schema=schema,
     )
 
@@ -429,7 +486,7 @@ def sql_coder(state: AgentState) -> dict:
 def sql_validator(state: AgentState) -> dict:
     """
     Deterministic node — validates and executes the generated SQL.
-    Three checks: guardrail → execute → result handling.
+    Checks: guardrail → filtered values → execute → result handling.
     On failure: writes structured feedback for sql_coder.
     On success: injects the query result into messages for format_answer.
 
@@ -447,9 +504,29 @@ def sql_validator(state: AgentState) -> dict:
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(query=query, error=error, extra_context=""),
             "validation_error":    error,
+            "validation_check":    "guardrail",
         }
 
-    # 2. Execute SQL query, reading at most max_rows rows
+    # 2. Filtered values — a value its column doesn't hold silently returns no row
+    #    (city = 'Sao Paolo'). First attempt only: at most one correction, a retry runs as written
+    #    (the value index may be older than the data)
+    if not state.get("validation_feedback"):
+        unknown = find_unknown_values(db_name, get_value_filters(query, db_cfg.dialect),
+                                      get_query_tables(query, db_cfg.dialect))
+        if unknown:
+            return {
+                "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
+                    query=query, error=_unknown_values_error(unknown), extra_context="",
+                ),
+                "validation_error":    "\n".join(
+                    f"{u.table}.{u.column} = '{u.value}' : "
+                    + (f"proche de {', '.join(repr(v) for v in u.closest)}" if u.closest else "aucune valeur proche")
+                    for u in unknown
+                ),
+                "validation_check":    "values",
+            }
+
+    # 3. Execute SQL query, reading at most max_rows rows
     try:
         result = run_capped_query(db_name, query, db_cfg.max_rows)
     except SQLAlchemyError as e:
@@ -461,6 +538,7 @@ def sql_validator(state: AgentState) -> dict:
                 extra_context="",
             ),
             "validation_error":    str(e),
+            "validation_check":    "database",
         }
 
     # On success, clear feedback and inject result into messages as a tool call + result,
@@ -475,11 +553,24 @@ def sql_validator(state: AgentState) -> dict:
         "messages":            [ai_msg, tool_msg],
         "validation_feedback": "",  # clear feedback on success
         "validation_error":    "",
+        "validation_check":    "",
         "result_row_count":    len(result.rows),
         "result_truncated":    result.truncated,
         "result_columns":      result.columns,
         "result_rows":         result.rows,
     }
+
+
+def _unknown_values_error(unknown: list) -> str:
+    """Error of sql_validator for the values a query filters on that their column doesn't hold."""
+    lines = [
+        f"- {u.table}.{u.column} = '{u.value}': "
+        + (f"closest values held by the column: {', '.join(repr(v) for v in u.closest)}" if u.closest
+           else "no close value in this column: check the column, or use LOWER(column) LIKE LOWER('%value%')")
+        for u in unknown
+    ]
+    return ("Unknown values: the query filters on values these columns don't hold, "
+            "so it would return no row.\n" + "\n".join(lines))
 
 
 def route_after_validation(state: AgentState) -> Literal["error", "success"]:

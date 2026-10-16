@@ -1,7 +1,7 @@
 """
 SQL helpers built on sqlglot: deterministic fixes applied to every generated query (Hive, Impala),
-tables a query reads, and whether a query computes a given expression.
-Used by: agent/nodes.py (sql_coder), ui/streaming.py (result card), lib/metrics.py,
+tables a query reads, the text values it filters on, and whether a query computes a given expression.
+Used by: agent/nodes.py (sql_coder, sql_validator), ui/streaming.py (result card), lib/metrics.py,
 offline/semantic_gen/metrics.py
 """
 
@@ -65,6 +65,42 @@ def get_query_tables(query: str, dialect: str) -> list[str]:
     cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     names     = (table.name for table in tree.find_all(exp.Table))
     return list(dict.fromkeys(name for name in names if name and name.lower() not in cte_names))
+
+
+def get_value_filters(query: str, dialect: str) -> list[tuple[str, str, str]]:
+    """
+    (table, column, value) of each text value the query filters a column on:
+    col = 'x', col <> 'x', col IN ('x', 'y'), col NOT IN (...). Aliases are resolved to their
+    table; table is '' for an unqualified column. Filters on an expression (LOWER(col) = 'x')
+    or a LIKE are left out. Empty when sqlglot can't parse the query.
+    """
+    try:
+        tree = sqlglot.parse_one(query, read=sqlglot_dialect(dialect))
+    except (ParseError, TokenError):  # unparseable SQL, e.g. an unclosed quote
+        return []
+
+    # Alias (or name) → table name; a CTE or subquery alias maps to no table of the database
+    tables = {}
+    for table in tree.find_all(exp.Table):
+        tables.setdefault(table.alias_or_name.lower(), table.name.lower())
+
+    def text_values(nodes) -> list[str]:
+        return [node.this for node in nodes if isinstance(node, exp.Literal) and node.is_string]
+
+    filters = []
+    for node in tree.find_all(exp.EQ, exp.NEQ, exp.In):
+        if isinstance(node, exp.In):
+            column, values = node.this, text_values(node.expressions)
+        elif isinstance(node.this, exp.Column):
+            column, values = node.this, text_values([node.expression])
+        else:   # 'x' = col
+            column, values = node.expression, text_values([node.this])
+
+        if not isinstance(column, exp.Column) or not values:
+            continue
+        table = tables.get(column.table.lower(), column.table.lower()) if column.table else ""
+        filters += [(table, column.name.lower(), value) for value in values]
+    return filters
 
 
 def contains_expression(query: str, expression: str, dialect: str) -> bool:

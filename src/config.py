@@ -87,6 +87,17 @@ class RetrievalConfig:
         self.schemas_directory = str(BASE_DIR / self.schemas_directory)
 
 @dataclass
+class ValueSearchConfig:
+    directory: str     # one SQLite FTS5 index per database: <directory>/<db>.sqlite
+    max_values: int    # a categorical column with more distinct values is not indexed
+    min_score: int     # fuzzy match score (0-100) under which a value is not proposed
+    top_k: int         # values of a column added to the schema; past them: "(+N more)", and a LIKE
+    score_margin: int  # per term, matches more than this under its best one (in any column) are dropped
+
+    def __post_init__(self):
+        self.directory = str(BASE_DIR / self.directory)
+
+@dataclass
 class ColumnPruningConfig:
     enabled: bool
     min_columns: int   # tables with more columns are pruned by the LLM, narrower ones are kept whole
@@ -112,6 +123,7 @@ class AppConfig:
     llm_fast: LLMConfig
     databases: list[DatabaseConfig]
     retrieval: RetrievalConfig
+    value_search: ValueSearchConfig
     column_pruning: ColumnPruningConfig
     langsmith: LangSmithConfig
     memory: MemoryConfig
@@ -141,6 +153,7 @@ def load_config() -> AppConfig:
         llm_fast=LLMConfig(**cfg.llm_fast),
         databases=[DatabaseConfig(**db) for db in cfg.databases], 
         retrieval=RetrievalConfig(**cfg.retrieval),
+        value_search=ValueSearchConfig(**cfg.value_search),
         column_pruning=ColumnPruningConfig(**cfg.column_pruning),
         langsmith=LangSmithConfig(**cfg.langsmith),
         memory=MemoryConfig(**cfg.memory),

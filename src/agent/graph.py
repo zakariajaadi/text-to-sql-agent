@@ -8,6 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from agent.nodes import (
     condense_question,
     format_answer,
+    match_values,
     planner,
     prune_columns,
     rerank_tables,
@@ -30,6 +31,7 @@ def build_graph():
     builder.add_node(resolve_database)
     builder.add_node(retrieve_schema)
     builder.add_node(rerank_tables)
+    builder.add_node(match_values)
     builder.add_node(prune_columns)
     builder.add_node(planner)
     builder.add_node(sql_coder)
@@ -42,9 +44,10 @@ def build_graph():
     builder.add_edge("resolve_database",   "retrieve_schema")
     builder.add_edge("retrieve_schema",    "rerank_tables")
     builder.add_conditional_edges("rerank_tables", route_by_scope, {
-        "in_scope":     "prune_columns",
+        "in_scope":     "match_values",
         "out_of_scope": "format_answer",
     })
+    builder.add_edge("match_values",  "prune_columns")
     builder.add_edge("prune_columns", "planner")
     builder.add_edge("planner", "sql_coder")
     builder.add_edge("sql_coder",       "sql_validator")
@@ -78,7 +81,7 @@ def save_graph_png(agent, orientation: str = "LR") -> Path:
 
 if __name__ == "__main__":
     agent = build_graph()
-    save_graph_png(agent)
+    save_graph_png(agent, "TB")
     
     
 
