@@ -429,10 +429,13 @@ def _short_db_error(error: str, max_len: int = 240) -> str:
     SQLAlchemy: "(pyhive.exc.OperationalError) TExecuteStatementResp(... errorMessage="Error
     while compiling statement: FAILED: SemanticException [Error 10004]: Line 1:7 Invalid
     table alias or column reference 'x'") [SQL: ...] (Background on this error at: ...)".
+    An Impala one by impyla: "(impala.error.HiveServer2Error) AnalysisException: Could not
+    resolve column/field reference: 'x'\n[SQL: ...]".
     """
     match = re.search(r"""errorMessage=(['"])(.*?)\1[,)]""", error, re.DOTALL)
     message = match.group(2) if match else error.split("\n[SQL:")[0]
     message = message.replace("\\n", "\n")  # errorMessage comes from a repr: newlines are escaped
+    message = re.sub(r"^\([\w.]+\) ", "", message)  # driver exception class: (impala.error.HiveServer2Error)
     # A wrapped error ends with its cause: "... dependencies.\nUnderlying error: org.apache...
     # SemanticException: Line 4:6 Expression not in GROUP BY key 'x'". The cause is the useful part.
     if "Underlying error:" in message:

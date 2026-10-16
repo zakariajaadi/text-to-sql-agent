@@ -4,6 +4,7 @@
 data
 .git
 .env
+*.keytab
 .claude
 .files
 .ruff_cache

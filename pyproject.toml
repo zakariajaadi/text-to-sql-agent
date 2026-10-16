@@ -28,6 +28,12 @@ dependencies = [
     "tabulate>=0.10.0",
 ]
 
+[project.optional-dependencies]
+# Kerberos (GSSAPI) for Impala on a secured cluster; builds against the system krb5 headers
+kerberos = [
+    "impyla[kerberos]>=0.24.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",

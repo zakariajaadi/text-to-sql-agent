@@ -1,0 +1,45 @@
+# ==========================================================================
+# App image for a network without Docker Hub, ghcr.io or the Red Hat repositories:
+# a Red Hat UBI 8 Python 3.12 base image from an internal registry, with Kerberos for Impala.
+# The base image must already hold gcc and krb5-devel (the kerberos package is compiled).
+#
+#   docker build -f dockerfile.ubi --build-arg BASE_IMAGE=<registry>/ubi8/python-312:latest -t text-to-sql .
+#
+# No secret in the image: .env, the keytab and krb5.conf are given at run time, and
+# config/, semantic_layer/ and data/ are bind-mounted (the generators write to them).
+# ==========================================================================
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+# The UBI images run as user 1001: root only while installing
+USER 0
+WORKDIR /app
+
+# uv from PyPI (its usual image is on ghcr.io)
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --extra kerberos --python python3.12
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# App code; Chainlit UI: config and translations, custom CSS / elements / icons, Readme page
+COPY src ./src
+COPY app.py .
+COPY .chainlit ./.chainlit
+COPY public ./public
+COPY chainlit.md .
+
+RUN chown -R 1001:0 /app
+USER 1001
+
+EXPOSE 8000
+
+CMD ["chainlit", "run", "app.py", "--host", "0.0.0.0", "--port", "8000"]

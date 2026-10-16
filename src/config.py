@@ -60,19 +60,33 @@ class DatabaseConfig:
     max_rows: int = 100   # safety cap on the rows read from a query result (never a LIMIT in the SQL)
     tagline: str = ""                              # one-line presentation of the Chainlit welcome screen
     starters: list = field(default_factory=list)  # example questions of the Chainlit welcome screen: {icon, question}
+    include_tables: list = field(default_factory=list)  # tables the agent may use; empty: every table of the database
     uri: str = ""
-    #schema: str | None = None          # base Hive (ex: "sales_db")
+    connect_args: dict = field(default_factory=dict, init=False)  # driver options (authentication), from the environment
 
     def __post_init__(self):
-        
+
+        # The engine database is the configured name, lowercased (e.g. "Chinook" -> chinook)
         if self.dialect == "hive":
             host = os.getenv("HIVE_HOST", "localhost")
             port = os.getenv("HIVE_PORT", "10000")
             user = os.getenv("HIVE_USER", "hive")
             self.uri = f"hive://{user}@{host}:{port}/{self.name.lower()}"
 
+        elif self.dialect == "impala":
+            # Impala >= 4 (impala4 dialect of impyla). On a Kerberos cluster (GSSAPI, the default), the
+            # ticket comes from the environment: KRB5_CONFIG, and KRB5_CLIENT_KTNAME for a keytab
+            host = os.getenv("IMPALA_HOST", "localhost")
+            port = os.getenv("IMPALA_PORT", "21050")
+            self.uri = f"impala4://{host}:{port}/{self.name.lower()}"
+            self.connect_args = {
+                "auth_mechanism":        os.getenv("IMPALA_AUTH_MECHANISM", "GSSAPI"),
+                "kerberos_service_name": os.getenv("IMPALA_KERBEROS_SERVICE", "impala"),
+                "use_ssl":               os.getenv("IMPALA_USE_SSL", "false").lower() == "true",
+            }
+
         else:
-            raise ValueError(f"Unsupported dialect '{self.dialect}' for database {self.name} (expected: hive)")
+            raise ValueError(f"Unsupported dialect '{self.dialect}' for database {self.name} (expected: hive, impala)")
 
 @dataclass
 class RetrievalConfig:
@@ -143,9 +157,14 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     config_path = BASE_DIR / "config" / "config.yaml"
+    # Machine-specific overrides, kept out of git (e.g. the databases of a private cluster).
+    # A list in it replaces the whole list of config.yaml: `databases` there is the full list
+    local_path  = BASE_DIR / "config" / "config.local.yaml"
 
     # Load config file
     cfg = OmegaConf.load(config_path)
+    if local_path.exists():
+        cfg = OmegaConf.merge(cfg, OmegaConf.load(local_path))
     OmegaConf.resolve(cfg)
 
     return AppConfig(

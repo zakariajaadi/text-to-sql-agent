@@ -12,6 +12,21 @@ wheels/
 
 .env
 data/
+
+# Machine-specific config and Kerberos secrets
+config/config.local.yaml
+*.keytab
+# Semantic layer and eval files: only the demo databases are shared, a private
+# database's (generated on its own machine) stays there
+semantic_layer/*
+!semantic_layer/Chinook/
+!semantic_layer/Northwind/
+offline/eval/datasets/*
+!offline/eval/datasets/chinook.yaml
+!offline/eval/datasets/northwind.yaml
+offline/eval/results/*
+!offline/eval/results/chinook.json
+!offline/eval/results/northwind.json
 # Chainlit: keep the app config and the customized English translation
 .chainlit/*
 !.chainlit/config.toml

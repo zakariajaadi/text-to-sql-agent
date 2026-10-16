@@ -1,0 +1,22 @@
+# config.local.example.yaml — copy to config/config.local.yaml (kept out of git) and adapt.
+# Merged over config.yaml at startup; a list here replaces the whole list there,
+# so `databases` must list every database this machine uses.
+#
+# Impala connection, from the environment (.env):
+#   IMPALA_HOST             a coordinator host name (not its IP: Kerberos checks it)
+#   IMPALA_PORT             21050 by default
+#   IMPALA_AUTH_MECHANISM   GSSAPI (Kerberos) by default; NOSASL, PLAIN or LDAP otherwise
+#   IMPALA_USE_SSL          false by default
+#   KRB5_CONFIG             path of the krb5.conf of the cluster realm
+#   KRB5_CLIENT_KTNAME      path of the keytab: the ticket is taken from it (no kinit)
+
+databases:
+  - name: "my_database"          # the Impala database, and the folder semantic_layer/my_database
+    dialect: "impala"
+    max_rows: 100
+    tagline: "One line presenting the data."
+    include_tables:              # the agent only sees these tables (all of them if omitted)
+      - customers
+      - orders
+    starters:
+      - {icon: kpi, question: "How many customers?"}

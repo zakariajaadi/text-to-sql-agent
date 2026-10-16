@@ -29,13 +29,17 @@ def build_chat_model(llm_cfg: LLMConfig):
 
 
 def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
-    """Build a langchain SQLAlchemy wrapper from the URI."""
-    if db_cfg.dialect == "hive":
-        return SQLDatabase.from_uri(
-            db_cfg.uri,
-            lazy_table_reflection=True,  # don't reflect the whole metastore at startup
-        )
-    return SQLDatabase.from_uri(db_cfg.uri)
+    """
+    Build a langchain SQLAlchemy wrapper from the URI.
+    With include_tables, the agent, the indexer and the generators only see those tables
+    (an unknown name stops the startup).
+    """
+    return SQLDatabase.from_uri(
+        db_cfg.uri,
+        engine_args={"connect_args": dict(db_cfg.connect_args)} if db_cfg.connect_args else None,
+        include_tables=list(db_cfg.include_tables) or None,
+        lazy_table_reflection=True,  # don't reflect the whole metastore at startup
+    )
 
 
 def build_schema_store() -> dict[str, dict[str, str]]:
