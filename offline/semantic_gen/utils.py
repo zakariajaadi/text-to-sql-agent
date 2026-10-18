@@ -9,6 +9,8 @@ import yaml
 from langchain_community.utilities import SQLDatabase
 from sqlalchemy import inspect as sa_inspect
 
+from config import cfg
+from lib.column_pruning import get_column_types
 from lib.semantics import load_fk_relations, load_semantics, render_table
 
 
@@ -19,15 +21,28 @@ def table_columns(db: SQLDatabase) -> dict[str, list[str]]:
 
 
 def render_schemas(db: SQLDatabase, db_name: str, tables: list[str] | None = None) -> str:
-    """Tables (default: all) as one string: rendered with semantics when documented, raw DDL otherwise."""
+    """
+    Tables (default: all) as one string: rendered with semantics when documented, raw DDL otherwise.
+    Join keys stored as text are cast in the "-- Joins" lines when both tables are rendered.
+    """
     semantics    = load_semantics(db_name)
     fk_relations = load_fk_relations(db_name)
+    dialect      = cfg.get_db(db_name).dialect
 
-    schemas = []
-    for table in tables if tables is not None else db.get_usable_table_names():
-        ddl = db.get_table_info(table_names=[table]).strip()
-        schemas.append(render_table(table, ddl, semantics[table], fk_relations) if table in semantics else ddl)
-    return "\n\n".join(schemas)
+    ddls = {
+        table: db.get_table_info(table_names=[table]).strip()
+        for table in (tables if tables is not None else db.get_usable_table_names())
+    }
+    column_types = {
+        f"{table}.{column}": column_type
+        for table, ddl in ddls.items()
+        for column, column_type in get_column_types(ddl).items()
+    }
+    return "\n\n".join(
+        render_table(table, ddl, semantics[table], fk_relations, column_types=column_types, dialect=dialect)
+        if table in semantics else ddl
+        for table, ddl in ddls.items()
+    )
 
 
 class FlowListDumper(yaml.SafeDumper):

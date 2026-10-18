@@ -1,9 +1,12 @@
 """
 SQL helpers built on sqlglot: deterministic fixes applied to every generated query (Hive, Impala),
-tables a query reads, the text values it filters on, and whether a query computes a given expression.
+tables a query reads, the text values it filters on, whether a query computes a given expression,
+and the join condition of a declared relationship.
 Used by: agent/nodes.py (sql_coder, sql_validator), ui/streaming.py (result card), lib/metrics.py,
-offline/semantic_gen/metrics.py
+lib/semantics.py, offline/semantic_gen/metrics.py
 """
+
+import re
 
 import sqlglot
 from sqlglot import exp
@@ -124,3 +127,47 @@ def contains_expression(query: str, expression: str, dialect: str) -> bool:
 
     wanted = unqualified(target)
     return any(unqualified(node) == wanted for node in tree.find_all(type(target)))
+
+
+# Type families of the column types read from a DDL, by their base name ("DECIMAL(8, 0)" -> decimal)
+_INTEGER_TYPES = {"tinyint", "smallint", "int", "integer", "bigint"}
+_NUMBER_TYPES  = _INTEGER_TYPES | {"decimal", "numeric", "number", "float", "double", "real"}
+_TEXT_TYPES    = {"string", "varchar", "char", "text", "nvarchar", "nchar"}
+
+
+def join_condition(source: str, target: str, column_types: dict[str, str], dialect: str) -> str:
+    """
+    Join condition of a declared relationship, each side written table.column:
+    "invoice.customerid = customer.customerid".
+
+    When one side is stored as text and the other as a number (column_types: {"table.column": type}),
+    the text side is cast, written by sqlglot in the database dialect:
+    "CAST(review.customerid AS BIGINT) = customer.customerid". Impala refuses to compare text with
+    a number, Hive compares both as DOUBLE (inexact on long identifiers). The cast is to BIGINT
+    (join keys are identifiers), or to the number type itself when it has decimals.
+    No cast when a type is unknown or of another family (int vs decimal compare fine).
+    """
+    def base(side: str) -> str:
+        return re.match(r"\w*", column_types.get(side, "").strip().lower()).group()
+
+    if base(source) in _TEXT_TYPES and base(target) in _NUMBER_TYPES:
+        text_side, number_side = source, target
+    elif base(target) in _TEXT_TYPES and base(source) in _NUMBER_TYPES:
+        text_side, number_side = target, source
+    else:
+        return f"{source} = {target}"
+
+    # Decimals kept only when the number type has some: DECIMAL(10, 2), DOUBLE...
+    number_type = column_types[number_side]
+    has_decimals = (base(number_side) in {"float", "double", "real"}
+                    or re.search(r",\s*[1-9]", number_type) is not None)
+    read  = sqlglot_dialect(dialect)
+    table, _, column = text_side.partition(".")
+    try:
+        cast = exp.cast(exp.column(column, table=table),
+                        exp.DataType.build(number_type if has_decimals else "BIGINT", dialect=read))
+    except (ParseError, TokenError, ValueError):   # a type sqlglot can't parse: no cast
+        return f"{source} = {target}"
+
+    cast = cast.sql(dialect=read)
+    return f"{cast} = {target}" if text_side == source else f"{source} = {cast}"

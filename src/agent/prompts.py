@@ -12,6 +12,11 @@ DIALECT_RULES = {
   GROUP BY DATE_FORMAT(col, 'yyyy-MM'), not GROUP BY month_label.
 - Concatenation: CONCAT(a, ' ', b). Never use ||.
 - Subquery filters: use IN (SELECT ...), never = (SELECT ...).
+- A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
+  function, comparison, sort or period filter, with the pattern of its note:
+  CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(col, '<pattern>')) AS TIMESTAMP). Never YEAR(col) or col >= '...' on the raw text.
+- A column noted "[stored as text: decimal number]": CAST(col AS DECIMAL(38, 6)) before SUM, AVG,
+  comparisons or sorts.
 """,
     "impala": """
 - Year / month: YEAR(col), MONTH(col). Month label: FROM_TIMESTAMP(col, 'yyyy-MM').
@@ -20,6 +25,11 @@ DIALECT_RULES = {
   Never col <= '2024-12-31' nor BETWEEN: on a timestamp they drop the last day after midnight.
 - Concatenation: CONCAT(a, ' ', b). Never use || (it means OR in Impala).
 - Subquery filters: use IN (SELECT ...), never = (SELECT ...).
+- A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
+  function, comparison, sort or period filter, with the pattern of its note:
+  TO_TIMESTAMP(col, '<pattern>'). Never YEAR(col) or col >= '...' on the raw text.
+- A column noted "[stored as text: decimal number]": CAST(col AS DECIMAL(38, 6)) before SUM, AVG,
+  comparisons or sorts.
 """,
 }
 

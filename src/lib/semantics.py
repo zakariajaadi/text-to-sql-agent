@@ -11,6 +11,7 @@ import yaml
 from omegaconf import OmegaConf
 
 from config import SEMANTIC_LAYER_DIR
+from lib.sql_tools import join_condition
 
 
 def tables_path(db_name: str) -> Path:
@@ -35,13 +36,15 @@ def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
 
 def render_table(table_name: str, table_ddl: str, table_semantics: dict,
                  db_fk_relations: list[tuple[str, str]],
-                 categorical_values: dict[str, list[str]] | None = None) -> str:
+                 categorical_values: dict[str, list[str]] | None = None,
+                 column_types: dict[str, str] | None = None, dialect: str = "") -> str:
     """
     Render the document indexed in Chroma for one table, from reviewed semantics — no LLM.
 
     Prepends a comment header to the DDL and appends each documented column's
-    description, and its categorical values if any (read from the database by
-    offline/indexer/categorical_values.py), as an inline comment:
+    description, the note of a column stored as text (`formats` in tables.yaml, converted
+    following the dialect rules of agent/prompts.py), and its categorical values if any
+    (read from the database by offline/indexer/categorical_values.py), as an inline comment:
 
         -- Table: invoice
         -- Description: One row per customer purchase.
@@ -50,20 +53,26 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
 
         CREATE TABLE `invoice` (
             `invoiceid` INT,  -- Unique identifier of the invoice.
+            `invoicedate` STRING,  -- Date of the purchase. [stored as text: date dd/MM/yyyy]
             `billingcountry` STRING,  -- Billing country. Values: 'Brazil', 'Canada', ...
             ...
         )
+
+    column_types: {"table.column": type} of the tables, from their DDL: a join key stored as text
+    on one side and as a number on the other is cast in the "-- Joins" line, written for `dialect`
+    (lib/sql_tools.py join_condition).
 
     Format contract: the "-- Joins" and "-- Read mode" lines are parsed back by
     lib/column_pruning.py — keep both in sync when changing the format.
     """
     columns = table_semantics.get("columns") or {}
+    formats = table_semantics.get("formats") or {}   # {column: "date <pattern>" | "decimal"}
     values  = categorical_values or {}   # {column: [value, ...]}
     lines   = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
 
     # Join conditions involving this table, from relationships.yaml
     joins = [
-        f"{source} = {target}"
+        join_condition(source, target, column_types or {}, dialect)
         for source, target in db_fk_relations
         if table_name in (source.split(".")[0], target.split(".")[0])
     ]
@@ -74,7 +83,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     lines.extend(_render_read_mode(table_name, table_semantics))
     lines.append("")
 
-    # Append each column description and categorical values as an inline SQL comment
+    # Append each column description, format note and categorical values as an inline SQL comment
     in_create = False
     for line in table_ddl.splitlines():
         if line.startswith("CREATE TABLE"):
@@ -84,6 +93,8 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
         elif in_create and line.strip():
             name    = line.strip().split()[0].strip('`"[]')
             comment = columns.get(name, "")
+            if name in formats:
+                comment = f"{comment} {_format_note(table_name, name, formats[name])}".strip()
             if name in values:
                 comment = f"{comment} Values: {', '.join(repr(str(v)) for v in values[name])}".strip()
             if comment:
@@ -126,6 +137,20 @@ def add_matching_values(table_ddl: str, values: dict[str, list[str]],
         lines.append(line)
 
     return "\n".join(lines)
+
+
+def _format_note(table_name: str, column: str, column_format: str) -> str:
+    """
+    Note of a column whose values are stored as text (`formats` in tables.yaml): "date <pattern>"
+    (Java pattern, e.g. dd/MM/yyyy) or "decimal". The dialect rules (agent/prompts.py) say how
+    to convert the columns carrying it — keep both wordings in sync.
+    """
+    kind, _, pattern = column_format.strip().partition(" ")
+    if kind == "date" and pattern.strip():
+        return f"[stored as text: date {pattern.strip()}]"
+    if kind == "decimal" and not pattern:
+        return "[stored as text: decimal number]"
+    raise ValueError(f"Unknown format '{column_format}' for {table_name}.{column} (expected: 'date <pattern>', 'decimal')")
 
 
 def _render_read_mode(table_name: str, table_semantics: dict) -> list[str]:

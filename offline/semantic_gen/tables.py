@@ -36,13 +36,15 @@ SEMANTICS_HEADER = """\
 #                          whose values are read from the database at index time.
 #                          Remove a column from the list to reject it: it won't come back
 #   read_mode, key_columns, partition_column, version_column : Hive table layout
+#   formats              : (manual) columns whose values are stored as text,
+#                          {column: "date <pattern>" (e.g. date dd/MM/yyyy) or "decimal"}
 
 """
 
 # Key order of a table block in the YAML (unknown keys last)
 SEMANTICS_KEY_ORDER = [
     "description", "read_mode", "key_columns", "partition_column", "version_column",
-    "categorical_columns", "columns",
+    "categorical_columns", "formats", "columns",
 ]
 
 # ------------------------------------------------------------

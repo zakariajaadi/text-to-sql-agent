@@ -19,7 +19,7 @@ from sqlalchemy import inspect as sa_inspect
 from config import cfg
 from lib.metrics import metrics_path, read_metrics_file, validate_metric
 from lib.semantics import load_fk_relations, load_semantics
-from lib.sql_tools import contains_expression
+from lib.sql_tools import contains_expression, join_condition
 from offline.semantic_gen.prompts import METRICS_PROMPT
 from offline.semantic_gen.schemas import MetricProposals
 from offline.semantic_gen.utils import FlowListDumper, render_schemas
@@ -140,7 +140,7 @@ def generate_metrics(db_name: str):
 
         try:
             metric = validate_metric(name, entry, dialect, columns)
-            _compile_metric(db, metric.expr, metric.tables, fk_relations)
+            _compile_metric(db, metric.expr, metric.tables, fk_relations, dialect)
         except Exception as e:
             logger.warning(f"[{db_name}] Rejected metric '{name}': {e}")
             continue
@@ -211,12 +211,22 @@ def _render_roles(roles: dict[str, dict], measure_tables: list[str], fact_tables
     )
 
 
-def _compile_metric(db: SQLDatabase, expr: str, tables: list[str], fk_relations: list[tuple[str, str]]):
+def _compile_metric(db: SQLDatabase, expr: str, tables: list[str], fk_relations: list[tuple[str, str]],
+                    dialect: str):
     """
     Have the database compile the metric on an empty result (WHERE 1 = 0): catches what static
-    checks can't (types, functions). Its tables are joined through the declared relationships;
+    checks can't (types, functions). Its tables are joined through the declared relationships,
+    a join key stored as text cast as in the "-- Joins" lines (join_condition);
     raises ValueError when they can't all be joined.
     """
+    # Type names by their SQLAlchemy class (STRING, INT, DECIMAL...): enough to tell text from numbers
+    inspector    = sa_inspect(db._engine)
+    column_types = {
+        f"{table}.{column['name']}": type(column["type"]).__name__
+        for table in tables
+        for column in inspector.get_columns(table)
+    }
+
     def link(table: str, joined: list[str]) -> tuple[str, str] | None:
         """A relationship between the table and one already joined."""
         for source, target in fk_relations:
@@ -230,7 +240,7 @@ def _compile_metric(db: SQLDatabase, expr: str, tables: list[str], fk_relations:
         table, relation = next(((t, link(t, joined)) for t in pending if link(t, joined)), (None, None))
         if table is None:
             raise ValueError(f"tables {', '.join(pending)} not joined to {', '.join(joined)} by a relationship")
-        joins.append(f"JOIN {table} ON {relation[0]} = {relation[1]}")
+        joins.append(f"JOIN {table} ON {join_condition(*relation, column_types, dialect)}")
         joined.append(table)
         pending.remove(table)
 

@@ -38,9 +38,9 @@ def _parse_column_name(line: str) -> str:
     return line.strip().split()[0].strip('`"[]')
 
 
-def get_column_names(ddl: str) -> list[str]:
-    """Column names declared in the CREATE TABLE body of a rendered DDL, in declaration order."""
-    column_names   = []
+def _create_body_lines(ddl: str) -> list[str]:
+    """The column lines of the CREATE TABLE body of a DDL, in declaration order."""
+    lines          = []
     in_create_body = False
 
     for line in ddl.splitlines():
@@ -49,9 +49,24 @@ def get_column_names(ddl: str) -> list[str]:
         elif line.startswith(")"):
             in_create_body = False
         elif in_create_body and line.strip():
-            column_names.append(_parse_column_name(line))
+            lines.append(line)
 
-    return column_names
+    return lines
+
+
+def get_column_names(ddl: str) -> list[str]:
+    """Column names declared in the CREATE TABLE body of a rendered DDL, in declaration order."""
+    return [_parse_column_name(line) for line in _create_body_lines(ddl)]
+
+
+def get_column_types(ddl: str) -> dict[str, str]:
+    """Type of each column of a DDL: "`amount` DECIMAL(8, 0),  -- ..." → {"amount": "DECIMAL(8, 0)"}."""
+    types = {}
+    for line in _create_body_lines(ddl):
+        match = re.match(r"\s*\S+\s+(\w+(?:\s*\([^)]*\))?)", line)
+        if match:
+            types[_parse_column_name(line)] = match.group(1)
+    return types
 
 
 def get_structural_columns(table_name: str, ddl: str, query_tables: set[str]) -> set[str]:
@@ -71,9 +86,10 @@ def get_structural_columns(table_name: str, ddl: str, query_tables: set[str]) ->
     for line in ddl.splitlines():
         if line.startswith("-- Joins:"):
             # "invoice.customerid = customer.customerid" → keep this table's side
-            # when the other side is in the query (self-joins keep both sides)
+            # when the other side is in the query (self-joins keep both sides).
+            # A side may be cast: "CAST(review.customerid AS BIGINT) = customer.customerid"
             for left_table, left_column, right_table, right_column in re.findall(
-                r"(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)", line
+                r"(\w+)\.(\w+)(?:\s+AS\s+\w+(?:\([\d,\s]*\))?\))?\s*=\s*(?:CAST\()?(\w+)\.(\w+)", line, re.IGNORECASE
             ):
                 if left_table == table_name and right_table in query_tables:
                     candidate_columns.add(left_column)

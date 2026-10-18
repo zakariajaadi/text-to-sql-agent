@@ -19,6 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 from langchain_core.documents import Document
 from loguru import logger
 
+from config import cfg
+from lib.column_pruning import get_column_types
 from lib.semantics import load_fk_relations, load_semantics, render_table
 from lib.value_index import write_value_index
 from offline.indexer.categorical_values import (
@@ -84,10 +86,24 @@ class SchemaIndexer:
         tables       = self.db.get_usable_table_names()
         semantics    = load_semantics(self.db_name)
         fk_relations = load_fk_relations(self.db_name)
+        dialect      = cfg.get_db(self.db_name).dialect
+
+        # DDL + sample rows: one database round-trip per table. Tables are independent: fetched
+        # in parallel (max_workers stays under the SQLAlchemy pool size: 5 + 10 overflow)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            ddls = dict(zip(tables, executor.map(
+                lambda table: self.db.get_table_info(table_names=[table]).strip(), tables
+            )))
+
+        # Column types of every table: a join key stored as text on one side is cast in "-- Joins"
+        column_types = {
+            f"{table}.{column}": column_type
+            for table, ddl in ddls.items()
+            for column, column_type in get_column_types(ddl).items()
+        }
 
         def build_document(table: str) -> Document:
-            # DDL + sample rows: one database round-trip per table
-            ddl = self.db.get_table_info(table_names=[table]).strip()
+            ddl = ddls[table]
 
             if table in semantics:
                 # Long value lists are left to the value index, searched at query time
@@ -96,7 +112,8 @@ class SchemaIndexer:
                     for column, counts in values.get(table, {}).items()
                     if fits_in_prompt(counts)
                 }
-                content = render_table(table, ddl, semantics[table], fk_relations, inline)
+                content = render_table(table, ddl, semantics[table], fk_relations, inline,
+                                       column_types, dialect)
                 logger.info(f"[{self.db_name}] Built: {table}")
             else:
                 content = ddl
@@ -107,12 +124,7 @@ class SchemaIndexer:
                 metadata={"table_name": table, "db_name": self.db_name},
             )
 
-        # Tables are independent: fetch their DDL in parallel
-        # (max_workers stays under the SQLAlchemy pool size: 5 + 10 overflow)
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            documents = list(executor.map(build_document, tables))
-
-        return documents
+        return [build_document(table) for table in tables]
 
     def index(self, documents: list[Document]):
         """
