@@ -1,0 +1,93 @@
+# Usage: make -f Makefile.ubi <target> [DB=awb_silver]
+# The app on a machine of a private network, in Docker (dockerfile.ubi, docker-compose.ubi.yaml): the Makefile
+# of the Mac runs the app with uv and a local Hive instead. Machine settings: .env and config/config.local.yaml.
+# Typical first run: update → check → semantics → (review) → metrics → (review) → index → app → eval
+
+# ==============================================================================
+# Variables
+# ==============================================================================
+DB      ?= awb_silver
+COMPOSE  = docker compose -f docker-compose.ubi.yaml
+# A one-off container of the app image; RUN_T without a terminal, for a plain output
+RUN      = $(COMPOSE) run --rm app
+RUN_T    = $(COMPOSE) run --rm -T app
+
+.DEFAULT_GOAL := help
+.PHONY: help \
+        update build check doctor shell \
+        semantics relations metrics index schema \
+        app app-stop \
+        eval
+
+##@ Help
+
+help:  ## Show available targets, by section
+	@awk 'BEGIN {FS = ":.*## "} \
+		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)} \
+		/^[a-z-]+:.*## / {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+##@ Setup
+
+update:  ## Get the code of the branch (git pull, no merge) and rebuild the image
+	git pull --ff-only || { echo "git pull refused: this branch has local commits (git log origin/$$(git branch --show-current)..HEAD)"; exit 1; }
+	$(COMPOSE) build
+
+build:  ## Rebuild the image (after a change of the code, the dependencies or public/)
+	$(COMPOSE) build
+
+check:  ## Show the settings of DB as the app reads them, then connect and list its tables
+	@$(RUN_T) python -c "from config import cfg; db = cfg.get_db('$(DB)'); \
+	print('dialect:', db.dialect, '| uri:', db.uri); \
+	print('sample_rows:', db.sample_rows, '| semantic_language:', db.semantic_language, '| query limits:', db.query_options); \
+	print('include_tables:', len(db.include_tables) or 'all'); \
+	from resources import db_registry; tables = sorted(db_registry['$(DB)'].get_usable_table_names()); \
+	print(len(tables), 'tables visible:', ', '.join(tables))"
+
+doctor:  ## Can Windows, then the container, reach Impala and Kerberos? (Docker Desktop loses the network after a VPN change)
+	@impala_ip=$$(grep -E '^IMPALA_IP=' .env | cut -d= -f2 | tr -d '\r'); \
+	kdc_ip=$$(grep -E '^KDC_IP=' .env | cut -d= -f2 | tr -d '\r'); \
+	echo "Windows:"; \
+	for target in "Impala $$impala_ip 21050" "Kerberos $$kdc_ip 88"; do \
+		set -- $$target; \
+		ok=$$(powershell.exe -NoProfile -Command "Test-NetConnection $$2 -Port $$3 -InformationLevel Quiet" 2>/dev/null | tr -d '\r'); \
+		printf '  %-9s %s:%s  %s\n' "$$1" "$$2" "$$3" "$$([ "$$ok" = True ] && echo OK || echo KO)"; \
+	done; \
+	echo "Container:"; \
+	$(RUN_T) python -m offline.doctor && echo "Network OK." || \
+	echo "The container can't reach the cluster: if Windows can, restart Docker Desktop (Quit, then start it), else check the VPN."
+
+shell:  ## Open a bash shell in a container of the app image
+	$(RUN) bash
+
+##@ Semantic layer
+
+semantics:  ## Generate the table descriptions and categorical columns (review tables.yaml; ARGS="--fresh" to redo them)
+	$(RUN) python -m offline.cli semantics --db $(DB) $(ARGS)
+
+relations:  ## Generate FK relations (review relationships.yaml)
+	$(RUN) python -m offline.cli fk-relations --db $(DB)
+
+metrics:  ## Propose business metrics (review metrics.yaml)
+	$(RUN) python -m offline.cli metrics --db $(DB)
+
+index:  ## Index the tables into Chroma and the categorical values (GROUP BY on the cluster, one at a time)
+	$(RUN) python -m offline.cli index --db $(DB)
+
+schema:  ## Show the indexed document of a table (TABLE=client [DB=awb_silver])
+	$(if $(TABLE),,$(error TABLE is required, e.g. make -f Makefile.ubi schema TABLE=client))
+	@$(RUN_T) python -c "from resources import vector_store; \
+	docs = vector_store.get_store().get(ids=['$(DB)_$(TABLE)'])['documents']; \
+	print(docs[0] if docs else 'Not found: $(DB)_$(TABLE)')"
+
+##@ App
+
+app:  ## Run the app on http://localhost:8000 (Ctrl+C to stop)
+	$(COMPOSE) up app
+
+app-stop:  ## Stop and remove the app container
+	$(COMPOSE) down
+
+##@ Quality
+
+eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options: ARGS="--limit 5")
+	$(RUN) python -m offline.eval.run --db $(DB) $(ARGS)
