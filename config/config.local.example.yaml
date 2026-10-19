@@ -14,6 +14,7 @@ databases:
   - name: "my_database"          # the Impala database, and the folder semantic_layer/my_database
     dialect: "impala"
     max_rows: 100
+    sample_rows: 0              # no data row under the DDLs (indexed, sent to the LLM); 3 by default
     tagline: "One line presenting the data."
     include_tables:              # the agent only sees these tables (all of them if omitted)
       - customers

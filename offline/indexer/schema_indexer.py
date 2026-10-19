@@ -21,9 +21,10 @@ from loguru import logger
 
 from config import cfg
 from lib.column_pruning import get_column_types
-from lib.semantics import load_fk_relations, load_semantics, render_table
+from lib.semantics import excluded_columns, load_fk_relations, load_semantics, render_table
 from lib.value_index import write_value_index
 from offline.indexer.categorical_values import (
+    CategoricalValuesError,
     fetch_categorical_columns_values,
     fits_in_prompt,
 )
@@ -62,14 +63,27 @@ class SchemaIndexer:
         {table: {column: {value: row count}}}.
 
         Table after table: each GROUP BY runs a Hive job, and concurrent jobs fail on a local Tez.
+
+        Raises CategoricalValuesError, once every table is read, when the query of some columns
+        still failed after its retries: the run stops before writing any index, rather than
+        indexing documents and a value index silently missing those value lists.
         """
         semantics = load_semantics(self.db_name)
 
-        values = {}
+        values, failed = {}, []
         for table in [t for t in self.db.get_usable_table_names() if t in semantics]:
-            columns = semantics[table].get("categorical_columns") or []
+            # An excluded column is never read, even when declared categorical
+            excluded = excluded_columns(semantics[table])
+            columns  = [c for c in semantics[table].get("categorical_columns") or [] if c not in excluded]
             logger.info(f"[{self.db_name}] Fetching values: {table} ({len(columns)} column(s))")
-            values[table] = fetch_categorical_columns_values(self.db, self.db_name, table, columns)
+            try:
+                values[table] = fetch_categorical_columns_values(self.db, self.db_name, table, columns)
+            except CategoricalValuesError as e:
+                # Keep reading the other tables: every failed column is reported at once
+                failed += e.columns
+
+        if failed:
+            raise CategoricalValuesError(self.db_name, failed)
         return values
 
     def build_documents(self, values: dict[str, dict[str, dict[str, int]]]) -> list[Document]:
@@ -130,8 +144,10 @@ class SchemaIndexer:
         """
         Embed documents into the shared Chroma store with deterministic IDs.
 
-        Full refresh per database: every document of this database is deleted first,
-        so tables dropped or renamed since the last run do not linger in the index.
+        Full refresh per database, write first: the current documents are upserted, then the
+        other documents of this database are deleted, so tables dropped or renamed since the last
+        run do not linger in the index. A failure while embedding (API quota, network) leaves the
+        previous index of the database intact.
         IDs are built as "<db_name>_<table_name>".
         """
         store = self.vsm.get_store()
@@ -142,9 +158,16 @@ class SchemaIndexer:
             for doc in documents
         ]
 
-        # Purge this database's documents, then index the current ones
-        store.delete(where={"db_name": {"$eq": self.db_name}})
-        store.add_documents(documents, ids=ids)
+        # Index the current documents: add_documents upserts, an existing ID is replaced
+        if documents:
+            store.add_documents(documents, ids=ids)
+
+        # Only then purge the documents of the tables that are gone
+        indexed = store.get(where={"db_name": {"$eq": self.db_name}}, include=[])["ids"]
+        stale   = sorted(set(indexed) - set(ids))
+        if stale:
+            store.delete(ids=stale)
+            logger.info(f"[{self.db_name}] Removed {len(stale)} stale schema(s): {', '.join(stale)}")
 
         logger.info(f"[{self.db_name}] Indexed {len(documents)} schemas to Chroma.")
 

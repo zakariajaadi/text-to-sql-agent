@@ -61,6 +61,7 @@ class DatabaseConfig:
     tagline: str = ""                              # one-line presentation of the Chainlit welcome screen
     starters: list = field(default_factory=list)  # example questions of the Chainlit welcome screen: {icon, question}
     include_tables: list = field(default_factory=list)  # tables the agent may use; empty: every table of the database
+    sample_rows: int = 3   # rows shown under each DDL (indexed, sent to the LLM); 0 when the data must not leave
     uri: str = ""
     connect_args: dict = field(default_factory=dict, init=False)  # driver options (authentication), from the environment
 

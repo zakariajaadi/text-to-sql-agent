@@ -1,0 +1,38 @@
+# docker-compose.ubi.yaml — the app on a machine of a private network (image built from dockerfile.ubi),
+# querying a Kerberos-secured cluster: no local Hive, no Redis (cache disabled).
+#
+#   docker compose -f docker-compose.ubi.yaml build
+#   docker compose -f docker-compose.ubi.yaml up app                     # app on http://localhost:8000
+#   docker compose -f docker-compose.ubi.yaml run --rm app python -m offline.cli semantics --db <db>
+#
+# Machine-specific values, in .env (kept out of git), read both for the substitutions below and
+# by the app itself:
+#   BASE_IMAGE      the UBI 8 Python 3.12 image of the internal registry
+#   KERBEROS_DIR    host folder holding krb5.conf and the keytab, outside the project (mounted read-only)
+#   KDC_HOST, KDC_IP          the Kerberos KDC of the cluster realm
+#   IMPALA_HOST, IMPALA_IP    the Impala coordinator (its host name: Kerberos checks it)
+#   KRB5_CONFIG=/kerberos/krb5.conf, KRB5_CLIENT_KTNAME=/kerberos/<keytab>, GOOGLE_API_KEY...
+# The databases of this machine are in config/config.local.yaml.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: dockerfile.ubi
+      args:
+        BASE_IMAGE: ${BASE_IMAGE}
+    image: text-to-sql
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ${KERBEROS_DIR}:/kerberos:ro
+      - ./config:/app/config                  # config.yaml + config.local.yaml
+      - ./data:/app/data                      # Chroma index, value indexes
+      - ./semantic_layer:/app/semantic_layer  # written by the generators
+      - ./offline:/app/offline                # generators, indexer, eval (not in the image)
+    # The cluster hosts are not in the DNS the container sees
+    extra_hosts:
+      - "${KDC_HOST}:${KDC_IP}"
+      - "${IMPALA_HOST}:${IMPALA_IP}"

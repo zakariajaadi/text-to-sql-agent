@@ -18,7 +18,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from config import cfg
 from lib.metrics import metrics_path, read_metrics_file, validate_metric
-from lib.semantics import load_fk_relations, load_semantics
+from lib.semantics import excluded_columns, load_fk_relations, load_semantics
 from lib.sql_tools import contains_expression, join_condition
 from offline.semantic_gen.prompts import METRICS_PROMPT
 from offline.semantic_gen.schemas import MetricProposals
@@ -175,9 +175,12 @@ def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantic
     roles = {}
     for table in db.get_usable_table_names():
         categorical = set((semantics.get(table) or {}).get("categorical_columns") or [])
+        excluded    = excluded_columns(semantics.get(table))   # never proposed in a metric
         role = {"all": [], "identifiers": [], "dates": [], "measures": [], "dimensions": []}
         for column in inspector.get_columns(table):
             name      = column["name"]
+            if name in excluded:
+                continue
             type_name = type(column["type"]).__name__.lower()
             numeric   = any(t in type_name for t in NUMERIC_TYPES)
             role["all"].append(name)

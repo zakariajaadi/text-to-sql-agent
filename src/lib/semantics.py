@@ -11,6 +11,7 @@ import yaml
 from omegaconf import OmegaConf
 
 from config import SEMANTIC_LAYER_DIR
+from lib.column_pruning import get_column_names, prune_ddl
 from lib.sql_tools import join_condition
 
 
@@ -34,6 +35,11 @@ def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
     return [(r["from"], r["to"]) for r in relations]
 
 
+def excluded_columns(table_semantics: dict | None) -> set[str]:
+    """Columns of a table the agent must never see (`exclude_columns` in tables.yaml)."""
+    return set((table_semantics or {}).get("exclude_columns") or [])
+
+
 def render_table(table_name: str, table_ddl: str, table_semantics: dict,
                  db_fk_relations: list[tuple[str, str]],
                  categorical_values: dict[str, list[str]] | None = None,
@@ -44,10 +50,14 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     Prepends a comment header to the DDL and appends each documented column's
     description, the note of a column stored as text (`formats` in tables.yaml, converted
     following the dialect rules of agent/prompts.py), and its categorical values if any
-    (read from the database by offline/indexer/categorical_values.py), as an inline comment:
+    (read from the database by offline/indexer/categorical_values.py), as an inline comment.
+    The columns listed in `exclude_columns` (empty, technical or personal data) are removed,
+    sample rows included: the agent never sees them. `data_as_of`, the date the data stops,
+    is the reference date of relative periods (agent/prompts.py):
 
         -- Table: invoice
         -- Description: One row per customer purchase.
+        -- Data as of: 2024-07-10
         -- Joins: invoice.customerid = customer.customerid
         -- Read mode: LAST (partition: dt)
 
@@ -65,10 +75,17 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     Format contract: the "-- Joins" and "-- Read mode" lines are parsed back by
     lib/column_pruning.py — keep both in sync when changing the format.
     """
-    columns = table_semantics.get("columns") or {}
-    formats = table_semantics.get("formats") or {}   # {column: "date <pattern>" | "decimal"}
-    values  = categorical_values or {}   # {column: [value, ...]}
-    lines   = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
+    columns  = table_semantics.get("columns") or {}
+    formats  = table_semantics.get("formats") or {}   # {column: "date <pattern>" | "decimal"}
+    excluded = excluded_columns(table_semantics)
+    values   = categorical_values or {}   # {column: [value, ...]}
+    lines    = [f"-- Table: {table_name}", f"-- Description: {table_semantics['description']}"]
+    if table_semantics.get("data_as_of"):
+        lines.append(f"-- Data as of: {table_semantics['data_as_of']}")
+
+    # Excluded columns out of the CREATE TABLE body and of the sample rows
+    if excluded:
+        table_ddl = prune_ddl(table_ddl, set(get_column_names(table_ddl)) - excluded)
 
     # Join conditions involving this table, from relationships.yaml
     joins = [

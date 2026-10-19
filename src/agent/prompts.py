@@ -179,6 +179,9 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   you MUST specify a two-level aggregation strategy with an explicit intermediate step.
 - If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
   explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
+- If a selected table states "-- Data as of: D", its data stops at D: compute a relative
+  period of the question ("this month", "last 12 months") back from D, never from today,
+  and write the resulting dates in Filters.
 - When a filtered column lists its "Values:" or "Matching values:", filter on the exact listed
   values the user means: col = 'Value', or col IN (...) when the user's term covers several
   (e.g. "United States" → country = 'USA'; "the Santa territories" → territorydescription
@@ -269,6 +272,12 @@ including in joins and subqueries:
   on business date columns.
 - LIVE (key: k, version: v): several versions per key. Keep only the latest one:
   ROW_NUMBER() OVER (PARTITION BY k ORDER BY v DESC) = 1, in a subquery.
+
+## DATA AS OF
+A table header may state "-- Data as of: D": the table holds no data after D. A relative period
+of the question ("this month", "last 12 months", "this year") is counted back from D, never from
+the current date: never NOW() or CURRENT_DATE on such a table. Document it in an assumption:
+  -- Assumption: interpreted '[period]' as [the dates], the data stopping at D
 
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:

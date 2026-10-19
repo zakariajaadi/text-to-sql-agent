@@ -18,7 +18,8 @@ import yaml
 from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 
-from lib.semantics import load_semantics, tables_path
+from lib.column_pruning import get_column_names, prune_ddl
+from lib.semantics import excluded_columns, load_semantics, tables_path
 from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
 from offline.semantic_gen.schemas import TableSemantics
 from offline.semantic_gen.utils import FlowListDumper, table_columns
@@ -38,13 +39,16 @@ SEMANTICS_HEADER = """\
 #   read_mode, key_columns, partition_column, version_column : Hive table layout
 #   formats              : (manual) columns whose values are stored as text,
 #                          {column: "date <pattern>" (e.g. date dd/MM/yyyy) or "decimal"}
+#   exclude_columns      : (manual) columns the agent never sees (empty, technical, personal data):
+#                          out of the documents, the sample rows and the LLM prompts
+#   data_as_of           : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
 
 """
 
 # Key order of a table block in the YAML (unknown keys last)
 SEMANTICS_KEY_ORDER = [
-    "description", "read_mode", "key_columns", "partition_column", "version_column",
-    "categorical_columns", "formats", "columns",
+    "description", "data_as_of", "read_mode", "key_columns", "partition_column", "version_column",
+    "categorical_columns", "formats", "exclude_columns", "columns",
 ]
 
 # ------------------------------------------------------------
@@ -76,7 +80,12 @@ def generate_table_semantics(db_name: str):
     """
     db         = db_registry[db_name]
     existing   = load_semantics(db_name)
-    columns    = table_columns(db)
+    db_columns = table_columns(db)
+    # Excluded columns (exclude_columns, set beforehand) are neither sent to the LLM nor described
+    columns    = {
+        table: [c for c in table_cols if c not in excluded_columns(existing.get(table))]
+        for table, table_cols in db_columns.items()
+    }
     all_tables = ", ".join(columns)
 
     # 1. Only tables with something missing go to the LLM
@@ -89,6 +98,9 @@ def generate_table_semantics(db_name: str):
 
     def generate(table: str) -> tuple[str, TableSemantics]:
         ddl = db.get_table_info(table_names=[table]).strip()
+        excluded = excluded_columns(existing.get(table))
+        if excluded:
+            ddl = prune_ddl(ddl, set(get_column_names(ddl)) - excluded)
         logger.info(f"[{db_name}] Describing: {table}")
         return table, semantics_chain.invoke({
             "db_name":    db_name,
@@ -126,7 +138,7 @@ def generate_table_semantics(db_name: str):
     # Flag descriptions of columns that no longer exist
     for table, entry in existing.items():
         for column in entry.get("columns") or {}:
-            if column not in columns.get(table, []):
+            if column not in db_columns.get(table, []):
                 logger.warning(f"[{db_name}] Stale description: {table}.{column} no longer exists")
 
     path = tables_path(db_name)
