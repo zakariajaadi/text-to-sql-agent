@@ -2,7 +2,7 @@
 
 from config import DatabaseConfig
 from lib.column_pruning import get_column_names
-from lib.semantics import excluded_columns, render_table
+from lib.semantics import excluded_columns, manual_semantics, render_table
 
 DDL = """CREATE TABLE `client` (
 \t`clientid` INT,
@@ -54,3 +54,22 @@ def test_excluded_columns_of_a_missing_table():
 def test_sample_rows_default_and_override():
     assert DatabaseConfig(name="Chinook", dialect="hive").sample_rows == 3
     assert DatabaseConfig(name="Sales", dialect="impala", sample_rows=0).sample_rows == 0
+
+
+def test_semantic_language_defaults_to_english():
+    assert DatabaseConfig(name="Chinook", dialect="hive").semantic_language == "English"
+    assert DatabaseConfig(name="Sales", dialect="impala", semantic_language="French").semantic_language == "French"
+
+
+def test_manual_semantics_drops_only_the_generated_keys():
+    entry = dict(SEMANTICS, categorical_columns=["segment"], formats={"validated_on": "date dd/MM/yyyy"})
+    assert manual_semantics(entry) == {
+        "data_as_of":      "2026-06-16",
+        "exclude_columns": ["name", "validated_on"],
+        "formats":         {"validated_on": "date dd/MM/yyyy"},
+    }
+
+
+def test_the_generator_prompts_take_the_language():
+    from offline.semantic_gen.prompts import METRICS_PROMPT, TABLE_SEMANTICS_PROMPT
+    assert "{language}" in TABLE_SEMANTICS_PROMPT and "{language}" in METRICS_PROMPT

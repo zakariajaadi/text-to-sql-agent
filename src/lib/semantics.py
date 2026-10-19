@@ -35,6 +35,15 @@ def load_fk_relations(db_name: str) -> list[tuple[str, str]]:
     return [(r["from"], r["to"]) for r in relations]
 
 
+# Keys of a table block written by the generator (make semantics); the other ones are manual
+GENERATED_KEYS = ("description", "categorical_columns", "columns")
+
+
+def manual_semantics(table_semantics: dict) -> dict:
+    """A table block without its generated keys: formats, exclude_columns, data_as_of, read mode..."""
+    return {key: value for key, value in table_semantics.items() if key not in GENERATED_KEYS}
+
+
 def excluded_columns(table_semantics: dict | None) -> set[str]:
     """Columns of a table the agent must never see (`exclude_columns` in tables.yaml)."""
     return set((table_semantics or {}).get("exclude_columns") or [])

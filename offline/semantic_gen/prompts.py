@@ -37,6 +37,8 @@ Describe the table and each of its columns, for an analyst writing SQL queries.
    False for identifiers, including ids pointing to another table (fare_class_id): the label
    lives in the referenced table. False also for names of people or companies, contact
    details (phone, fax, email, address), free text, dates, timestamps and amounts.
+10. Write the descriptions in {language}, the language users ask their questions in. Keep the
+   column names, the codes and the "UNCLEAR:" marker exactly as they are.
 
 ## EXAMPLE OUTPUT (style to imitate)
 description: One row per customer order, with its shipping and billing details.
@@ -111,6 +113,7 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    Never propose a metric listed in EXISTING METRICS or REJECTED METRICS, nor another name
    for one of their expressions.
 9. Synonyms: 3 to 8 words users may use for the metric, in English and in {languages}.
+10. Write the descriptions in {language}, the language users ask their questions in.
 
 ## COLUMN ROLES
 {roles}

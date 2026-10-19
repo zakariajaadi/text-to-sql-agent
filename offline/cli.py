@@ -6,6 +6,7 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
     python -m offline.cli [command] [--db NAME]     (PYTHONPATH=src, see the Makefile)
 
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
+                    (--fresh: generated again from scratch, the manual keys kept)
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
     (review the YAML files)
@@ -27,11 +28,14 @@ def main():
     parser.add_argument("command", nargs="?", default="index",
                         choices=["index", "semantics", "fk-relations", "metrics"])
     parser.add_argument("--db", help="Database name (default: all databases)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="semantics: regenerate the descriptions and categorical columns, "
+                             "keeping the manual keys (formats, exclude_columns, data_as_of...)")
     args = parser.parse_args()
 
     commands = {
         "index":        lambda name: SchemaIndexer(name).run(),
-        "semantics":    tables.generate_table_semantics,
+        "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh),
         "fk-relations": relationships.infer_fk_relations,
         "metrics":      metrics.generate_metrics,
     }

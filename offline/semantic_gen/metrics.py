@@ -108,6 +108,7 @@ def generate_metrics(db_name: str):
         "db_name":   db_name,
         "dialect":   dialect,
         "languages": SYNONYM_LANGUAGES,
+        "language":  cfg.get_db(db_name).semantic_language,
         "roles":     _render_roles(roles, measure_tables, fact_tables),
         "existing":  "\n".join(f"- {name}: {entry.get('expr')}" for name, entry in entries.items()) or "None",
         "rejected":  ", ".join(ignored) or "None",

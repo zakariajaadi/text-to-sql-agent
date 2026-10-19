@@ -19,7 +19,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 
 from lib.column_pruning import get_column_names, prune_ddl
-from lib.semantics import excluded_columns, load_semantics, tables_path
+from config import cfg
+from lib.semantics import excluded_columns, load_semantics, manual_semantics, tables_path
 from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
 from offline.semantic_gen.schemas import TableSemantics
 from offline.semantic_gen.utils import FlowListDumper, table_columns
@@ -65,10 +66,11 @@ semantics_chain = (
 # Generator
 # ------------------------------------------------------------
 
-def generate_table_semantics(db_name: str):
+def generate_table_semantics(db_name: str, fresh: bool = False):
     """
     Generates a semantic layer via LLM into semantic_layer/<db>/tables.yaml: missing table
-    and column descriptions, and which columns are categorical.
+    and column descriptions, and which columns are categorical, written in the database's
+    `semantic_language` (the language users ask in).
 
     Compares current DB tables and columns against `semantic_layer/<db>/tables.yaml`.
     Only missing tables, tables with undocumented columns, or tables without
@@ -77,9 +79,14 @@ def generate_table_semantics(db_name: str):
     Additive only:
     existing descriptions are never overwritten, and a reviewed `categorical_columns`
     list only gains columns that are new to the table.
+    fresh: drop the generated content first (descriptions, categorical columns) and generate
+    it again, keeping the manual keys (formats, exclude_columns, data_as_of, read mode...).
     """
     db         = db_registry[db_name]
     existing   = load_semantics(db_name)
+    if fresh:
+        existing = {table: manual_semantics(entry) for table, entry in existing.items()}
+    language   = cfg.get_db(db_name).semantic_language
     db_columns = table_columns(db)
     # Excluded columns (exclude_columns, set beforehand) are neither sent to the LLM nor described
     columns    = {
@@ -106,6 +113,7 @@ def generate_table_semantics(db_name: str):
             "db_name":    db_name,
             "all_tables": all_tables,
             "ddl":        ddl,
+            "language":   language,
         })
 
     # 2. Generate descriptions in parallel
