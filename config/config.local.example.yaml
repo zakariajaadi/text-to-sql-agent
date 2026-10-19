@@ -7,6 +7,8 @@
 #   IMPALA_PORT             21050 by default
 #   IMPALA_AUTH_MECHANISM   GSSAPI (Kerberos) by default; NOSASL, PLAIN or LDAP otherwise
 #   IMPALA_USE_SSL          false by default
+#   IMPALA_EXEC_TIME_LIMIT_S  a query running longer is cancelled by Impala: 120 by default, empty = no limit
+#   IMPALA_MEM_LIMIT          a query needing more memory is cancelled: 2g by default, empty = no limit
 #   KRB5_CONFIG             path of the krb5.conf of the cluster realm
 #   KRB5_CLIENT_KTNAME      path of the keytab: the ticket is taken from it (no kinit)
 

@@ -36,7 +36,7 @@ def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
     """
     return SQLDatabase.from_uri(
         db_cfg.uri,
-        engine_args={"connect_args": dict(db_cfg.connect_args)} if db_cfg.connect_args else None,
+        engine_args=db_cfg.engine_args() or None,
         include_tables=list(db_cfg.include_tables) or None,
         sample_rows_in_table_info=db_cfg.sample_rows,
         lazy_table_reflection=True,  # don't reflect the whole metastore at startup

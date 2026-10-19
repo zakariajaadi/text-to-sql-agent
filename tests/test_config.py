@@ -33,6 +33,27 @@ def test_impala_driver_options_come_from_the_environment(monkeypatch):
     assert db.connect_args["use_ssl"] is True
 
 
+def test_impala_queries_are_limited_by_default(monkeypatch):
+    for var in ("IMPALA_EXEC_TIME_LIMIT_S", "IMPALA_MEM_LIMIT", "IMPALA_AUTH_MECHANISM"):
+        monkeypatch.delenv(var, raising=False)
+    db = DatabaseConfig(name="Sales", dialect="impala")
+    assert db.query_options == {"EXEC_TIME_LIMIT_S": "120", "MEM_LIMIT": "2g"}
+    # Sent with every query of the engine, next to the driver options
+    args = db.engine_args()
+    assert args["execution_options"] == {"cursor_configuration": {"EXEC_TIME_LIMIT_S": "120", "MEM_LIMIT": "2g"}}
+    assert args["connect_args"]["auth_mechanism"] == "GSSAPI"
+
+
+def test_impala_limits_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("IMPALA_EXEC_TIME_LIMIT_S", "30")
+    monkeypatch.setenv("IMPALA_MEM_LIMIT", "")      # empty: no memory limit
+    assert DatabaseConfig(name="Sales", dialect="impala").query_options == {"EXEC_TIME_LIMIT_S": "30"}
+
+
+def test_hive_has_no_engine_args():
+    assert DatabaseConfig(name="Chinook", dialect="hive").engine_args() == {}
+
+
 def test_unknown_dialect_is_rejected():
     with pytest.raises(ValueError, match="Unsupported dialect"):
         DatabaseConfig(name="Sales", dialect="oracle")

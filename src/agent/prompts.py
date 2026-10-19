@@ -15,8 +15,8 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(col, '<pattern>')) AS TIMESTAMP). Never YEAR(col) or col >= '...' on the raw text.
-- A column noted "[stored as text: decimal number]": CAST(col AS DECIMAL(38, 6)) before SUM, AVG,
-  comparisons or sorts.
+- A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
+  SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
     "impala": """
 - Year / month: YEAR(col), MONTH(col). Month label: FROM_TIMESTAMP(col, 'yyyy-MM').
@@ -28,8 +28,8 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   TO_TIMESTAMP(col, '<pattern>'). Never YEAR(col) or col >= '...' on the raw text.
-- A column noted "[stored as text: decimal number]": CAST(col AS DECIMAL(38, 6)) before SUM, AVG,
-  comparisons or sorts.
+- A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
+  SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
 }
 

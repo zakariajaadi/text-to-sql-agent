@@ -64,6 +64,7 @@ class DatabaseConfig:
     sample_rows: int = 3   # rows shown under each DDL (indexed, sent to the LLM); 0 when the data must not leave
     uri: str = ""
     connect_args: dict = field(default_factory=dict, init=False)  # driver options (authentication), from the environment
+    query_options: dict = field(default_factory=dict, init=False) # options set on every query (limits), from the environment
 
     def __post_init__(self):
 
@@ -85,9 +86,29 @@ class DatabaseConfig:
                 "kerberos_service_name": os.getenv("IMPALA_KERBEROS_SERVICE", "impala"),
                 "use_ssl":               os.getenv("IMPALA_USE_SSL", "false").lower() == "true",
             }
+            # Impala cancels a query running longer, or needing more memory, than this (the agent
+            # gets the error like any other): a wrong query never loads a shared cluster for long.
+            # An empty value lifts the limit
+            limits = {
+                "EXEC_TIME_LIMIT_S": os.getenv("IMPALA_EXEC_TIME_LIMIT_S", "120"),
+                "MEM_LIMIT":         os.getenv("IMPALA_MEM_LIMIT", "2g"),
+            }
+            self.query_options = {option: value for option, value in limits.items() if value}
 
         else:
             raise ValueError(f"Unsupported dialect '{self.dialect}' for database {self.name} (expected: hive, impala)")
+
+    def engine_args(self) -> dict:
+        """
+        Arguments of the SQLAlchemy engine: driver options, and the query options of impyla,
+        sent with every query of the engine (agent, indexer, generators, eval).
+        """
+        args = {}
+        if self.connect_args:
+            args["connect_args"] = dict(self.connect_args)
+        if self.query_options:
+            args["execution_options"] = {"cursor_configuration": dict(self.query_options)}
+        return args
 
 @dataclass
 class RetrievalConfig:
