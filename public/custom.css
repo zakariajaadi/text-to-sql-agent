@@ -76,3 +76,24 @@ html:not(.dark) .mascot.is-out .m-antenna {
   display: none;
 }
 
+
+/* Welcome screen starters: two per row, the last one alone and centered when their count is odd
+   (2 + 2 + 1 for five). Each pair hugs the middle: the left one sits at the end of its column,
+   the right one at the start. On a narrow screen, back to Chainlit's wrapping row. */
+@media (min-width: 768px) {
+  #starters {
+    display: grid;
+    grid-template-columns: repeat(2, auto);
+    justify-content: center;
+  }
+  #starters > button:nth-child(odd) {
+    justify-self: end;
+  }
+  #starters > button:nth-child(even) {
+    justify-self: start;
+  }
+  #starters > button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+}
