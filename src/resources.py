@@ -13,6 +13,7 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
 from config import DatabaseConfig, LLMConfig, cfg
+from lib.db_errors import is_unreachable
 from lib.metrics import Metric, load_metrics
 from lib.semantics import load_fk_relations
 from lib.vector_store import VectorStoreManager
@@ -34,13 +35,21 @@ def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
     With include_tables, the agent, the indexer and the generators only see those tables
     (an unknown name stops the startup). sample_rows: rows under each DDL of get_table_info.
     """
-    db = SQLDatabase.from_uri(
-        db_cfg.uri,
-        engine_args=db_cfg.engine_args() or None,
-        include_tables=list(db_cfg.include_tables) or None,
-        sample_rows_in_table_info=db_cfg.sample_rows,
-        lazy_table_reflection=True,  # don't reflect the whole metastore at startup
-    )
+    try:
+        db = SQLDatabase.from_uri(
+            db_cfg.uri,
+            engine_args=db_cfg.engine_args() or None,
+            include_tables=list(db_cfg.include_tables) or None,
+            sample_rows_in_table_info=db_cfg.sample_rows,
+            lazy_table_reflection=True,  # don't reflect the whole metastore at startup
+        )
+    except Exception as e:
+        if is_unreachable(e):
+            raise RuntimeError(
+                f"The {db_cfg.dialect} database {db_cfg.name} is unreachable at startup ({type(e).__name__}: "
+                f"{str(e)[:200]}). Check the network or VPN (in Docker: restart Docker Desktop), then start again."
+            ) from e
+        raise
     if db_cfg.dialect == "impala":
         quote_every_identifier(db._engine.dialect)
     return db

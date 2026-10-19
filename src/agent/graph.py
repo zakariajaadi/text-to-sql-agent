@@ -11,6 +11,7 @@ from agent.nodes import (
     match_values,
     planner,
     prune_columns,
+    report_unreachable,
     rerank_tables,
     resolve_database,
     retrieve_schema,
@@ -37,6 +38,7 @@ def build_graph():
     builder.add_node(sql_coder)
     builder.add_node(sql_validator)
     builder.add_node(format_answer)
+    builder.add_node(report_unreachable)
 
     # Edges
     builder.add_edge(START,                "condense_question")
@@ -52,10 +54,12 @@ def build_graph():
     builder.add_edge("planner", "sql_coder")
     builder.add_edge("sql_coder",       "sql_validator")
     builder.add_conditional_edges("sql_validator", route_after_validation, {
-        "error":   "sql_coder",
-        "success": "format_answer",
+        "error":       "sql_coder",
+        "success":     "format_answer",
+        "unreachable": "report_unreachable",
     })
-    builder.add_edge("format_answer",   END)
+    builder.add_edge("format_answer",      END)
+    builder.add_edge("report_unreachable", END)
 
     # Set Checkpointer if memory is enabled
     checkpointer = None

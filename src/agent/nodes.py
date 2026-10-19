@@ -1,5 +1,6 @@
 # src/agent/nodes.py
 
+import time
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -34,6 +35,7 @@ from lib import (
     normalize_sql,
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
+from lib.db_errors import is_unreachable
 from lib.metrics import (
     Metric,
     render_metric_catalog,
@@ -43,12 +45,23 @@ from lib.semantics import add_matching_values
 from lib.sql_tools import contains_expression, get_query_tables, get_value_filters
 from lib.value_index import find_matching_values, find_unknown_values
 from resources import (
+    db_registry,
     fast_model,
     fk_graphs,
     get_schema_retriever,
     metrics_store,
     model,
     schema_store,
+)
+
+# An unreachable database is retried once, on fresh connections, after this delay
+RECONNECT_DELAY_S = 3
+
+# Answer of report_unreachable, in the language of the UI
+UNREACHABLE_ANSWER = (
+    "**La base {db} est injoignable pour le moment** : {engine} ne répond pas "
+    "(réseau, VPN ou maintenance du cluster). La question n'a pas pu être exécutée, "
+    "réessayez dans quelques minutes."
 )
 
 
@@ -492,6 +505,9 @@ def sql_validator(state: AgentState) -> dict:
 
     The query runs against selected_db and at most `max_rows` rows are read:
     the safety cap is applied here, never as a LIMIT in the SQL.
+    An unreachable database (network, cluster down, Kerberos) is not the query's fault: after
+    one retry on fresh connections, validation_check "unreachable" sends the turn to
+    report_unreachable, without feedback (sql_coder never rewrites a correct query for it).
     """
     # Fetch generated query and target database from state
     query   = state["generated_query"]
@@ -528,8 +544,17 @@ def sql_validator(state: AgentState) -> dict:
 
     # 3. Execute SQL query, reading at most max_rows rows
     try:
-        result = run_capped_query(db_name, query, db_cfg.max_rows)
-    except SQLAlchemyError as e:
+        result = _run_with_reconnect(db_name, query, db_cfg.max_rows)
+    except Exception as e:
+        if is_unreachable(e):
+            logger.warning(f"sql_validator: {db_name} unreachable — {type(e).__name__}: {str(e)[:200]}")
+            return {
+                "validation_feedback": "",   # nothing for sql_coder to fix
+                "validation_error":    str(e),
+                "validation_check":    "unreachable",
+            }
+        if not isinstance(e, SQLAlchemyError):
+            raise
         # On failure return feedback to sql_coder, and the bare error to the Chainlit UI
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
@@ -561,6 +586,32 @@ def sql_validator(state: AgentState) -> dict:
     }
 
 
+def _run_with_reconnect(db_name: str, query: str, max_rows: int):
+    """
+    run_capped_query, run again once on fresh connections when the database was unreachable:
+    a connection of the pool may have died (cluster restart, network change) while a new one works.
+    """
+    try:
+        return run_capped_query(db_name, query, max_rows)
+    except Exception as e:
+        if not is_unreachable(e):
+            raise
+        logger.info(f"sql_validator: {db_name} unreachable, retrying on fresh connections in {RECONNECT_DELAY_S}s")
+        db_registry[db_name]._engine.dispose()   # drop the pooled connections
+        time.sleep(RECONNECT_DELAY_S)
+        return run_capped_query(db_name, query, max_rows)
+
+
+def report_unreachable(state: AgentState) -> dict:
+    """
+    Deterministic node — the answer when the database could not be reached (sql_validator):
+    a fixed message rather than format_answer, so no LLM call and nothing cached.
+    """
+    db_name = state["selected_db"]
+    engine  = cfg.get_db(db_name).dialect.capitalize()
+    return {"messages": [AIMessage(content=UNREACHABLE_ANSWER.format(db=db_name, engine=engine))]}
+
+
 def _unknown_values_error(unknown: list) -> str:
     """Error of sql_validator for the values a query filters on that their column doesn't hold."""
     lines = [
@@ -573,8 +624,10 @@ def _unknown_values_error(unknown: list) -> str:
             "so it would return no row.\n" + "\n".join(lines))
 
 
-def route_after_validation(state: AgentState) -> Literal["error", "success"]:
-    """Route back to coder on failure, to format_answer on success."""
+def route_after_validation(state: AgentState) -> Literal["error", "success", "unreachable"]:
+    """Route back to coder on failure, to report_unreachable without a database, to format_answer on success."""
+    if state.get("validation_check") == "unreachable":
+        return "unreachable"
     feedback = state.get("validation_feedback", "")
  
     if feedback:

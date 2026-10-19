@@ -168,7 +168,7 @@ class TurnRenderer:
 
     async def _on_node_start(self, node: str) -> None:
         # The answer starts: the agent's work is over, collapse its step
-        if node == "format_answer":
+        if node in ("format_answer", "report_unreachable"):
             await self.finish()
         elif node in NODE_STAGES and node not in LATE_STAGES:
             title = NODE_STAGES[node].format(engine=self.engine)
@@ -303,6 +303,11 @@ class TurnRenderer:
             error = _short_db_error(output.get("validation_error", ""))
             return f"Requête rejetée par {self.engine}", f"```\n{error}\n```\nL'agent corrige la requête à partir de cette erreur.", True
 
+        if output.get("validation_check") == "unreachable":
+            # The database could not be reached: the query is not at fault, it was not run
+            error = _short_db_error(output.get("validation_error", ""))
+            return f"{self.engine} injoignable", f"```\n{error}\n```\nLa requête n'a pas pu être exécutée.", True
+
         if "result_rows" not in output:
             return None
         rows     = output["result_rows"]
@@ -329,6 +334,10 @@ class TurnRenderer:
             detail += f"\n\nSeules les {len(rows)} premières lignes sont lues (limite de sécurité)."
         rows_label = _rows_label(self.result)
         return f"{rows_label} retournée{'s' if rows_label.endswith('s') else ''}", detail
+
+    async def _end_report_unreachable(self, input: dict, output: dict) -> None:
+        """Send the fixed answer of an unreachable database (no LLM, nothing streamed)."""
+        await self._end_format_answer(input, output)
 
     async def _end_format_answer(self, input: dict, output: dict) -> None:
         """Send the answer when it was not streamed (semantic cache hit)."""

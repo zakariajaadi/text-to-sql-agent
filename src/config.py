@@ -86,6 +86,12 @@ class DatabaseConfig:
                 "auth_mechanism":        os.getenv("IMPALA_AUTH_MECHANISM", "GSSAPI"),
                 "kerberos_service_name": os.getenv("IMPALA_KERBEROS_SERVICE", "impala"),
                 "use_ssl":               os.getenv("IMPALA_USE_SSL", "false").lower() == "true",
+                # Seconds a network call may wait: an unreachable cluster fails fast instead of hanging.
+                # Each call of a query is short (impyla polls a running query), so it never cuts one
+                "timeout":               int(os.getenv("IMPALA_CONNECT_TIMEOUT", "20")),
+                # impyla reopens a failed connection 3 times by default, each time waiting the timeout:
+                # once is enough, sql_validator retries an unreachable database once itself
+                "retries":               1,
             }
             # Impala cancels a query running longer, or needing more memory, than this (the agent
             # gets the error like any other): a wrong query never loads a shared cluster for long.

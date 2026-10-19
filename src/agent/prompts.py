@@ -15,6 +15,8 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(col, '<pattern>')) AS TIMESTAMP). Never YEAR(col) or col >= '...' on the raw text.
+  When the pattern starts with yyyy-MM-dd, use CAST(col AS TIMESTAMP) instead: it also reads
+  the values with fractions of a second, which a pattern turns into NULL.
 - A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
   SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
@@ -28,6 +30,8 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   TO_TIMESTAMP(col, '<pattern>'). Never YEAR(col) or col >= '...' on the raw text.
+  When the pattern starts with yyyy-MM-dd, use CAST(col AS TIMESTAMP) instead: it also reads
+  the values with fractions of a second, which a pattern turns into NULL.
 - A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
   SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
@@ -177,6 +181,8 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Take join conditions from the "-- Joins:" lines in the table headers. Never invent a join.
 - If the question requires averaging, counting, or summing an already-aggregated value,
   you MUST specify a two-level aggregation strategy with an explicit intermediate step.
+- Counting entities (customers, accounts, people...) is COUNT(DISTINCT their id), unless the
+  table header says "One row per" that entity: a table can hold several rows per entity.
 - If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
   explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
 - If a selected table states "-- Data as of: D", its data stops at D: compute a relative
@@ -254,6 +260,10 @@ You ONLY write SQL — you never execute it.
 11. Aliases are the column headers the user reads: write them in the language of the
     question, in snake_case, without accents. Give one to every selected column and
     expression: a business name, never the raw column name.
+12. To count entities (customers, accounts, people, files...), count their identifier:
+    COUNT(DISTINCT t.entity_id). A table can hold several rows per entity (one per product,
+    per event, per manager): COUNT(*) or COUNT(t.entity_id) only when the table header says
+    "One row per" that entity.
     - Question in English: e.firstname AS first_name, COUNT(*) AS flight_count,
       SUM(b.seat_price * b.passenger_count) AS total_revenue
     - Question in French: e.firstname AS prenom, COUNT(*) AS nb_vols,

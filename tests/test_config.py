@@ -16,12 +16,14 @@ def test_hive_uri_uses_the_lowercased_name(monkeypatch):
 
 
 def test_impala_defaults_to_kerberos(monkeypatch):
-    for var in ("IMPALA_PORT", "IMPALA_AUTH_MECHANISM", "IMPALA_KERBEROS_SERVICE", "IMPALA_USE_SSL"):
+    for var in ("IMPALA_PORT", "IMPALA_AUTH_MECHANISM", "IMPALA_KERBEROS_SERVICE", "IMPALA_USE_SSL",
+                "IMPALA_CONNECT_TIMEOUT"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("IMPALA_HOST", "impala-coordinator.example")
     db = DatabaseConfig(name="Sales", dialect="impala", include_tables=["orders"])
     assert db.uri == "impala4://impala-coordinator.example:21050/sales"
-    assert db.connect_args == {"auth_mechanism": "GSSAPI", "kerberos_service_name": "impala", "use_ssl": False}
+    assert db.connect_args == {"auth_mechanism": "GSSAPI", "kerberos_service_name": "impala", "use_ssl": False,
+                               "timeout": 20, "retries": 1}
     assert db.include_tables == ["orders"]
 
 
