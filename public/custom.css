@@ -6,7 +6,7 @@ body {
     radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.26) 1px, transparent 0),
     radial-gradient(ellipse 60% 50% at 100% 0%, hsl(var(--primary) / 0.10), transparent 70%),
     radial-gradient(ellipse 50% 45% at 0% 100%, hsl(var(--primary) / 0.07), transparent 70%);
-  background-size: 22px 22px, 100% 100%, 100% 100%;
+  background-size: 32px 32px, 100% 100%, 100% 100%;
   background-attachment: fixed;
 }
 
@@ -20,15 +20,30 @@ body {
 }
 
 /* Welcome screen mascot (public/mascot.js): while the robot takes over, the avatar is a plain disc behind it;
-   once it has left, an empty dashed socket, so the gap above the description reads as "it lives here" */
+   once it has left, an empty dashed socket, so the gap above the description reads as "it lives here".
+   The disc is the icon's orange/amber gradient; its two colors are registered properties so it can still fade
+   out (a gradient itself does not transition). */
+@property --home-from {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+@property --home-to {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
 #welcome-screen img.rounded-full.mascot-home {
-  background: #E86441;
+  --home-from: #E86441;
+  --home-to: #F79F3B;
+  background: linear-gradient(135deg, var(--home-from), var(--home-to));
   outline: 1.5px dashed transparent;
   outline-offset: -1.5px;
 }
 #welcome-screen img.rounded-full.mascot-home.mascot-away {
-  background-color: transparent;
-  transition: background-color 400ms, outline-color 400ms;
+  --home-from: transparent;
+  --home-to: transparent;
+  transition: --home-from 400ms, --home-to 400ms, outline-color 400ms;
   outline-color: hsl(var(--primary) / 0.45);
 }
 
@@ -52,10 +67,12 @@ body {
   display: block;
   overflow: visible;
 }
-.mascot-svg .m-face { fill: #E86441; stroke: #fff; }
-.mascot-svg .m-antenna, .mascot-svg .m-ears, .mascot-svg .m-eyes { stroke: #fff; }
-.mascot-svg .m-leg, .mascot-svg .m-arm { stroke: #E86441; }
+.mascot-svg .m-face { fill: url(#mascot-face-gradient); stroke: #fff; }
+.mascot-svg .m-antenna, .mascot-svg .m-rim, .mascot-svg .m-ears, .mascot-svg .m-eyes { stroke: #fff; }
+.mascot-svg .m-leg, .mascot-svg .m-arm { stroke: #E86441; transition: stroke 300ms; }
 .mascot-svg .m-back { stroke: #C24E31; }
+/* Still in its circle, the legs growing out on take-off are white like the icon's lines, over the orange disc */
+.mascot:not(.is-out) .m-leg { stroke: #fff; }
 .mascot-svg .m-lids {
   transform-box: fill-box;
   transform-origin: center;
@@ -70,8 +87,72 @@ html:not(.dark) .mascot.is-out .m-antenna {
   transition: stroke 300ms;
 }
 
-/* Step titles: the "Using" and "Used" prefixes are emptied in .chainlit/translations/en-US.json,
-   hide its empty <span> so it no longer shifts the title by the flex gap */
+/* Halo around the message composer: a primary-colored arc turning around its border, with a faint blurred glow
+   behind it. Kept discreet: slow and half-visible while the composer has focus; a little faster, brighter and
+   gently breathing while the agent runs (Chainlit swaps the send button for #stop-button then). ::before is the 1.5px ring, cut out of a gradient disc by a mask that
+   keeps only its padding. ::after is the glow, at z-index -1: the composer opens no stacking context, so it
+   sits under the composer and the page, above the body's dot grid. */
+@property --halo-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes halo-spin {
+  to { --halo-angle: 360deg; }
+}
+@keyframes halo-pulse {
+  50% { opacity: 0.12; }
+}
+#message-composer {
+  position: relative;
+}
+#message-composer::before,
+#message-composer::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: conic-gradient(from var(--halo-angle),
+    transparent 0deg, hsl(var(--primary)) 80deg, transparent 160deg);
+  opacity: 0;
+  transition: opacity 500ms;
+}
+#message-composer::before {
+  padding: 1.5px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+#message-composer::after {
+  inset: -4px;
+  z-index: -1;
+  filter: blur(18px);
+}
+#message-composer:focus-within::before {
+  opacity: 0.5;
+  animation: halo-spin 8s linear infinite;
+}
+#message-composer:focus-within::after {
+  opacity: 0.15;
+  animation: halo-spin 8s linear infinite;
+}
+#message-composer:has(#stop-button)::before {
+  opacity: 0.8;
+  animation: halo-spin 3s linear infinite;
+}
+#message-composer:has(#stop-button)::after {
+  opacity: 0.3;
+  animation: halo-spin 3s linear infinite, halo-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  #message-composer::before,
+  #message-composer::after {
+    animation: none !important;
+  }
+}
+
+/* Step titles: the "Using" and "Used" prefixes ("Utilise" and "Utilisé") are emptied in
+   .chainlit/translations/en-US.json and fr-FR.json, hide their empty <span> so it no longer shifts the title by the flex gap */
 [id^="step-"] > span:empty {
   display: none;
 }
@@ -95,5 +176,85 @@ html:not(.dark) .mascot.is-out .m-antenna {
   #starters > button:last-child:nth-child(odd) {
     grid-column: 1 / -1;
     justify-self: center;
+  }
+}
+
+/* Welcome screen title (public/welcome_title.js): the database name in a primary gradient sweeping slowly */
+@keyframes title-sweep {
+  to { background-position: 200% center; }
+}
+#welcome-title {
+  margin: 0.25rem 0 0;
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-align: center;
+  color: hsl(var(--foreground));
+}
+#welcome-title .welcome-title-name {
+  background: linear-gradient(90deg,
+    hsl(var(--primary)), hsl(32 92% 60%), hsl(var(--primary)) 50%, hsl(32 92% 60%), hsl(var(--primary)));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: title-sweep 6s linear infinite;
+}
+
+/* Welcome screen entrance: avatar, title, description, composer, then the starters one by one, each fading in
+   while rising. Fill mode backwards only: once played, no transform stays on the composer, which would open a
+   stacking context and put its halo glow (::after, z-index -1) over its own background. */
+@keyframes welcome-rise {
+  from { opacity: 0; transform: translateY(10px); }
+}
+#welcome-screen > div:first-child > *,
+#welcome-screen #message-composer,
+#starters > button {
+  animation: welcome-rise 500ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+#welcome-screen > div:first-child > :nth-child(2) { animation-delay: 80ms; }
+#welcome-screen > div:first-child > :nth-child(3) { animation-delay: 160ms; }
+#welcome-screen #message-composer { animation-delay: 240ms; }
+#starters > button:nth-child(1) { animation-delay: 340ms; }
+#starters > button:nth-child(2) { animation-delay: 400ms; }
+#starters > button:nth-child(3) { animation-delay: 460ms; }
+#starters > button:nth-child(4) { animation-delay: 520ms; }
+#starters > button:nth-child(5) { animation-delay: 580ms; }
+#starters > button:nth-child(n+6) { animation-delay: 640ms; }
+
+/* Starters on hover: lifted, primary border and glow, brighter text, icon slightly larger; pressed on click */
+#starters > button {
+  transition: transform 200ms, box-shadow 200ms, border-color 200ms, background-color 200ms;
+}
+#starters > button img {
+  transition: transform 200ms;
+}
+#starters > button:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--primary) / 0.6);
+  box-shadow: 0 8px 22px -8px hsl(var(--primary) / 0.55);
+}
+#starters > button:hover p {
+  color: hsl(var(--foreground));
+}
+#starters > button:hover img {
+  transform: scale(1.12);
+}
+#starters > button:active {
+  transform: translateY(0) scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #welcome-title .welcome-title-name,
+  #welcome-screen > div:first-child > *,
+  #welcome-screen #message-composer,
+  #starters > button {
+    animation: none;
+  }
+  #starters > button:hover,
+  #starters > button:hover img,
+  #starters > button:active {
+    transform: none;
   }
 }

@@ -16,6 +16,8 @@ data/
 # Machine-specific config and Kerberos secrets
 config/config.local.yaml
 *.keytab
+# Local make entry point of a machine ("include Makefile.ubi"): make reads it before Makefile
+GNUmakefile
 # Semantic layer and eval files: only the demo databases are shared, a private
 # database's (generated on its own machine) stays there
 semantic_layer/*

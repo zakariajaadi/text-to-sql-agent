@@ -7,15 +7,20 @@
 (() => {
   const IDLE_MS = 30000;
 
-  // The robot is the agent icon (public/icons/agent.svg): a 24-unit grid drawn at 4/3 in the 64px avatar, so at
-  // scale 1 its head covers the avatar's exactly. Poses are in these units.
-  const UNIT = 4 / 3, ORIGIN = 16;
-  const toPx = (u) => ORIGIN + u * UNIT;
+  // The robot is the agent icon (public/icons/agent.svg): a 24-unit grid drawn at 4/3 in the 64px avatar, lifted
+  // by 0.2px so the legless figure stays centered; at scale 1 it covers the avatar's exactly. Poses are in these
+  // units. The head is a squared database cylinder, from y 6.5 (top of its lid) to y 21.4 (bottom of its rounded
+  // base), where the legs start.
+  const UNIT = 4 / 3, ORIGIN_X = 16, ORIGIN_Y = 15.8;
+  const toPxX = (u) => ORIGIN_X + u * UNIT, toPxY = (u) => ORIGIN_Y + u * UNIT;
   const FORWARD = -1; // it only ever goes left: forward is -x, so the icon never needs mirroring
-  const HIP_Y = 20, GROUND = 27, LEG = 3.6, ARM = 5, TOE = 1.1, HANG = 7.1;
+  const HIP_Y = 21.4, GROUND = 28.4, LEG = 3.6, ARM = 5, TOE = 1.1, HANG = 7.1;
   const FEET_ANCHOR = GROUND + 0.9, SEAT_ANCHOR = HIP_Y + 0.9; // outer edge of the strokes
   const SIDE_HIPS = [13.5, 10.5], FRONT_HIPS = [14.5, 9.5]; // [back leg, front leg]
-  const SHOULDERS = [[19.6, 16.8], [4.4, 16.8]]; // [back arm, front arm], right under the ears
+  const SHOULDERS = [[19.6, 17.8], [4.4, 17.8]]; // [back arm, front arm], right under the ears
+  const ANTENNA_BASE = [12, 6.5]; // where the antenna leaves the lid: its pivot when it sways
+  // The icon has no legs: in its circle they are folded away, and they grow out, toes pointing outwards, as it jumps
+  const HOME_LEG_EXT = 0, HOME_TOE = 1.3, HOME_TOE_DIRS = [-FORWARD, FORWARD];
   const TUCK = [[-0.5, 4.6], [1.8, 4.2]]; // feet relative to the hips mid-air, x forward
 
   const SCALE = 1.3; // on the composer
@@ -32,15 +37,24 @@
 
   const SVG = `
     <svg class="mascot-svg" width="64" height="64" viewBox="0 0 64 64">
-      <g transform="translate(${ORIGIN} ${ORIGIN}) scale(${UNIT})" fill="none" stroke-width="1.8"
+      <!-- The face's fill: the avatar disc's diagonal gradient, spanned over the disc (0..64px = -12..36 units
+           across, -10.7..37.3 down) in the head's own space, so at rest the face matches the disc behind it and the
+           gradient moves with it -->
+      <defs>
+        <linearGradient id="mascot-face-gradient" gradientUnits="userSpaceOnUse" x1="-12" y1="-10.7" x2="36" y2="37.3">
+          <stop offset="0" stop-color="#E86441"/><stop offset="1" stop-color="#F79F3B"/>
+        </linearGradient>
+      </defs>
+      <g transform="translate(${ORIGIN_X} ${ORIGIN_Y}) scale(${UNIT})" fill="none" stroke-width="1.8"
          stroke-linecap="round" stroke-linejoin="round">
         <path class="m-leg m-back"/><path class="m-leg m-front"/>
         <g class="m-head">
           <path class="m-arm m-back"/><path class="m-arm m-front"/>
-          <g class="m-antenna"><path d="M12 8V4H8"/></g>
-          <rect class="m-face" width="16" height="12" x="4" y="8" rx="2"/>
-          <path class="m-ears" d="M2 14h2M20 14h2"/>
-          <g class="m-eyes"><g class="m-lids"><path d="M15 13v2M9 13v2"/></g></g>
+          <g class="m-antenna"><path d="M12 6.5V3H8"/></g>
+          <path class="m-face" d="M4 8.5c0-1.1 3.6-2 8-2s8 .9 8 2v11c0 1.1-3.6 2-8 2s-8-.9-8-2z"/>
+          <path class="m-rim" d="M4 8.5c0 .7 3.6 1.2 8 1.2s8-.5 8-1.2"/>
+          <path class="m-ears" d="M2 15h2M20 15h2"/>
+          <g class="m-eyes"><g class="m-lids"><path d="M15 14v2.5M9 14v2.5"/></g></g>
         </g>
       </g>
     </svg>`;
@@ -70,7 +84,7 @@
   function standingPose() {
     return {
       bodyY: 0, lean: 0, squash: 0, // squash < 0 stretches
-      hips: [...SIDE_HIPS], feet: SIDE_HIPS.map((h) => [h, GROUND]), toe: TOE, legExt: 1,
+      hips: [...SIDE_HIPS], feet: SIDE_HIPS.map((h) => [h, GROUND]), toe: TOE, toeDirs: [FORWARD, FORWARD], legExt: 1,
       arms: [14, -14], armExt: 1, // degrees from hanging down, positive towards +x
       eyes: [0, 0], eyeTarget: [0, 0],
     };
@@ -89,7 +103,7 @@
 
   function render(dt) {
     const { state: s, pose: p } = m;
-    const ax = toPx(12), ay = toPx(s.anchor);
+    const ax = toPxX(12), ay = toPxY(s.anchor);
     m.el.style.transform = `translate(${s.x - ax}px, ${s.y - ay}px)`;
     m.inner.style.transformOrigin = `${ax}px ${ay}px`;
     m.inner.style.transform = `scale(${s.scale})`;
@@ -104,7 +118,7 @@
       const follow = 1 - Math.exp(-dt * 14);
       p.eyes = p.eyes.map((e, i) => e + (p.eyeTarget[i] - e) * follow);
     }
-    m.antenna.setAttribute("transform", `rotate(${m.spring.angle} 12 8)`);
+    m.antenna.setAttribute("transform", `rotate(${m.spring.angle} ${ANTENNA_BASE})`);
     m.eyes.setAttribute("transform", `translate(${p.eyes[0]} ${p.eyes[1]})`);
     m.head.setAttribute(
       "transform",
@@ -116,7 +130,7 @@
       const hip = [p.hips[i], HIP_Y + p.bodyY], ext = p.legExt;
       const target = [lerp(hip[0], p.feet[i][0], ext), lerp(hip[1], p.feet[i][1], ext)];
       const [knee, foot] = solveLeg(hip, target, LEG * ext, LEG * ext);
-      m.legs[i].setAttribute("d", ext < 0.05 ? "" : `M${hip}L${knee}L${foot}l${FORWARD * p.toe * ext} 0`);
+      m.legs[i].setAttribute("d", ext < 0.05 ? "" : `M${hip}L${knee}L${foot}l${p.toeDirs[i] * p.toe} 0`);
 
       const sh = SHOULDERS[i], a = (p.arms[i] * Math.PI) / 180, l = ARM * p.armExt;
       m.arms[i].setAttribute("d", p.armExt < 0.05 ? "" : `M${sh}L${sh[0] + l * Math.sin(a)},${sh[1] + l * Math.cos(a)}`);
@@ -208,7 +222,11 @@
       legs: [...el.querySelectorAll(".m-leg")],
       arms: [...el.querySelectorAll(".m-arm")],
       state: { x: 0, y: 0, scale: 1, anchor: FEET_ANCHOR },
-      pose: { ...standingPose(), legExt: 0, armExt: 0 },
+      pose: {
+        ...standingPose(),
+        hips: [...FRONT_HIPS], feet: FRONT_HIPS.map((h) => [h, GROUND]),
+        toe: HOME_TOE, toeDirs: [...HOME_TOE_DIRS], legExt: HOME_LEG_EXT, armExt: 0,
+      },
       spring: { angle: 0, speed: 0, lastX: 0, vx: 0, accel: 0 },
       cancelled: false,
     };
@@ -216,7 +234,7 @@
     const stayHome = () => {
       const g = geometry();
       s.x = g.cx;
-      s.y = g.avatarTop + toPx(FEET_ANCHOR);
+      s.y = g.avatarTop + toPxY(FEET_ANCHOR);
     };
     const stay = (ms) => tween(ms, stayHome);
 
@@ -240,16 +258,21 @@
       await stay(250);
       await tween(170, (t) => { stayHome(); p.squash = 0.16 * easeOut(t); });
 
-      // Jump: stretch on take-off, unfold arms and legs on the way up (with a little overshoot),
-      // reach for the ground before landing
+      // Jump: stretch on take-off, turn sideways and unfold arms and legs on the way up (with a little
+      // overshoot), reach for the ground before landing
       const landX = (g) => Math.max(g.cx + LAND_DX, g.left + SEAT_DX + 70);
       await tween(JUMP_MS, (t) => {
-        const g = geometry(), y0 = g.avatarTop + toPx(FEET_ANCHOR);
+        const g = geometry(), y0 = g.avatarTop + toPxY(FEET_ANCHOR);
         s.x = lerp(g.cx, landX(g), t);
         s.y = lerp(y0, g.top, t) - JUMP_HEIGHT * 4 * t * (1 - t);
         s.scale = lerp(1, SCALE, easeInOut(t));
         p.squash = t < 0.2 ? -0.12 * (1 - t / 0.2) : t > 0.8 ? (-0.06 * (t - 0.8)) / 0.2 : 0;
-        p.legExt = p.armExt = t < 0.1 ? 0 : easeOutBack(clamp01((t - 0.1) / 0.3));
+        const unfold = t < 0.1 ? 0 : easeOutBack(clamp01((t - 0.1) / 0.3)), turn = smoothstep(clamp01(t / 0.3));
+        p.armExt = unfold;
+        p.legExt = lerp(HOME_LEG_EXT, 1, unfold);
+        p.hips = [0, 1].map((i) => lerp(FRONT_HIPS[i], SIDE_HIPS[i], turn));
+        p.toe = lerp(HOME_TOE, TOE, turn);
+        p.toeDirs = [lerp(HOME_TOE_DIRS[0], FORWARD, turn), FORWARD];
         const reach = easeInOut(clamp01((t - 0.6) / 0.4));
         p.feet = SIDE_HIPS.map((h, i) => [h + FORWARD * lerp(TUCK[i][0], 0, reach), lerp(HIP_Y + TUCK[i][1], GROUND, reach)]);
         p.arms = [lerp(150, 20, reach), lerp(-150, -20, reach)];
