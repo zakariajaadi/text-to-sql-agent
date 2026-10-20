@@ -3,7 +3,7 @@
 """
 Prompts of the semantic layer generators (tables.py, relationships.py, metrics.py).
 They run offline, via make targets — never at query time.
-Pipeline order: semantics → relations → metrics → (review) → index
+Pipeline order: profile → semantics → relations → metrics → (review) → index
 """
 
 # ── Offline: tables.generate_table_semantics ──────────────────────────────
@@ -19,7 +19,10 @@ Other tables in the database: {all_tables}
 Describe the table and each of its columns, for an analyst writing SQL queries.
 
 ## RULES
-1. Table description: what one row represents, in one or two sentences.
+1. Table description: what one row represents, in one or two sentences, consistent with the
+   ROW FACTS measured on the data: when an identifier has fewer distinct values than the
+   table has rows, say the table holds several rows per that entity (e.g. "several rows per
+   order"). Never write "one row per X" unless the facts show one row per X.
 2. Column description: one short sentence on its business meaning.
 3. State units and currencies only when the column name or sample values make them
    explicit (e.g. amount_eur, duration_ms). Otherwise, if a unit matters, use "UNCLEAR:".
@@ -49,6 +52,9 @@ columns:
   cust_ref: Customer who placed the order.                            (categorical: false)
   st_cd: "Order status: A = active, C = cancelled, R = refunded."     (categorical: true)
   amt_ttc: UNCLEAR: amount including tax, currency not stated.        (categorical: false)
+
+## ROW FACTS
+{facts}
 
 ## TABLE
 {ddl}

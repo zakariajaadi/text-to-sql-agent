@@ -20,7 +20,8 @@ from loguru import logger
 
 from lib.column_pruning import get_column_names, prune_ddl
 from config import cfg
-from lib.semantics import excluded_columns, load_semantics, manual_semantics, tables_path
+from lib.semantics import excluded_columns, load_profile, load_semantics, manual_semantics, tables_path
+from offline.semantic_gen.profiling import row_facts
 from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
 from offline.semantic_gen.schemas import TableSemantics
 from offline.semantic_gen.utils import FlowListDumper, table_columns
@@ -88,6 +89,21 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
         existing = {table: manual_semantics(entry) for table, entry in existing.items()}
     language   = cfg.get_db(db_name).semantic_language
     db_columns = table_columns(db)
+    profile    = load_profile(db_name)
+    personal   = cfg.get_db(db_name).exclude_personal_data
+
+    # Formats and exclusions measured by `make profile`, written for a table that has none yet
+    # (a reviewed list is never touched): excluded columns are then neither sent nor described.
+    # Empty columns always; personal data when the database says so (exclude_personal_data)
+    for table, facts in profile.items():
+        if table not in db_columns:
+            continue
+        if facts.get("formats") and "formats" not in existing.get(table, {}):
+            existing.setdefault(table, {})["formats"] = dict(facts["formats"])
+        exclude = [c for c, reason in (facts.get("exclude") or {}).items() if reason == "empty" or personal]
+        if exclude and "exclude_columns" not in existing.get(table, {}):
+            existing.setdefault(table, {})["exclude_columns"] = exclude
+            logger.info(f"[{db_name}] {table}: excluded {', '.join(exclude)} (profile) — review them")
     # Excluded columns (exclude_columns, set beforehand) are neither sent to the LLM nor described
     columns    = {
         table: [c for c in table_cols if c not in excluded_columns(existing.get(table))]
@@ -114,6 +130,7 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
             "all_tables": all_tables,
             "ddl":        ddl,
             "language":   language,
+            "facts":      row_facts(profile.get(table)),
         })
 
     # 2. Generate descriptions in parallel

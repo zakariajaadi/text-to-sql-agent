@@ -6,10 +6,14 @@
 # against the real database, then compares result sets.
 # This is the gold standard metric in Text-to-SQL evaluation.
 
+import re
 from itertools import permutations
 
 from langchain_community.utilities import SQLDatabase
 from loguru import logger
+
+# A number written as text: 2021, -3, 12.5
+NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
 
 
 def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
@@ -114,7 +118,8 @@ def _normalize_row(row: tuple) -> tuple:
     Normalize a result row for reliable comparison.
     Drivers return numbers as int, float or Decimal depending on the query
     (PyHive: DECIMAL columns come back as Decimal).
-    Rounds floats to 4 decimals to avoid false negatives.
+    Rounds floats to 4 decimals to avoid false negatives. A number written as text ('2021', from
+    SUBSTRING on a text date) compares as that number: 2021 and '2021' are the same answer.
     """
     normalized = []
     for v in row:
@@ -124,6 +129,9 @@ def _normalize_row(row: tuple) -> tuple:
             normalized.append(round(v, 4))
         elif isinstance(v, int):
             normalized.append(v)
+        elif isinstance(v, str) and NUMBER_TEXT.match(v.strip()):
+            number = float(v.strip())
+            normalized.append(int(number) if number.is_integer() else round(number, 4))
         elif isinstance(v, str):
             normalized.append(v.strip())
         else:

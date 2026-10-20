@@ -1,0 +1,266 @@
+# offline/semantic_gen/profiling.py
+
+"""
+Data profile of a database: semantic_layer/<db>/profile.yaml, measured on the data, no LLM.
+Read by the generators so the semantic layer states facts instead of guesses:
+
+    - row facts: rows of each table and distinct values of its identifier-like columns.
+      Fed to the semantics prompt ("several rows per account"), and the source of the
+      relations found without an LLM (a key unique in one table, present in others).
+    - text columns: shapes of their values (digits → 9, other letters → a) on a sample,
+      giving the `formats` of dates and numbers stored as text, and the empty columns.
+    - personal data: columns whose name says so (names, ids, contacts, free text).
+
+Formats and exclusions are proposals: the semantics generator writes them into tables.yaml
+only for a table that has none yet, for review. The profile itself is overwritten each run.
+
+Pipeline order: profile → semantics → relations → metrics → (review) → index   (see offline/cli.py)
+"""
+
+import re
+
+import yaml
+from langchain_community.utilities import SQLDatabase
+from loguru import logger
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
+
+from lib.semantics import profile_path
+
+PROFILE_HEADER = """\
+# Data profile, measured by `make profile` (no LLM): overwritten at each run, never edited.
+# Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
+#   rows, keys          : row count, and per identifier-like column its non-null and distinct values
+#   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
+
+"""
+
+SAMPLE_ROWS       = 100_000   # rows read to compute the shapes of the text columns
+MAX_KEYS          = 8         # identifier-like columns counted per table
+MAX_SHAPES        = 6         # shapes kept per column in the profile
+EMPTY_FILL        = 0.01      # a column filled below this share is proposed for exclusion
+FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share of the filled values
+
+# Identifier-like column names: numero_x, id_x, x_id, xid, x_host...
+KEY_NAME  = re.compile(r"^(numero|num|nr|id|n)_|(id|_host)$")
+# Codes and identifiers stored as digits: never proposed as numbers
+CODE_NAME = re.compile(r"(^|_)(code|cd|id|numero|num|nr|n|ref|matricule|rowd|row)(_|$)|id$")
+# Personal data, read from the column name
+PERSONAL_NAME = re.compile(
+    r"(^|_)(nom|noms|prenom|prenoms|raison_?sociale?|denomination|cin|passeport|email|mail\d?|gsm|tel|"
+    r"telephone|fax|adresse|adr|contact|commentaires?|login|porteur|iban|rib|swift|masque_carte|"
+    r"num_?crt|signataire|beneficiaire|intitule|intit\d|employeur|date_naiss\w*|lieu_naissance|"
+    r"first_?name|last_?name|phone|address|birth_?date|ssn)(_|$)"
+)
+
+# Shapes (digits → 9) of dates stored as text → their Java pattern
+DATE_SHAPES = [
+    (re.compile(r"^99/99/9999$"),                         "dd/MM/yyyy"),
+    (re.compile(r"^99/99/9999 99:99:99(\.9+)?$"),         "dd/MM/yyyy HH:mm:ss"),
+    (re.compile(r"^99-99-9999$"),                         "dd-MM-yyyy"),
+    (re.compile(r"^9999-99-99$"),                         "yyyy-MM-dd"),
+    (re.compile(r"^9999-99-99 99:99:99(\.9+)?$"),         "yyyy-MM-dd HH:mm:ss"),
+    (re.compile(r"^9999/99/99$"),                         "yyyy/MM/dd"),
+]
+# Numbers stored as text: 12, 12.5, 12,5, .5, -3, 1.5E5 (the exponent letter is an a)
+NUMBER_SHAPE = re.compile(r"^[+-]?9*([.,]9+)?(a[+-]?9+)?$")
+
+
+# ------------------------------------------------------------
+# Profile
+# ------------------------------------------------------------
+
+def profile_database(db: SQLDatabase, db_name: str) -> dict:
+    """
+    Profile every usable table of the database, one table after the other (a Hive or Impala job
+    at a time), and write semantic_layer/<db>/profile.yaml. A table whose queries fail is left
+    out with a warning: the profile is an enrichment, never required.
+    """
+    inspector = sa_inspect(db._engine)
+    quote     = db._engine.dialect.identifier_preparer.quote
+    profile   = {}
+
+    for table in db.get_usable_table_names():
+        columns = inspector.get_columns(table)
+        logger.info(f"[{db_name}] Profiling: {table}")
+        try:
+            profile[table] = profile_table(db, table, columns, quote)
+        except Exception as e:
+            logger.warning(f"[{db_name}] Not profiled: {table} — {str(e).splitlines()[0][:200]}")
+
+    path = profile_path(db_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(PROFILE_HEADER + yaml.safe_dump(profile, sort_keys=False, allow_unicode=True, width=1000))
+    logger.info(f"[{db_name}] {len(profile)} table(s) profiled → {path}")
+    return profile
+
+
+def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> dict:
+    """Row facts, text column shapes and the proposals of one table."""
+    names = [c["name"] for c in columns]
+    texts = [c["name"] for c in columns if _is_text(c["type"])]
+    keys  = [n for n in names if KEY_NAME.search(n.lower())][:MAX_KEYS]
+
+    rows, key_counts = _count_rows(db, table, keys, quote)
+    shapes = {column: _text_shapes(db, table, column, quote) for column in texts}
+
+    entry = {"rows": rows, "keys": key_counts, "text_columns": {}}
+    formats, exclude = {}, {}
+    for column, column_shapes in shapes.items():
+        facts = describe_shapes(column_shapes)
+        entry["text_columns"][column] = facts
+        if facts["filled"] < EMPTY_FILL:
+            exclude[column] = "empty"
+        elif fmt := text_format(column_shapes, column):
+            formats[column] = fmt
+    for column in names:
+        if column not in exclude and PERSONAL_NAME.search(column.lower()):
+            exclude[column] = "personal data"
+    if formats:
+        entry["formats"] = formats
+    if exclude:
+        entry["exclude"] = exclude
+    return entry
+
+
+# ------------------------------------------------------------
+# Queries
+# ------------------------------------------------------------
+
+def _count_rows(db: SQLDatabase, table: str, keys: list[str], quote) -> tuple[int, dict]:
+    """Row count, and the non-null and distinct values of each key column (one full scan)."""
+    parts = ["COUNT(*)"]
+    for key in keys:
+        parts += [f"COUNT({quote(key)})", f"COUNT(DISTINCT {quote(key)})"]
+    with db._engine.connect() as conn:
+        values = conn.execute(text(f"SELECT {', '.join(parts)} FROM {quote(table)}")).fetchone()
+    return int(values[0]), {
+        key: {"non_null": int(values[1 + 2 * i]), "distinct": int(values[2 + 2 * i])}
+        for i, key in enumerate(keys)
+    }
+
+
+def key_overlap(db: SQLDatabase, source: str, target: str, sample: int = 10_000) -> float | None:
+    """
+    Share of the distinct values of source (table.column), on a sample, found in target: the same
+    column name in two tables is a relation only when the values match (numero_contrat of a card
+    is not the one of a loan). Compared as text, the two columns may be stored as int and string.
+    None when source holds no value: nothing to check.
+    """
+    quote = db._engine.dialect.identifier_preparer.quote
+    (s_table, s_col), (t_table, t_col) = source.split("."), target.split(".")
+    query = (
+        f"SELECT COUNT(*), COUNT(t.k) FROM "
+        f"(SELECT DISTINCT CAST({quote(s_col)} AS STRING) AS k FROM {quote(s_table)} "
+        f"WHERE {quote(s_col)} IS NOT NULL LIMIT {sample}) s "
+        f"LEFT JOIN (SELECT DISTINCT CAST({quote(t_col)} AS STRING) AS k FROM {quote(t_table)}) t ON s.k = t.k"
+    )
+    with db._engine.connect() as conn:
+        total, found = conn.execute(text(query)).fetchone()
+    return found / total if total else None
+
+
+def _shape_sql(column: str) -> str:
+    """SQL of the shape of a value: digits → 9, every run of other letters → a (separators kept)."""
+    return f"REGEXP_REPLACE(REGEXP_REPLACE({column}, '[0-9]', '9'), '[^9/.:,+@ -]+', 'a')"
+
+
+def _text_shapes(db: SQLDatabase, table: str, column: str, quote) -> dict:
+    """
+    {shape: count} of a text column on the first SAMPLE_ROWS rows of the table (None: NULL).
+    One light query per column: a UNION of many columns runs out of memory on a small Hive.
+    """
+    shape = _shape_sql(quote(column))
+    query = (f"SELECT {shape} AS shape, COUNT(*) AS n "
+             f"FROM (SELECT {quote(column)} FROM {quote(table)} LIMIT {SAMPLE_ROWS}) s GROUP BY {shape}")
+    with db._engine.connect() as conn:
+        return {value: int(n) for value, n in conn.execute(text(query))}
+
+
+# ------------------------------------------------------------
+# Reading the shapes (pure functions, unit-tested)
+# ------------------------------------------------------------
+
+def _is_text(column_type) -> bool:
+    """Text column, by the name of its type (Hive types don't subclass SQLAlchemy's)."""
+    name = type(column_type).__name__.lower()
+    return any(t in name for t in ("string", "char", "text"))
+
+
+def describe_shapes(shapes: dict) -> dict:
+    """Filled share (neither NULL nor empty) and the main shapes of a column, as shares."""
+    total  = sum(shapes.values()) or 1
+    filled = sum(n for shape, n in shapes.items() if shape not in (None, ""))
+    main   = sorted(((s, n) for s, n in shapes.items() if s not in (None, "")), key=lambda x: -x[1])
+    return {
+        "filled": round(filled / total, 3),
+        "shapes": {shape: round(n / total, 3) for shape, n in main[:MAX_SHAPES]},
+    }
+
+
+def text_format(shapes: dict, column: str) -> str | None:
+    """
+    The `formats` value of a text column: "date <pattern>" or "decimal" when one of them covers
+    FORMAT_SHARE of the filled values, None otherwise. Whole numbers in a column named like a code
+    or an identifier stay text (leading zeros, never summed).
+    """
+    filled = {s: n for s, n in shapes.items() if s not in (None, "")}
+    total  = sum(filled.values())
+    if not total:
+        return None
+
+    kinds = {}
+    for shape, n in filled.items():
+        kind = next((f"date {pattern}" for regex, pattern in DATE_SHAPES if regex.match(shape)), None)
+        if kind is None and "9" in shape and NUMBER_SHAPE.match(shape):
+            kind = "decimal"
+        if kind:
+            kinds[kind] = kinds.get(kind, 0) + n
+
+    if not kinds:
+        return None
+    kind, n = max(kinds.items(), key=lambda item: item[1])
+    if n / total < FORMAT_SHARE:
+        return None
+    whole_numbers = all(not re.search(r"[.,a]", s) for s in filled if NUMBER_SHAPE.match(s))
+    if kind == "decimal" and whole_numbers and CODE_NAME.search(column.lower()):
+        return None
+    return kind
+
+
+def row_facts(table_profile: dict | None) -> str:
+    """The row facts of a table, as lines for the semantics prompt."""
+    if not table_profile:
+        return "No row facts measured (run `make profile`)."
+    rows  = table_profile["rows"]
+    lines = [f"- {rows} rows"]
+    for key, counts in (table_profile.get("keys") or {}).items():
+        distinct = counts["distinct"]
+        if distinct and counts["non_null"] == distinct and distinct >= rows * 0.99:
+            lines.append(f"- {key}: {distinct} distinct values, one row per {key}")
+        elif distinct:
+            lines.append(f"- {key}: {distinct} distinct values, {counts['non_null'] / distinct:.1f} rows per {key} on average")
+    return "\n".join(lines)
+
+
+def key_relations(profile: dict) -> list[tuple[str, str]]:
+    """
+    Relations found without an LLM: a key column unique in a table (its hub, the largest one when
+    several) and present under the same name in other tables → (table.key, hub.key).
+    """
+    hubs = {}
+    for table, entry in profile.items():
+        rows = entry.get("rows") or 0
+        for key, counts in (entry.get("keys") or {}).items():
+            unique = counts["distinct"] and counts["non_null"] == counts["distinct"] >= rows * 0.99
+            if unique and counts["distinct"] > hubs.get(key, ("", 0))[1]:
+                hubs[key] = (table, counts["distinct"])
+
+    relations = []
+    for table, entry in profile.items():
+        for key in entry.get("keys") or {}:
+            hub = hubs.get(key, (None,))[0]
+            if hub and hub != table:
+                relations.append((f"{table}.{key}", f"{hub}.{key}"))
+    return relations

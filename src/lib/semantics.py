@@ -20,6 +20,17 @@ def tables_path(db_name: str) -> Path:
     return SEMANTIC_LAYER_DIR / db_name / "tables.yaml"
 
 
+def profile_path(db_name: str) -> Path:
+    """semantic_layer/<db>/profile.yaml: facts measured on the data by `make profile` (no LLM)."""
+    return SEMANTIC_LAYER_DIR / db_name / "profile.yaml"
+
+
+def load_profile(db_name: str) -> dict:
+    """Loads semantic_layer/<db>/profile.yaml, or an empty dict if the database was never profiled."""
+    path = profile_path(db_name)
+    return (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+
+
 def load_semantics(db_name: str) -> dict:
     """Loads semantic_layer/<db>/tables.yaml, or an empty dict if missing."""
     path = tables_path(db_name)

@@ -1,13 +1,14 @@
 # offline/semantic_gen/relationships.py
 
 """
-Offline LLM generator of the FK relations: semantic_layer/<db>/relationships.yaml,
-for engines that expose no FK metadata (Hive, Impala).
+Offline generator of the FK relations: semantic_layer/<db>/relationships.yaml,
+for engines that expose no FK metadata (Hive, Impala). The relations measured on the data
+come first (profile.yaml, no LLM), the LLM adds the ones named differently.
 
 Additive: existing and ignored relations are never modified. It reads the database
 directly (DDL + reviewed semantics), never Chroma, so it can run before the first index.
 
-Pipeline order: semantics → relations → metrics → (review) → index   (see offline/cli.py)
+Pipeline order: profile → semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
 
 import yaml
@@ -15,10 +16,15 @@ from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 
 from config import SEMANTIC_LAYER_DIR
+from lib.semantics import load_profile
+from offline.semantic_gen.profiling import key_overlap, key_relations
 from offline.semantic_gen.prompts import FK_RELATIONS_PROMPT
 from offline.semantic_gen.schemas import FKRelations
 from offline.semantic_gen.utils import render_schemas, table_columns
 from resources import db_registry, model
+
+# A same-name key is a relation when this share of its values is found in the hub table
+KEY_OVERLAP = 0.9
 
 # ------------------------------------------------------------
 # Constants
@@ -49,7 +55,9 @@ fk_relations_chain = (
 
 def infer_fk_relations(db_name: str):
     """
-    Infers Foreign Key relations via LLM and merges them into semantic_layer/<db>/relationships.yaml.
+    Infers Foreign Key relations and merges them into semantic_layer/<db>/relationships.yaml:
+    first the keys unique in one table and present under the same name in others (make profile),
+    kept when KEY_OVERLAP of their values are found in that table; then the LLM's.
 
     Meant for engines that expose no FK metadata (Hive, Impala).
     Relations pointing to unknown tables or columns are dropped.
@@ -58,27 +66,39 @@ def infer_fk_relations(db_name: str):
     """
     db = db_registry[db_name]
 
-    # 1. Infer relations from the schemas (DDL + reviewed semantics)
+    # 1. Relations measured on the data, no LLM: a key unique in one table and present under the
+    #    same name in others (make profile), kept when the values match (same name ≠ same entity)
+    valid = []
+    for source, target in key_relations(load_profile(db_name)):
+        overlap = key_overlap(db, source, target)
+        if overlap is None:
+            logger.info(f"[{db_name}] Not checked: {source} -> {target} (no value), left to the LLM")
+        elif overlap >= KEY_OVERLAP:
+            valid.append({"from": source, "to": target})
+        else:
+            logger.info(f"[{db_name}] Not a relation: {source} -> {target} ({overlap:.0%} of the values found)")
+
+    # 2. Infer the other relations from the schemas (DDL + reviewed semantics)
     inferred = fk_relations_chain.invoke({
         "db_name": db_name,
         "schemas": render_schemas(db, db_name),
     }).relations
 
-    # 2. Drop relations referencing unknown tables or columns (LLM hallucinations)
+    # 3. Drop relations referencing unknown tables or columns (LLM hallucinations)
     columns = table_columns(db)
 
     def exists(ref: str) -> bool:
         table, _, column = ref.partition(".")
         return column in columns.get(table, [])
 
-    valid = []
     for r in inferred:
         if exists(r.from_column) and exists(r.to_column):
-            valid.append({"from": r.from_column, "to": r.to_column})
+            if {"from": r.from_column, "to": r.to_column} not in valid:
+                valid.append({"from": r.from_column, "to": r.to_column})
         else:
             logger.warning(f"[{db_name}] Rejected unknown relation: {r.from_column} -> {r.to_column}")
 
-    # 3. Merge — only add relations neither declared nor ignored
+    # 4. Merge — only add relations neither declared nor ignored
     path  = SEMANTIC_LAYER_DIR / db_name / "relationships.yaml"
     entry = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     entry.setdefault("relations", [])

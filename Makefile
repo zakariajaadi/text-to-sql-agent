@@ -1,5 +1,5 @@
 # Usage: make <target> [DB=Chinook]
-# Typical first run: hive-up → hive-load → semantics → relations → metrics → (review) → index → app
+# Typical first run: hive-up → hive-load → profile → semantics → relations → metrics → (review) → index → app
 
 # ==============================================================================
 # Variables
@@ -12,7 +12,7 @@ RUN        = PYTHONPATH=src uv run python
 .DEFAULT_GOAL := help
 .PHONY: help \
         hive-up hive-check hive-ping hive-load hive-partitioned \
-        semantics relations metrics index schema \
+        profile semantics relations metrics index schema \
         app app-docker app-logs app-stop \
         eval test lint
 
@@ -45,7 +45,10 @@ hive-partitioned:  ## Create the read-mode test tables (Full/Last, Delta/All, CD
 	docker cp offline/hive/partitioned_tables.hql hive:/tmp/partitioned_tables.hql
 	docker exec hive beeline -u $(HIVE_JDBC) -f /tmp/partitioned_tables.hql
 
-##@ Semantic layer: semantics → relations → metrics → (review) → index
+##@ Semantic layer: profile → semantics → relations → metrics → (review) → index
+
+profile:  ## Measure the data: row facts, formats, empty and personal columns → semantic_layer/<DB>/profile.yaml (no LLM)
+	$(RUN) -m offline.cli profile --db $(DB)
 
 semantics:  ## Generate table/column descriptions and categorical columns (review semantic_layer/<DB>/tables.yaml)
 	$(RUN) -m offline.cli semantics --db $(DB)

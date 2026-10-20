@@ -3,7 +3,7 @@
 #   gitignored, one per machine): echo "include Makefile.ubi" > GNUmakefile
 # The app on a machine of a private network, in Docker (dockerfile.ubi, docker-compose.ubi.yaml): the Makefile
 # of the Mac runs the app with uv and a local Hive instead. Machine settings: .env and config/config.local.yaml.
-# Typical first run: update → check → semantics → (review) → metrics → (review) → index → app → eval
+# Typical first run: update → check → profile → semantics → (review) → relations → metrics → (review) → index → app → eval
 
 # ==============================================================================
 # Variables
@@ -17,7 +17,7 @@ RUN_T    = $(COMPOSE) run --rm -T app
 .DEFAULT_GOAL := help
 .PHONY: help \
         update build check doctor shell \
-        semantics relations metrics index schema \
+        profile semantics relations metrics index schema \
         app app-stop \
         eval
 
@@ -62,6 +62,9 @@ shell:  ## Open a bash shell in a container of the app image
 	$(RUN) bash
 
 ##@ Semantic layer
+
+profile:  ## Measure the data: row facts, formats, empty and personal columns → profile.yaml (no LLM, one query at a time)
+	$(RUN) python -m offline.cli profile --db $(DB)
 
 semantics:  ## Generate the table descriptions and categorical columns (review tables.yaml; ARGS="--fresh" to redo them)
 	$(RUN) python -m offline.cli semantics --db $(DB) $(ARGS)

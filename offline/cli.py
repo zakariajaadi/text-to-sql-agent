@@ -5,6 +5,7 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
 
     python -m offline.cli [command] [--db NAME]     (PYTHONPATH=src, see the Makefile)
 
+    profile       → semantic_layer/<db>/profile.yaml        facts measured on the data (no LLM)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
                     (--fresh: generated again from scratch, the manual keys kept)
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
@@ -19,14 +20,15 @@ import argparse
 
 from config import cfg
 from offline.indexer.schema_indexer import SchemaIndexer
-from offline.semantic_gen import metrics, relationships, tables
+from offline.semantic_gen import metrics, profiling, relationships, tables
+from resources import db_registry
 
 
 def main():
     """CLI entry point: one command, on one database (--db) or all of them."""
     parser = argparse.ArgumentParser(prog="offline.cli")
     parser.add_argument("command", nargs="?", default="index",
-                        choices=["index", "semantics", "fk-relations", "metrics"])
+                        choices=["index", "profile", "semantics", "fk-relations", "metrics"])
     parser.add_argument("--db", help="Database name (default: all databases)")
     parser.add_argument("--fresh", action="store_true",
                         help="semantics: regenerate the descriptions and categorical columns, "
@@ -35,6 +37,7 @@ def main():
 
     commands = {
         "index":        lambda name: SchemaIndexer(name).run(),
+        "profile":      lambda name: profiling.profile_database(db_registry[name], name),
         "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh),
         "fk-relations": relationships.infer_fk_relations,
         "metrics":      metrics.generate_metrics,

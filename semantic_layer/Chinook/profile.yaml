@@ -1,0 +1,515 @@
+# Data profile, measured by `make profile` (no LLM): overwritten at each run, never edited.
+# Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
+#   rows, keys          : row count, and per identifier-like column its non-null and distinct values
+#   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
+
+album:
+  rows: 347
+  keys:
+    albumid:
+      non_null: 347
+      distinct: 347
+    artistid:
+      non_null: 347
+      distinct: 204
+  text_columns:
+    title:
+      filled: 1.0
+      shapes:
+        a a: 0.147
+        a a a: 0.13
+        a: 0.124
+        a a a a: 0.086
+        a a a a a: 0.043
+        a a a a a a: 0.029
+artist:
+  rows: 275
+  keys:
+    artistid:
+      non_null: 275
+      distinct: 275
+  text_columns:
+    name:
+      filled: 1.0
+      shapes:
+        a a: 0.411
+        a: 0.149
+        a a a: 0.113
+        a a a a a a: 0.065
+        a a a a a: 0.044
+        a a a a: 0.036
+customer:
+  rows: 59
+  keys:
+    customerid:
+      non_null: 59
+      distinct: 59
+    supportrepid:
+      non_null: 59
+      distinct: 3
+  text_columns:
+    firstname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    lastname:
+      filled: 1.0
+      shapes:
+        a: 0.983
+        a a a: 0.017
+    company:
+      filled: 0.169
+      shapes:
+        a a: 0.051
+        a: 0.034
+        a a.: 0.034
+        a - a a a a a.a.: 0.017
+        a a a a.a.: 0.017
+        a a.a.a.: 0.017
+    address:
+      filled: 1.0
+      shapes:
+        999 a a: 0.119
+        999 a a a: 0.085
+        a 99: 0.068
+        9 a a: 0.051
+        9, a a: 0.034
+        99, a a: 0.034
+    city:
+      filled: 1.0
+      shapes:
+        a: 0.814
+        a a: 0.119
+        a a a: 0.034
+        'a ': 0.017
+        a a a a: 0.017
+    state:
+      filled: 0.508
+      shapes:
+        a: 0.508
+    country:
+      filled: 1.0
+      shapes:
+        a: 0.915
+        a a: 0.085
+    postalcode:
+      filled: 0.932
+      shapes:
+        '99999': 0.39
+        '9999': 0.136
+        a9a 9a9: 0.136
+        99999-999: 0.102
+        99999-9999: 0.051
+        '999999': 0.034
+    phone:
+      filled: 0.983
+      shapes:
+        +9 a999a 999-9999: 0.356
+        +99 99 99 99 99 99: 0.085
+        +99 a99a 9999-9999: 0.085
+        +99 999 99999999: 0.051
+        +99 99 999 99 99: 0.034
+        +99 999 9999 9999: 0.034
+    fax:
+      filled: 0.203
+      shapes:
+        +9 a999a 999-9999: 0.102
+        +99 a99a 9999-9999: 0.085
+        +999 9 9999 9999: 0.017
+    email:
+      filled: 1.0
+      shapes:
+        a@a.a: 0.576
+        a.a@a.a: 0.305
+        a@a.a.a: 0.051
+        a99@a.a: 0.034
+        a.a@a.a.a: 0.017
+        a9@a.a.a: 0.017
+  exclude:
+    fax: personal data
+    email: personal data
+customer_cdc:
+  rows: 65
+  keys:
+    customerid:
+      non_null: 65
+      distinct: 59
+  text_columns:
+    firstname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    lastname:
+      filled: 1.0
+      shapes:
+        a: 0.985
+        a a a: 0.015
+    city:
+      filled: 1.0
+      shapes:
+        a: 0.8
+        a a: 0.108
+        a a a: 0.046
+        a a a a: 0.031
+        'a ': 0.015
+    country:
+      filled: 1.0
+      shapes:
+        a: 0.908
+        a a: 0.092
+    email:
+      filled: 1.0
+      shapes:
+        a@a.a: 0.523
+        a.a@a.a: 0.323
+        a.a@a.a.a: 0.046
+        a@a.a.a: 0.046
+        a99@a.a: 0.031
+        a.a.a@a.a: 0.015
+  exclude:
+    email: personal data
+customer_snapshot:
+  rows: 174
+  keys:
+    customerid:
+      non_null: 174
+      distinct: 59
+    supportrepid:
+      non_null: 174
+      distinct: 3
+  text_columns:
+    firstname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    lastname:
+      filled: 1.0
+      shapes:
+        a: 0.983
+        a a a: 0.017
+    company:
+      filled: 0.172
+      shapes:
+        a a: 0.052
+        a: 0.034
+        a a.: 0.034
+        a - a a a a a.a.: 0.017
+        a a a a.a.: 0.017
+        a a.a.a.: 0.017
+    address:
+      filled: 1.0
+      shapes:
+        999 a a: 0.121
+        999 a a a: 0.086
+        a 99: 0.069
+        9 a a: 0.052
+        9, a a: 0.034
+        99, a a: 0.034
+    city:
+      filled: 1.0
+      shapes:
+        a: 0.81
+        a a: 0.121
+        a a a: 0.04
+        'a ': 0.017
+        a a a a: 0.011
+    state:
+      filled: 0.517
+      shapes:
+        a: 0.517
+    country:
+      filled: 1.0
+      shapes:
+        a: 0.914
+        a a: 0.086
+    postalcode:
+      filled: 0.931
+      shapes:
+        '99999': 0.397
+        '9999': 0.138
+        a9a 9a9: 0.138
+        99999-999: 0.103
+        99999-9999: 0.052
+        a9 9a: 0.034
+    phone:
+      filled: 0.983
+      shapes:
+        +9 a999a 999-9999: 0.362
+        +99 99 99 99 99 99: 0.086
+        +99 a99a 9999-9999: 0.086
+        +99 999 99999999: 0.04
+        +99 99 999 99 99: 0.034
+        +99 999 9999 9999: 0.034
+    fax:
+      filled: 0.207
+      shapes:
+        +9 a999a 999-9999: 0.103
+        +99 a99a 9999-9999: 0.086
+        +999 9 9999 9999: 0.017
+    email:
+      filled: 1.0
+      shapes:
+        a@a.a: 0.575
+        a.a@a.a: 0.305
+        a@a.a.a: 0.052
+        a99@a.a: 0.034
+        a.a@a.a.a: 0.017
+        a9@a.a.a: 0.017
+  exclude:
+    fax: personal data
+    email: personal data
+employee:
+  rows: 8
+  keys:
+    employeeid:
+      non_null: 8
+      distinct: 8
+  text_columns:
+    lastname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    firstname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    title:
+      filled: 1.0
+      shapes:
+        a a: 0.625
+        a a a: 0.375
+    address:
+      filled: 1.0
+      shapes:
+        999 9 a a: 0.25
+        999 99 a a: 0.125
+        999 a a a: 0.125
+        9999 9 a a: 0.125
+        9999 a a a: 0.125
+        99999 a a a: 0.125
+    city:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    state:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    country:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    postalcode:
+      filled: 1.0
+      shapes:
+        a9a 9a9: 1.0
+    phone:
+      filled: 1.0
+      shapes:
+        +9 a999a 999-9999: 0.875
+        9 a999a 999-9999: 0.125
+    fax:
+      filled: 1.0
+      shapes:
+        +9 a999a 999-9999: 0.875
+        9 a999a 999-9999: 0.125
+    email:
+      filled: 1.0
+      shapes:
+        a@a.a: 1.0
+  exclude:
+    fax: personal data
+    email: personal data
+genre:
+  rows: 25
+  keys:
+    genreid:
+      non_null: 25
+      distinct: 25
+  text_columns:
+    name:
+      filled: 1.0
+      shapes:
+        a: 0.56
+        a a: 0.2
+        a a a: 0.08
+        a/a: 0.08
+        a a a a: 0.04
+        a a/a: 0.04
+invoice:
+  rows: 412
+  keys:
+    invoiceid:
+      non_null: 412
+      distinct: 412
+    customerid:
+      non_null: 412
+      distinct: 59
+  text_columns:
+    billingaddress:
+      filled: 1.0
+      shapes:
+        999 a a: 0.119
+        999 a a a: 0.085
+        a 99: 0.068
+        9 a a: 0.051
+        9, a a: 0.034
+        99, a a: 0.034
+    billingcity:
+      filled: 1.0
+      shapes:
+        a: 0.813
+        a a: 0.119
+        a a a: 0.034
+        'a ': 0.017
+        a a a a: 0.017
+    billingstate:
+      filled: 0.51
+      shapes:
+        a: 0.51
+    billingcountry:
+      filled: 1.0
+      shapes:
+        a: 0.915
+        a a: 0.085
+    billingpostalcode:
+      filled: 0.932
+      shapes:
+        '99999': 0.391
+        '9999': 0.136
+        a9a 9a9: 0.136
+        99999-999: 0.102
+        99999-9999: 0.051
+        a9 9a: 0.034
+invoice_delta:
+  rows: 412
+  keys:
+    invoiceid:
+      non_null: 412
+      distinct: 412
+    customerid:
+      non_null: 412
+      distinct: 59
+  text_columns:
+    billingaddress:
+      filled: 1.0
+      shapes:
+        999 a a: 0.119
+        999 a a a: 0.085
+        a 99: 0.068
+        9 a a: 0.051
+        9, a a: 0.034
+        99, a a: 0.034
+    billingcity:
+      filled: 1.0
+      shapes:
+        a: 0.813
+        a a: 0.119
+        a a a: 0.034
+        'a ': 0.017
+        a a a a: 0.017
+    billingstate:
+      filled: 0.51
+      shapes:
+        a: 0.51
+    billingcountry:
+      filled: 1.0
+      shapes:
+        a: 0.915
+        a a: 0.085
+    billingpostalcode:
+      filled: 0.932
+      shapes:
+        '99999': 0.391
+        '9999': 0.136
+        a9a 9a9: 0.136
+        99999-999: 0.102
+        99999-9999: 0.051
+        a9 9a: 0.034
+invoiceline:
+  rows: 2240
+  keys:
+    invoicelineid:
+      non_null: 2240
+      distinct: 2240
+    invoiceid:
+      non_null: 2240
+      distinct: 412
+    trackid:
+      non_null: 2240
+      distinct: 1984
+  text_columns: {}
+mediatype:
+  rows: 5
+  keys:
+    mediatypeid:
+      non_null: 5
+      distinct: 5
+  text_columns:
+    name:
+      filled: 1.0
+      shapes:
+        a a a: 0.4
+        a a a a: 0.4
+        a a-9 a a: 0.2
+playlist:
+  rows: 18
+  keys:
+    playlistid:
+      non_null: 18
+      distinct: 18
+  text_columns:
+    name:
+      filled: 1.0
+      shapes:
+        a: 0.444
+        a a: 0.222
+        a 999 - a a: 0.167
+        99a a: 0.056
+        a a a: 0.056
+        a-a-a 9: 0.056
+playlisttrack:
+  rows: 8715
+  keys:
+    playlistid:
+      non_null: 8715
+      distinct: 14
+    trackid:
+      non_null: 8715
+      distinct: 3503
+  text_columns: {}
+track:
+  rows: 3503
+  keys:
+    trackid:
+      non_null: 3503
+      distinct: 3503
+    albumid:
+      non_null: 3503
+      distinct: 347
+    mediatypeid:
+      non_null: 3503
+      distinct: 5
+    genreid:
+      non_null: 3503
+      distinct: 25
+  text_columns:
+    name:
+      filled: 1.0
+      shapes:
+        a a: 0.244
+        a a a: 0.23
+        a: 0.19
+        a a a a: 0.13
+        a a a a a: 0.062
+        a a a a a a: 0.024
+    composer:
+      filled: 0.721
+      shapes:
+        a a: 0.211
+        a a/a a: 0.062
+        a: 0.047
+        a a a: 0.025
+        a/a: 0.021
+        a a, a a: 0.021

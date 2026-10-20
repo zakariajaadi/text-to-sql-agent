@@ -1,0 +1,498 @@
+# Data profile, measured by `make profile` (no LLM): overwritten at each run, never edited.
+# Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
+#   rows, keys          : row count, and per identifier-like column its non-null and distinct values
+#   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
+
+categories:
+  rows: 8
+  keys:
+    categoryid:
+      non_null: 8
+      distinct: 8
+  text_columns:
+    categoryname:
+      filled: 1.0
+      shapes:
+        a: 0.625
+        a/a: 0.25
+        a a: 0.125
+    description:
+      filled: 1.0
+      shapes:
+        a: 0.125
+        a a: 0.125
+        a a a: 0.125
+        a a a a a: 0.125
+        a a a a, a, a, a a: 0.125
+        a a, a, a, a, a a: 0.125
+customercustomerdemo:
+  rows: 0
+  keys:
+    customerid:
+      non_null: 0
+      distinct: 0
+    customertypeid:
+      non_null: 0
+      distinct: 0
+  text_columns:
+    customerid:
+      filled: 0.0
+      shapes: {}
+    customertypeid:
+      filled: 0.0
+      shapes: {}
+  exclude:
+    customerid: empty
+    customertypeid: empty
+customerdemographics:
+  rows: 0
+  keys:
+    customertypeid:
+      non_null: 0
+      distinct: 0
+  text_columns:
+    customertypeid:
+      filled: 0.0
+      shapes: {}
+    customerdesc:
+      filled: 0.0
+      shapes: {}
+  exclude:
+    customertypeid: empty
+    customerdesc: empty
+customers:
+  rows: 93
+  keys:
+    customerid:
+      non_null: 93
+      distinct: 93
+  text_columns:
+    customerid:
+      filled: 1.0
+      shapes:
+        a: 0.989
+        'a9 ': 0.011
+    companyname:
+      filled: 1.0
+      shapes:
+        a a: 0.398
+        a a a: 0.269
+        a a a a: 0.108
+        a-a: 0.054
+        a: 0.043
+        a a a a a: 0.022
+    contactname:
+      filled: 1.0
+      shapes:
+        a a: 0.957
+        a a a: 0.032
+        a9: 0.011
+    contacttitle:
+      filled: 1.0
+      shapes:
+        a a: 0.753
+        a: 0.204
+        a a a: 0.032
+        a/a a: 0.011
+    address:
+      filled: 0.978
+      shapes:
+        a 99: 0.086
+        a. 99: 0.054
+        9999 a a.: 0.043
+        a a a, 99: 0.043
+        99 a a.: 0.032
+        99, a a: 0.032
+    city:
+      filled: 0.978
+      shapes:
+        a: 0.753
+        a a: 0.118
+        a a.a.: 0.065
+        a a a: 0.032
+        a. a a: 0.011
+    region:
+      filled: 0.978
+      shapes:
+        a a: 0.946
+        a: 0.032
+    postalcode:
+      filled: 0.968
+      shapes:
+        '99999': 0.538
+        '9999': 0.172
+        99999-999: 0.097
+        a9 9a: 0.054
+        a9a 9a9: 0.032
+        a-999 99: 0.022
+    country:
+      filled: 0.978
+      shapes:
+        a: 0.978
+    phone:
+      filled: 0.978
+      shapes:
+        a999a 999-9999: 0.247
+        a9a 999-9999: 0.14
+        a99a 999-9999: 0.108
+        99.99.99.99: 0.097
+        9999-999999: 0.086
+        999-9999999: 0.043
+    fax:
+      filled: 0.742
+      shapes:
+        a999a 999-9999: 0.183
+        a9a 999-9999: 0.108
+        99.99.99.99: 0.097
+        999-9999999: 0.043
+        9999-999999: 0.043
+        a99a 999-9999: 0.043
+  exclude:
+    address: personal data
+    phone: personal data
+    fax: personal data
+employees:
+  rows: 9
+  keys:
+    employeeid:
+      non_null: 9
+      distinct: 9
+  text_columns:
+    lastname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    firstname:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    title:
+      filled: 1.0
+      shapes:
+        a a: 0.778
+        a a a: 0.111
+        a a, a: 0.111
+    titleofcourtesy:
+      filled: 1.0
+      shapes:
+        a.: 1.0
+    address:
+      filled: 1.0
+      shapes:
+        9 a a.: 0.111
+        99 a a: 0.111
+        999 - 99a a. a.a. 9a: 0.111
+        999 a a a.: 0.111
+        999 a. a a: 0.111
+        9999 - 99a a. a.a.: 0.111
+    city:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    region:
+      filled: 1.0
+      shapes:
+        a a: 1.0
+    postalcode:
+      filled: 1.0
+      shapes:
+        '99999': 0.556
+        a9 9a: 0.444
+    country:
+      filled: 1.0
+      shapes:
+        a: 1.0
+    homephone:
+      filled: 1.0
+      shapes:
+        a999a 999-9999: 0.556
+        a99a 999-9999: 0.444
+    extension:
+      filled: 1.0
+      shapes:
+        '9999': 0.667
+        '999': 0.333
+    notes:
+      filled: 1.0
+      shapes:
+        ? a a a a a a 9999 a a a.a. a a a a a a a a a 9999.  a a a a a a a a a a.  a a a a a a a a, a a a a a a a 9999 a a a a a a a a 9999.  a a a a a a a a a, a a a a a, a a a a a a.
+        : 0.111
+        a a a a a a a a a a a 9999.  a a a a a a a a a.a  a a a a a a a.: 0.111
+        a a a a a a a a a a a a a a a a a a a a a a 9999, a a a a a a.  a a a a a a a a,a a a a a a a a a a 9999.: 0.111
+        a a a a a a a a a a a.  a a a a a a a a a.  a a a a a.: 0.111
+        a a a a a a a a a a a9999a a a a a a a a a a a a9999a.  a a a a a a a a a a a a 9999.: 0.111
+        a a a a a a a a a a a9999a.  a a a a a a a a a a a.  a a a a a a a a 9999 a a a a a a a 9999.: 0.111
+    photopath:
+      filled: 1.0
+      shapes:
+        a://a/a/a.a: 1.0
+  formats:
+    extension: decimal
+  exclude:
+    lastname: personal data
+    firstname: personal data
+    birthdate: personal data
+    address: personal data
+employeeterritories:
+  rows: 49
+  keys:
+    employeeid:
+      non_null: 49
+      distinct: 9
+    territoryid:
+      non_null: 49
+      distinct: 49
+  text_columns:
+    territoryid:
+      filled: 1.0
+      shapes:
+        '99999': 1.0
+order_details:
+  rows: 609283
+  keys:
+    orderid:
+      non_null: 609283
+      distinct: 16282
+    productid:
+      non_null: 609283
+      distinct: 77
+  text_columns: {}
+orders:
+  rows: 16282
+  keys:
+    orderid:
+      non_null: 16282
+      distinct: 16282
+    customerid:
+      non_null: 16282
+      distinct: 93
+    employeeid:
+      non_null: 16282
+      distinct: 9
+  text_columns:
+    customerid:
+      filled: 1.0
+      shapes:
+        a: 0.99
+        'a9 ': 0.01
+    shipname:
+      filled: 1.0
+      shapes:
+        a a: 0.395
+        a a a: 0.248
+        a a a a: 0.09
+        a-a: 0.055
+        a-a a: 0.045
+        a a a a a: 0.025
+    shipaddress:
+      filled: 1.0
+      shapes:
+        a 99: 0.089
+        a. 99: 0.055
+        9999 a a.: 0.044
+        a a a, 99: 0.042
+        a 9: 0.037
+        99 a a.: 0.035
+    shipcity:
+      filled: 1.0
+      shapes:
+        a: 0.764
+        a a: 0.126
+        a a.a.: 0.067
+        a a a: 0.033
+        a. a a: 0.01
+    shipregion:
+      filled: 1.0
+      shapes:
+        a a: 0.967
+        a: 0.033
+    shippostalcode:
+      filled: 0.989
+      shapes:
+        '99999': 0.454
+        '9999': 0.262
+        99999-999: 0.103
+        a9 9a: 0.056
+        a9a 9a9: 0.034
+        a-999 99: 0.024
+    shipcountry:
+      filled: 1.0
+      shapes:
+        a: 1.0
+products:
+  rows: 77
+  keys:
+    productid:
+      non_null: 77
+      distinct: 77
+    supplierid:
+      non_null: 77
+      distinct: 29
+    categoryid:
+      non_null: 77
+      distinct: 8
+  text_columns:
+    productname:
+      filled: 1.0
+      shapes:
+        a a: 0.455
+        a: 0.195
+        a a a: 0.182
+        a a a a: 0.091
+        a a a a a: 0.039
+        a a-a-a: 0.013
+    quantityperunit:
+      filled: 1.0
+      shapes:
+        99 - 999 a a: 0.208
+        99 - 999 a a.: 0.156
+        99 - 9 a a: 0.117
+        99 - 99 a a: 0.091
+        99 a: 0.078
+        9 a a.: 0.039
+    discontinued:
+      filled: 1.0
+      shapes:
+        '9': 1.0
+  formats:
+    discontinued: decimal
+regions:
+  rows: 4
+  keys:
+    regionid:
+      non_null: 4
+      distinct: 4
+  text_columns:
+    regiondescription:
+      filled: 1.0
+      shapes:
+        a: 1.0
+shippers:
+  rows: 3
+  keys:
+    shipperid:
+      non_null: 3
+      distinct: 3
+  text_columns:
+    companyname:
+      filled: 1.0
+      shapes:
+        a a: 1.0
+    phone:
+      filled: 1.0
+      shapes:
+        a999a 999-9999: 1.0
+  exclude:
+    phone: personal data
+suppliers:
+  rows: 29
+  keys:
+    supplierid:
+      non_null: 29
+      distinct: 29
+  text_columns:
+    companyname:
+      filled: 1.0
+      shapes:
+        a a: 0.379
+        a a a: 0.207
+        a: 0.069
+        a a a a: 0.069
+        a a a.a.a.: 0.069
+        a a a a a: 0.034
+    contactname:
+      filled: 1.0
+      shapes:
+        a a: 0.931
+        'a a a a ': 0.034
+        a-a a: 0.034
+    contacttitle:
+      filled: 1.0
+      shapes:
+        a a: 0.828
+        a a a: 0.069
+        a a a.: 0.069
+        a: 0.034
+    address:
+      filled: 1.0
+      shapes:
+        a 99: 0.103
+        a 9: 0.069
+        a a 99: 0.069
+        9-9 a a-a: 0.034
+        99 a a: 0.034
+        99 a a-a: 0.034
+    city:
+      filled: 1.0
+      shapes:
+        a: 0.862
+        a a: 0.103
+        a-a: 0.034
+    region:
+      filled: 0.966
+      shapes:
+        a a: 0.793
+        a: 0.138
+        a-a a: 0.034
+    postalcode:
+      filled: 1.0
+      shapes:
+        '99999': 0.483
+        '9999': 0.207
+        '999': 0.069
+        a-999 99: 0.069
+        a9a 9a9: 0.069
+        9999 a: 0.034
+    country:
+      filled: 1.0
+      shapes:
+        a: 0.966
+        'a ': 0.034
+    phone:
+      filled: 1.0
+      shapes:
+        a999a 999-9999: 0.276
+        a99a 999-9999: 0.103
+        99.99.99.99: 0.069
+        a99999a 9999: 0.069
+        a999a 9999999: 0.069
+        99-999 99 99: 0.034
+    fax:
+      filled: 0.448
+      shapes:
+        a999a 999-9999: 0.103
+        a99999a 9999: 0.069
+        a99a 999-9999: 0.069
+        99.99.99.99: 0.034
+        999-999 99 99: 0.034
+        '99999999': 0.034
+    homepage:
+      filled: 0.172
+      shapes:
+        a a a a a a://a.a.a/a/a/a.a: 0.069
+        a.a: 0.069
+        a a a a a a a://a.a.a/a/a/a.a: 0.034
+  exclude:
+    address: personal data
+    phone: personal data
+    fax: personal data
+territories:
+  rows: 53
+  keys:
+    territoryid:
+      non_null: 53
+      distinct: 53
+    regionid:
+      non_null: 53
+      distinct: 4
+  text_columns:
+    territoryid:
+      filled: 1.0
+      shapes:
+        '99999': 1.0
+    territorydescription:
+      filled: 1.0
+      shapes:
+        a: 0.811
+        a a: 0.189
