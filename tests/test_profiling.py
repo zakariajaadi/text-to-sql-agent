@@ -25,12 +25,25 @@ from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
     ({"9999-99-99": 100}, "start_day", "date yyyy-MM-dd"),
     # Numbers: dot or comma decimals, exponents, whole numbers in a measure column
     ({"999.99": 500, ".99": 30, "9.9a9": 20}, "amount", "decimal"),
+    ({"9,99a+99": 80, "99,99": 20}, "balance", "decimal"),
     ({"9999,99": 45, "999": 29, "999.9": 26}, "outstanding", "decimal"),
-    ({"99": 100}, "duration_days", "decimal"),
-    # Whole numbers named like a code or an identifier stay text
+    ({"99": 55, "9": 45}, "duration_days", "decimal"),
+    ({"  ": 30, "999": 40, "9999": 30}, "days_late", "decimal"),
+    # Letters among digits are codes, not exponents
+    ({"a999": 100}, "status", None),
+    ({"99a999999999999": 92, "99a9999999999999": 8}, "contract", None),
+    ({"a999999": 95, "999999": 5}, "user_modif", None),
+    ({"a9": 100}, "plan", None),
+    # Named like a code or an identifier: text, even mangled into exponents
     ({"999999": 100}, "code_agence", None),
     ({"99999999": 100}, "numero_contrat", None),
     ({"9999": 100}, "customerid", None),
+    ({"9999": 56, "999": 44}, "ch_cod_eds", None),
+    ({"9,99a+99": 100}, "numero_compte", None),
+    # Whole numbers that always have the same number of digits: codes
+    ({"999999999999999": 100}, "support_account", None),
+    ({"99": 99, "  ": 1}, "service_level", None),
+    ({"999999": 999, "9999a9": 1}, "product_group", None),
     # Labels, or no format covering 90% of the filled values
     ({"a a": 70, "a": 30}, "city", None),
     ({"99/99/9999": 60, "a": 40}, "mixed", None),
@@ -40,8 +53,8 @@ def test_text_format(shapes, column, expected):
     assert text_format(shapes, column) == expected
 
 
-def test_describe_shapes_counts_null_and_empty_as_not_filled():
-    facts = describe_shapes({"a": 6, None: 3, "": 1})
+def test_describe_shapes_counts_null_empty_and_blank_as_not_filled():
+    facts = describe_shapes({"a": 6, None: 2, "": 1, "   ": 1})
     assert facts == {"filled": 0.6, "shapes": {"a": 0.6}}
 
 

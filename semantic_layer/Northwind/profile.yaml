@@ -355,8 +355,6 @@ products:
       filled: 1.0
       shapes:
         '9': 1.0
-  formats:
-    discontinued: decimal
 regions:
   rows: 4
   keys:

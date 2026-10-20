@@ -45,7 +45,7 @@ FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share o
 # Identifier-like column names: numero_x, id_x, x_id, xid, x_host...
 KEY_NAME  = re.compile(r"^(numero|num|nr|id|n)_|(id|_host)$")
 # Codes and identifiers stored as digits: never proposed as numbers
-CODE_NAME = re.compile(r"(^|_)(code|cd|id|numero|num|nr|n|ref|matricule|rowd|row)(_|$)|id$")
+CODE_NAME = re.compile(r"(^|_)(code|cod|cd|id|numero|num|nr|n|ref|matricule|rowd|row)(_|$)|id$")
 # Personal data, read from the column name
 PERSONAL_NAME = re.compile(
     r"(^|_)(nom|noms|prenom|prenoms|raison_?sociale?|denomination|cin|passeport|email|mail\d?|gsm|tel|"
@@ -63,8 +63,10 @@ DATE_SHAPES = [
     (re.compile(r"^9999-99-99 99:99:99(\.9+)?$"),         "yyyy-MM-dd HH:mm:ss"),
     (re.compile(r"^9999/99/99$"),                         "yyyy/MM/dd"),
 ]
-# Numbers stored as text: 12, 12.5, 12,5, .5, -3, 1.5E5 (the exponent letter is an a)
-NUMBER_SHAPE = re.compile(r"^[+-]?9*([.,]9+)?(a[+-]?9+)?$")
+# Numbers stored as text: 12, 12.5, 12,5, .5, -3, 1,5E+5, 1.5E5 (the exponent letter is an a).
+# An exponent follows digits and has a sign, or a decimal mantissa: A123 or 12A345 is a code
+NUMBER_SHAPE = re.compile(r"^[+-]?(9+([.,]9+)?|[.,]9+)(a[+-]9+)?$|^[+-]?9*[.,]9+a9+$")
+WHOLE_NUMBER = re.compile(r"^[+-]?9+$")
 
 
 # ------------------------------------------------------------
@@ -188,11 +190,16 @@ def _is_text(column_type) -> bool:
     return any(t in name for t in ("string", "char", "text"))
 
 
+def _is_empty(shape: str | None) -> bool:
+    """NULL, empty or only spaces (a fixed-width column padded with blanks)."""
+    return shape is None or not shape.strip()
+
+
 def describe_shapes(shapes: dict) -> dict:
-    """Filled share (neither NULL nor empty) and the main shapes of a column, as shares."""
+    """Filled share (neither NULL, empty nor blank) and the main shapes of a column, as shares."""
     total  = sum(shapes.values()) or 1
-    filled = sum(n for shape, n in shapes.items() if shape not in (None, ""))
-    main   = sorted(((s, n) for s, n in shapes.items() if s not in (None, "")), key=lambda x: -x[1])
+    filled = sum(n for shape, n in shapes.items() if not _is_empty(shape))
+    main   = sorted(((s, n) for s, n in shapes.items() if not _is_empty(s)), key=lambda x: -x[1])
     return {
         "filled": round(filled / total, 3),
         "shapes": {shape: round(n / total, 3) for shape, n in main[:MAX_SHAPES]},
@@ -202,10 +209,11 @@ def describe_shapes(shapes: dict) -> dict:
 def text_format(shapes: dict, column: str) -> str | None:
     """
     The `formats` value of a text column: "date <pattern>" or "decimal" when one of them covers
-    FORMAT_SHARE of the filled values, None otherwise. Whole numbers in a column named like a code
-    or an identifier stay text (leading zeros, never summed).
+    FORMAT_SHARE of the filled values, None otherwise. Codes and identifiers stay text (leading
+    zeros, never summed): a column named like one, or whole numbers that always have the same
+    number of digits (a quantity varies in length: 7, 30, 120).
     """
-    filled = {s: n for s, n in shapes.items() if s not in (None, "")}
+    filled = {s: n for s, n in shapes.items() if not _is_empty(s)}
     total  = sum(filled.values())
     if not total:
         return None
@@ -213,7 +221,7 @@ def text_format(shapes: dict, column: str) -> str | None:
     kinds = {}
     for shape, n in filled.items():
         kind = next((f"date {pattern}" for regex, pattern in DATE_SHAPES if regex.match(shape)), None)
-        if kind is None and "9" in shape and NUMBER_SHAPE.match(shape):
+        if kind is None and NUMBER_SHAPE.match(shape):
             kind = "decimal"
         if kind:
             kinds[kind] = kinds.get(kind, 0) + n
@@ -223,9 +231,12 @@ def text_format(shapes: dict, column: str) -> str | None:
     kind, n = max(kinds.items(), key=lambda item: item[1])
     if n / total < FORMAT_SHARE:
         return None
-    whole_numbers = all(not re.search(r"[.,a]", s) for s in filled if NUMBER_SHAPE.match(s))
-    if kind == "decimal" and whole_numbers and CODE_NAME.search(column.lower()):
-        return None
+    if kind == "decimal":
+        if CODE_NAME.search(column.lower()):
+            return None
+        numbers = [s for s in filled if NUMBER_SHAPE.match(s)]
+        if all(WHOLE_NUMBER.match(s) for s in numbers) and len({len(s.lstrip("+-")) for s in numbers}) == 1:
+            return None
     return kind
 
 
