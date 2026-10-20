@@ -29,12 +29,13 @@ offline/eval/datasets/*
 offline/eval/results/*
 !offline/eval/results/chinook.json
 !offline/eval/results/northwind.json
-# Chainlit: keep the app config and the customized English translation
+# Chainlit: keep the app config and the customized English and French translations
 .chainlit/*
 !.chainlit/config.toml
 !.chainlit/translations/
 .chainlit/translations/*
 !.chainlit/translations/en-US.json
+!.chainlit/translations/fr-FR.json
 src/.chainlit/
 .files/
 .vscode/
