@@ -17,6 +17,8 @@ UNREACHABLE_MESSAGES = (
     "could not connect", "connection refused", "connection reset", "timed out",
     "network is unreachable", "no route to host", "name or service not known",
     "cannot contact any kdc", "tsocket read 0 bytes",
+    # HiveServer2 closed the session of a pooled connection (idle timeout): a fresh one works
+    "invalid sessionhandle", "invalid operationhandle",
 )
 
 

@@ -30,6 +30,7 @@ def wrapped(error: Exception) -> DBAPIError:
     GSSError("Cannot contact any KDC for realm"),
     wrapped(TTransportException(message="TSocket read 0 bytes")),
     wrapped(OSError("Network is unreachable")),
+    wrapped(Exception("Invalid SessionHandle: SessionHandle [91eed306-4b6d-4718-b2a0-c64c15cdc506]")),
 ])
 def test_unreachable_database(error):
     assert is_unreachable(error)
