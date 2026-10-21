@@ -30,7 +30,7 @@ from langchain_core.messages import HumanMessage
 
 from config import cfg
 from lib.column_pruning import get_column_names
-from lib.messages import get_question
+from lib.messages import get_question, not_available_reason
 from lib.sql_tools import get_query_tables
 from resources import metrics_store, schema_store
 from ui.follow_ups import suggest_follow_ups
@@ -57,6 +57,19 @@ LATE_STAGES = {"condense_question", "match_values"}
 
 # Values named in the title of the match_values step, the others are counted
 MAX_TITLE_VALUES = 3
+
+# A question that gets no query (state unavailable_reason): label of the steps, and what they say.
+# Business words only, never the name of the withheld column nor any value
+UNAVAILABLE_LABELS = {
+    "restricted": "information confidentielle",
+    "absent":     "information absente des données disponibles",
+}
+UNAVAILABLE_DETAILS = {
+    "restricted": "Cette information n'est pas accessible depuis l'assistant, pour des raisons de "
+                  "protection des données : aucune requête n'est exécutée.",
+    "absent":     "Aucune colonne des tables disponibles ne contient cette information : "
+                  "aucune requête n'est exécutée.",
+}
 
 
 class TurnRenderer:
@@ -210,6 +223,8 @@ class TurnRenderer:
         metrics    = output.get("selected_metrics") or []
 
         if not output.get("is_in_scope", True):
+            if output.get("unavailable_reason") == "restricted":
+                return "Hors périmètre : information confidentielle", UNAVAILABLE_DETAILS["restricted"]
             return "Aucune table utile : question hors périmètre", f"Aucune table de {self.db_name} ne permet de répondre à cette question."
 
         # The schema given to planner and sql_coder, not the tables the query reads: the title
@@ -269,9 +284,14 @@ class TurnRenderer:
 
     async def _end_planner(self, input: dict, output: dict) -> tuple:
         # Tables the plan uses beyond the selection, loaded by planner
+        # A plan saying "Not available (...)": its reason, never the plan's own words (column names)
+        plan = output.get("query_plan", "")
+        if reason := not_available_reason(plan.strip().split("\n", 1)[0]):
+            return f"Plan : {UNAVAILABLE_LABELS[reason]}", UNAVAILABLE_DETAILS[reason]
+
         candidates = input.get("selected_schemas", {})
         loaded     = [t for t in output.get("selected_schemas", {}) if t not in candidates]
-        detail     = output.get("query_plan", "")
+        detail     = plan
         if loaded:
             detail += f"\n\n**Tables ajoutées par le plan :** {', '.join(loaded)}"
         title = "Plan de requête établi"
@@ -282,7 +302,8 @@ class TurnRenderer:
     async def _end_sql_coder(self, input: dict, output: dict) -> tuple:
         query  = output.get("generated_query", "")
         if not query:
-            return "Aucune requête : la donnée demandée n'est dans aucune colonne", ""
+            reason = output.get("unavailable_reason") or "absent"
+            return f"Aucune requête : {UNAVAILABLE_LABELS[reason]}", UNAVAILABLE_DETAILS[reason]
         title  = "Requête SQL corrigée" if input.get("validation_feedback") else "Requête SQL écrite"
         detail = _sql_block(query)
         tables = _tables_in_sql(query, input["selected_db"])
@@ -308,6 +329,10 @@ class TurnRenderer:
                         "L'agent corrige le filtre avant d'exécuter la requête.", True)
             error = _short_db_error(output.get("validation_error", ""))
             return f"Requête rejetée par {self.engine}", f"```\n{error}\n```\nL'agent corrige la requête à partir de cette erreur.", True
+
+        if output.get("unavailable_reason") == "restricted":
+            # A second query reading excluded columns: the question gets the confidential answer
+            return f"Requête non exécutée : {UNAVAILABLE_LABELS['restricted']}", UNAVAILABLE_DETAILS["restricted"]
 
         if output.get("validation_check") == "unreachable":
             # The database could not be reached: the query is not at fault, it was not run

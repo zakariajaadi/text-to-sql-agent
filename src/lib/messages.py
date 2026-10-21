@@ -26,6 +26,22 @@ def extract_sql(text: str) -> str:
     return query.rstrip().rstrip(";").rstrip()
 
 
+# "Not available (restricted): ..." line of the planner or sql_coder (agent/prompts.py), "--" or bold allowed
+_NOT_AVAILABLE = re.compile(r"^[\W_]*not available\b\W*(restricted|absent)?", re.IGNORECASE)
+
+
+def not_available_reason(text: str) -> str | None:
+    """
+    Reason of the first "Not available" line of a plan or of sql_coder's answer: "restricted" (the
+    information exists but is withheld, confidential) or "absent" (in no data, also when the line
+    gives no reason); None when no line says "Not available".
+    """
+    for line in text.splitlines():
+        if match := _NOT_AVAILABLE.match(line.strip()):
+            return (match.group(1) or "absent").lower()
+    return None
+
+
 def extract_plan_tables(plan: str, tables) -> list[str]:
     """
     Tables of the database named on the "Tables:" line of the planner's free-text plan.

@@ -4,7 +4,13 @@ import string
 
 import pytest
 
-from agent.prompts import DIALECT_RULES, PLANNER_PROMPT, RERANK_TABLES_PROMPT, SQL_CODER_PROMPT
+from agent.prompts import (
+    DIALECT_RULES,
+    FORMAT_ANSWER_PROMPT,
+    PLANNER_PROMPT,
+    RERANK_TABLES_PROMPT,
+    SQL_CODER_PROMPT,
+)
 
 
 @pytest.mark.parametrize("prompt", [PLANNER_PROMPT, SQL_CODER_PROMPT])
@@ -32,8 +38,26 @@ def test_information_in_no_column_is_not_answered_with_another_one(prompt):
     assert "in no column" in text and "an identifier, a code, a label" in text
 
 
-def test_the_coder_refusal_line_is_the_one_the_nodes_read():
+def test_the_refusal_lines_are_the_ones_the_nodes_read():
+    from lib.messages import not_available_reason
     from lib.sql_tools import is_refusal
-    line = next(line for line in SQL_CODER_PROMPT.splitlines() if line.startswith("-- Not available"))
-    assert is_refusal(line, "impala")
+    lines = [line for line in SQL_CODER_PROMPT.splitlines() if line.startswith("-- Not available")]
+    assert [not_available_reason(line) for line in lines] == ["restricted", "absent"]
+    assert all(is_refusal(line, "impala") for line in lines)
     assert "SELECT a text message" in " ".join(SQL_CODER_PROMPT.split())
+    plan_lines = " ".join(PLANNER_PROMPT.split())
+    assert '"Not available (restricted): [the information]"' in plan_lines
+    assert '"Not available (absent): [the information]"' in plan_lines
+
+
+@pytest.mark.parametrize("prompt", [PLANNER_PROMPT, SQL_CODER_PROMPT])
+def test_the_missing_information_is_named_in_business_words(prompt):
+    assert "never a table or column name" in " ".join(prompt.split())
+
+
+def test_the_answer_tells_confidential_from_absent():
+    text = " ".join(FORMAT_ANSWER_PROMPT.split())
+    assert "this information is confidential, not accessible from the assistant, for data protection" in text
+    assert "this information is not in the available data" in text
+    assert "never say it is forbidden" in text
+    assert "same language as the user's question" in text

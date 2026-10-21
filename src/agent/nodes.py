@@ -1,6 +1,5 @@
 # src/agent/nodes.py
 
-import re
 import time
 from functools import cache
 from typing import Literal
@@ -35,6 +34,7 @@ from lib import (
     get_last_cycle,
     get_question,
     normalize_sql,
+    not_available_reason,
 )
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
 from lib.db_errors import is_unreachable
@@ -62,10 +62,21 @@ from resources import (
     schema_store,
 )
 
-# State of a question whose information is in no column: no query, the out-of-scope answer
-# (format_answer). Planner writes "Not available: ..." as its plan, sql_coder its "-- Not available" line
-NOT_AVAILABLE      = {"generated_query": "", "is_in_scope": False, "validation_feedback": ""}
-NOT_AVAILABLE_PLAN = re.compile(r"^\W*not available\b", re.IGNORECASE)
+# What format_answer is told when no query was run, by unavailable_reason: the information exists
+# but is withheld (excluded columns, confidential), or is in no data
+NO_QUERY = {
+    "restricted": "No query executed — the information asked for is confidential: withheld from the assistant, for data protection.",
+    "absent":     "No query executed — the information asked for is not in the available data.",
+}
+
+
+def not_available(reason: str) -> dict:
+    """
+    State of a question whose information is in no column: no query, the out-of-scope answer
+    (format_answer). reason: "restricted" or "absent", from the "Not available (...)" line of the
+    planner or sql_coder, "restricted" when the excluded columns guardrail blocked the query.
+    """
+    return {"generated_query": "", "is_in_scope": False, "unavailable_reason": reason, "validation_feedback": ""}
 
 # An unreachable database is retried once, on fresh connections, after this delay
 RECONNECT_DELAY_S = 3
@@ -79,10 +90,10 @@ UNREACHABLE_ANSWER = (
 
 # Feedback of sql_validator for a query reading excluded columns (hidden from the documents)
 EXCLUDED_COLUMNS_ERROR = (
-    "BLOCKED: the query reads columns that are not available: {columns}. They are not in the schema "
-    "and are never queried. Rewrite it with the columns of the schema only, never SELECT *. If the "
-    "question cannot be answered without them, write no query: output only the line "
-    "-- Not available: [what is missing]"
+    "BLOCKED: the query reads columns that are not available: {columns}. They are confidential, not in "
+    "the schema and never queried. Rewrite it with the columns of the schema only, never SELECT *. If "
+    "the question cannot be answered without them, write no query: output only the line "
+    "-- Not available (restricted): [the information, in business words]"
 )
 
 
@@ -263,6 +274,10 @@ def rerank_tables(state: AgentState) -> dict:
         response.is_in_scope = True
         logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
 
+    # Why no query will answer it: withheld (confidential) or in no data, the default
+    reason = "" if response.is_in_scope else (
+        "restricted" if response.unavailable.strip().lower() == "restricted" else "absent")
+
     # Metric tables come right after the LLM's choice, before FK expansion bridges them
     selected_names = [t for t in dict.fromkeys([*response.tables, *metric_tables]) if t in candidates]
 
@@ -273,6 +288,7 @@ def rerank_tables(state: AgentState) -> dict:
             "selected_metrics":    selected_metrics,
             "filter_values":       filter_values,
             "is_in_scope":         response.is_in_scope,
+            "unavailable_reason":  reason,
             "llm_selected_tables": list(response.tables),
         }
 
@@ -300,6 +316,7 @@ def rerank_tables(state: AgentState) -> dict:
         "selected_metrics":    selected_metrics,
         "filter_values":       filter_values,
         "is_in_scope":         response.is_in_scope,
+        "unavailable_reason":  reason,
         "llm_selected_tables": list(response.tables),
     }
 
@@ -483,9 +500,9 @@ def sql_coder(state: AgentState) -> dict:
     feedback = state.get("validation_feedback", "")
 
     # The planner found the information asked for in no column: no query to write
-    if not feedback and NOT_AVAILABLE_PLAN.match(plan):
-        logger.info(f"sql_coder: no query, the plan says the information is not available — {plan[:200]}")
-        return {**NOT_AVAILABLE}
+    if not feedback and (reason := not_available_reason(plan.strip().split("\n", 1)[0])):
+        logger.info(f"sql_coder: no query, the plan says the information is not available ({reason}) — {plan[:200]}")
+        return not_available(reason)
 
     # Pruned schema first; full schema on retry — the error may come from a pruned column
     if feedback:
@@ -520,10 +537,14 @@ def sql_coder(state: AgentState) -> dict:
     # Extract raw SQL from the response
     query = extract_sql(extract_text_content(response))
 
-    # No query to run ("-- Not available: ...", or a text message dressed as a query): out of scope
+    # No query to run ("-- Not available (...): ...", or a text message dressed as a query): out of
+    # scope. After the excluded columns guardrail, the information is withheld whatever the line says
     if is_refusal(query, db_cfg.dialect):
-        logger.info(f"sql_coder: no query, the information is not available — {query[:200]}")
-        return {**NOT_AVAILABLE}
+        reason = not_available_reason(query) or "absent"
+        if feedback and state.get("validation_check") == "excluded":
+            reason = "restricted"
+        logger.info(f"sql_coder: no query, the information is not available ({reason}) — {query[:200]}")
+        return not_available(reason)
 
     # Quote query identifiers (reserved words on Hive/Impala)
     # Deterministic fixes (Hive/Impala): backticks, NULLs last, assumption comments kept
@@ -570,7 +591,7 @@ def sql_validator(state: AgentState) -> dict:
     if blocked := find_excluded_columns(query, db_cfg.dialect, get_excluded_columns(db_name)):
         logger.warning(f"sql_validator: query reading excluded columns blocked: {', '.join(blocked)}")
         if state.get("validation_feedback") and state.get("validation_check") == "excluded":
-            return {**NOT_AVAILABLE, "validation_error": "", "validation_check": "excluded"}
+            return {**not_available("restricted"), "validation_error": "", "validation_check": "excluded"}
         return {
             "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
                 query=query, error=EXCLUDED_COLUMNS_ERROR.format(columns=", ".join(blocked)), extra_context="",
@@ -739,7 +760,7 @@ def format_answer(state: AgentState) -> dict:
         SystemMessage(content=FORMAT_ANSWER_PROMPT.format(dialect=db_cfg.dialect)),
         HumanMessage(content=(
             f"Question: {question}\n\n"
-            f"Executed SQL:\n{query or 'No query executed — question is out of scope.'}\n\n"
+            f"Executed SQL:\n{query or NO_QUERY.get(state.get('unavailable_reason'), NO_QUERY['absent'])}\n\n"
             f"{results_label}: {result}"
         )),
     ])

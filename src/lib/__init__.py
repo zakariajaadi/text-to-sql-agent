@@ -11,5 +11,6 @@ from lib.messages import (
     extract_sql,
     get_last_cycle,
     get_question,
+    not_available_reason,
 )
 from lib.sql_tools import normalize_sql

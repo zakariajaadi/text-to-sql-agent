@@ -102,7 +102,7 @@ def test_a_query_reading_an_excluded_column_is_never_run(validator):
     assert validator == []
     assert output["validation_check"] == "excluded"
     assert "identity_document.document_number" in output["validation_feedback"]
-    assert "-- Not available" in output["validation_feedback"]
+    assert "-- Not available (restricted)" in output["validation_feedback"]
     assert nodes.route_after_validation({**state, **output, "remaining_steps": 10}) == "error"
 
 
@@ -112,6 +112,7 @@ def test_a_second_query_reading_them_gets_the_out_of_scope_answer(validator):
     output = nodes.sql_validator(state)
     assert validator == []
     assert output["generated_query"] == "" and output["is_in_scope"] is False
+    assert output["unavailable_reason"] == "restricted"
     assert nodes.route_after_validation({**state, **output, "remaining_steps": 10}) == "success"
 
 

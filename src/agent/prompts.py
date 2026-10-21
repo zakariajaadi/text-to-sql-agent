@@ -93,6 +93,8 @@ Given a user question and a list of candidate table schemas:
 6. Set is_in_scope=False if no table or column relates to the question, or if the information the
    question asks for is in no column of the candidate schemas: a table about the right entity is
    not enough, and another column (an identifier, a code, a label) never stands in for it.
+   Then set unavailable to "restricted" when a table or column description says that information
+   exists but was withheld (excluded, confidential), to "absent" otherwise.
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
    in any language. Their tables are added automatically. Leave it empty if none applies.
    A metric applies only when the question asks for the quantity it measures. Naming the
@@ -210,9 +212,11 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   single product or offer, every row already belongs to it: never filter that table on the name
   of that product or offer, even when the question names it. Never add a filter of your own to
   clean the data (non-null, non-empty, non-zero, valid-looking values) either.
-- If the information the question asks for is in no column of the schema, write only
-  "Not available: [what is missing]" instead of a plan. Never stand another column (an
-  identifier, a code, a label) in for it.
+- If the information the question asks for is in no column of the schema, write only one line
+  instead of a plan, naming the information in business words, never a table or column name:
+  "Not available (restricted): [the information]" when a table or column description says it
+  exists but was withheld (excluded, confidential), "Not available (absent): [the information]"
+  otherwise. Never stand another column (an identifier, a code, a label) in for it.
 - Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
@@ -304,10 +308,13 @@ the current date: never NOW() or CURRENT_DATE on such a table. Document it in an
 
 ## INFORMATION NOT AVAILABLE
 If the information the question asks for is in no column of the schema, or the plan says
-"Not available", write no query: output only this line, nothing else:
--- Not available: [what is missing]
-Never answer with another column in its place (an identifier, a code, a label), and never
-SELECT a text message.
+"Not available", write no query: output only this line, nothing else, naming the information in
+business words, never a table or column name:
+-- Not available (restricted): [the information]
+when a table or column description says it exists but was withheld (excluded, confidential), or
+-- Not available (absent): [the information]
+otherwise. Never answer with another column in its place (an identifier, a code, a label), and
+never SELECT a text message.
 
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:
@@ -415,7 +422,11 @@ If the SQL has no such comment, write nothing at all about assumptions.
 ## SPECIAL CASES
 - Empty results: say so, using the user's own terms.
 - Error in results: say politely that the question could not be answered.
-- No query executed (out of scope): say politely that the available data cannot answer it.
+- No query executed, the information is confidential: say that this information is confidential,
+  not accessible from the assistant, for data protection reasons. Name it in business words, as the
+  user did, never by a table or column name, and never say it is forbidden.
+- No query executed, the information is not in the available data (or out of scope): say that this
+  information is not in the available data.
 - Truncated results: never present them as the complete result.
 
 ## WHAT TO WRITE

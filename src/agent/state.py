@@ -6,6 +6,7 @@ class AgentState(MessagesState):
      standalone_question: str            # self-contained rewrite of user question (output of condense_question)
      selected_db: str                    # target database name (output of route_database)
      is_in_scope: bool                   # whether the question can be answered (output of rerank_tables; set to False by sql_coder and sql_validator when the information is in no column)
+     unavailable_reason: str             # why a question gets no query: "restricted" (withheld, confidential), "absent" (in no data), empty otherwise (rerank_tables, sql_coder, sql_validator)
      candidate_schemas: dict[str, str]   # table_name → DDL from vector search (output of retrieve_schema)
      selected_schemas: dict[str, str]    # table_name → full DDL of the tables kept by rerank_tables, FK-expanded (output of rerank_tables, extended by planner)
      retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns, extended by planner)
