@@ -109,7 +109,9 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    description what the metric includes and excludes (e.g. "discounts applied, freight excluded").
 4. Averages per entity divide by the distinct count of that entity: "per order, not per order line"
    → SUM(...) / COUNT(DISTINCT order_lines.order_id). Never AVG over line-level rows for them.
-5. Count entities with COUNT(DISTINCT table.id), never COUNT(*).
+5. Count entities with COUNT(DISTINCT table.id), never COUNT(*). DISTINCT is only for counting
+   entities: never SUM(DISTINCT ...) or AVG(DISTINCT ...) on an amount, as two rows with the same
+   amount are two amounts.
 6. time_dimension: the business date of the event the metric measures (order date, invoice date),
    from the fact table or from a table it joins to through the "-- Joins:" lines. Empty if none.
 7. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.

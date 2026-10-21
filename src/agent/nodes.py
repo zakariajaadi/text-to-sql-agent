@@ -1,6 +1,8 @@
 # src/agent/nodes.py
 
+import re
 import time
+from functools import cache
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -41,8 +43,14 @@ from lib.metrics import (
     render_metric_catalog,
     render_metric_definitions,
 )
-from lib.semantics import add_matching_values
-from lib.sql_tools import contains_expression, get_query_tables, get_value_filters
+from lib.semantics import add_matching_values, excluded_columns, load_semantics
+from lib.sql_tools import (
+    contains_expression,
+    find_excluded_columns,
+    get_query_tables,
+    get_value_filters,
+    is_refusal,
+)
 from lib.value_index import find_matching_values, find_unknown_values
 from resources import (
     db_registry,
@@ -54,6 +62,11 @@ from resources import (
     schema_store,
 )
 
+# State of a question whose information is in no column: no query, the out-of-scope answer
+# (format_answer). Planner writes "Not available: ..." as its plan, sql_coder its "-- Not available" line
+NOT_AVAILABLE      = {"generated_query": "", "is_in_scope": False, "validation_feedback": ""}
+NOT_AVAILABLE_PLAN = re.compile(r"^\W*not available\b", re.IGNORECASE)
+
 # An unreachable database is retried once, on fresh connections, after this delay
 RECONNECT_DELAY_S = 3
 
@@ -63,6 +76,21 @@ UNREACHABLE_ANSWER = (
     "(réseau, VPN ou maintenance du cluster). La question n'a pas pu être exécutée, "
     "réessayez dans quelques minutes."
 )
+
+# Feedback of sql_validator for a query reading excluded columns (hidden from the documents)
+EXCLUDED_COLUMNS_ERROR = (
+    "BLOCKED: the query reads columns that are not available: {columns}. They are not in the schema "
+    "and are never queried. Rewrite it with the columns of the schema only, never SELECT *. If the "
+    "question cannot be answered without them, write no query: output only the line "
+    "-- Not available: [what is missing]"
+)
+
+
+@cache
+def get_excluded_columns(db_name: str) -> dict[str, set[str]]:
+    """{table: columns} of the `exclude_columns` of tables.yaml, read once (like the indexed documents)."""
+    return {table: columns for table, entry in load_semantics(db_name).items()
+            if (columns := excluded_columns(entry))}
 
 
 def get_selected_metrics(state: AgentState) -> list[Metric]:
@@ -221,14 +249,17 @@ def rerank_tables(state: AgentState) -> dict:
 
     # ── 2. Load LLM-selected and metric tables missing from candidates ────────
     # LLM may select tables known via schema descriptions but not returned by Chroma
+    loaded = []
     for table in [*response.tables, *metric_tables]:
         if table not in candidates and table in schema_store[db_name]:
             candidates[table] = schema_store[db_name][table]
+            loaded.append(table)
             logger.debug(f"[rerank_tables] Loaded selected table from store: {table}")
 
-    # Override scope if all LLM-selected tables are now available
-    # (an empty selection means out of scope — all() is True on an empty list)
-    if response.tables and not response.is_in_scope and all(t in candidates for t in response.tables):
+    # Override scope when the LLM judged out of scope for want of tables it named, now loaded:
+    # not when it saw them all (the information asked for is in none of their columns)
+    if (not response.is_in_scope and any(t in loaded for t in response.tables)
+            and all(t in candidates for t in response.tables)):
         response.is_in_scope = True
         logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
 
@@ -451,6 +482,11 @@ def sql_coder(state: AgentState) -> dict:
     plan     = state.get("query_plan", "")
     feedback = state.get("validation_feedback", "")
 
+    # The planner found the information asked for in no column: no query to write
+    if not feedback and NOT_AVAILABLE_PLAN.match(plan):
+        logger.info(f"sql_coder: no query, the plan says the information is not available — {plan[:200]}")
+        return {**NOT_AVAILABLE}
+
     # Pruned schema first; full schema on retry — the error may come from a pruned column
     if feedback:
         schema = "\n\n".join(state["selected_schemas"].values())
@@ -483,6 +519,11 @@ def sql_coder(state: AgentState) -> dict:
 
     # Extract raw SQL from the response
     query = extract_sql(extract_text_content(response))
+
+    # No query to run ("-- Not available: ...", or a text message dressed as a query): out of scope
+    if is_refusal(query, db_cfg.dialect):
+        logger.info(f"sql_coder: no query, the information is not available — {query[:200]}")
+        return {**NOT_AVAILABLE}
 
     # Quote query identifiers (reserved words on Hive/Impala)
     # Deterministic fixes (Hive/Impala): backticks, NULLs last, assumption comments kept
@@ -523,7 +564,22 @@ def sql_validator(state: AgentState) -> dict:
             "validation_check":    "guardrail",
         }
 
-    # 2. Filtered values — a value its column doesn't hold silently returns no row
+    # 2. Excluded columns (exclude_columns of tables.yaml): hidden from the documents, never read
+    #    either, even under a guessed name. One rewrite: when the next query reads them too, the
+    #    question needs them and gets the out-of-scope answer
+    if blocked := find_excluded_columns(query, db_cfg.dialect, get_excluded_columns(db_name)):
+        logger.warning(f"sql_validator: query reading excluded columns blocked: {', '.join(blocked)}")
+        if state.get("validation_feedback") and state.get("validation_check") == "excluded":
+            return {**NOT_AVAILABLE, "validation_error": "", "validation_check": "excluded"}
+        return {
+            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
+                query=query, error=EXCLUDED_COLUMNS_ERROR.format(columns=", ".join(blocked)), extra_context="",
+            ),
+            "validation_error":    f"Colonnes non disponibles pour l'agent : {', '.join(blocked)}",
+            "validation_check":    "excluded",
+        }
+
+    # 3. Filtered values — a value its column doesn't hold silently returns no row
     #    (city = 'Sao Paolo'). First attempt only: at most one correction, a retry runs as written
     #    (the value index may be older than the data)
     if not state.get("validation_feedback"):
@@ -542,7 +598,7 @@ def sql_validator(state: AgentState) -> dict:
                 "validation_check":    "values",
             }
 
-    # 3. Execute SQL query, reading at most max_rows rows
+    # 4. Execute SQL query, reading at most max_rows rows
     try:
         result = _run_with_reconnect(db_name, query, db_cfg.max_rows)
     except Exception as e:
@@ -622,6 +678,11 @@ def _unknown_values_error(unknown: list) -> str:
     ]
     return ("Unknown values: the query filters on values these columns don't hold, "
             "so it would return no row.\n" + "\n".join(lines))
+
+
+def route_after_coder(state: AgentState) -> Literal["query", "not_available"]:
+    """To sql_validator with a query, to format_answer (out-of-scope answer) without one."""
+    return "query" if state.get("generated_query") else "not_available"
 
 
 def route_after_validation(state: AgentState) -> Literal["error", "success", "unreachable"]:

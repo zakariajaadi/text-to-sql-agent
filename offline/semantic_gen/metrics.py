@@ -10,6 +10,8 @@ modified, rejected ones (listed in `ignore`) never come back. It reads the datab
 Pipeline order: semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
 
+import re
+
 import yaml
 from langchain_community.utilities import SQLDatabase
 from langchain_core.prompts import ChatPromptTemplate
@@ -51,6 +53,9 @@ SYNONYM_LANGUAGES = "French"
 NUMERIC_TYPES  = ("int", "decimal", "numeric", "float", "double", "real")
 TEMPORAL_TYPES = ("date", "time")
 
+# Never proposed, whatever the name: two rows with the same amount are two amounts
+DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
+
 # ------------------------------------------------------------
 # Chain
 # ------------------------------------------------------------
@@ -73,7 +78,8 @@ def generate_metrics(db_name: str):
        them (many side of a relationship), and the tables they join to for dates and labels.
     2. Propose: the LLM writes up to 8 metrics from that context, avoiding the metrics
        already defined or listed in `ignore`.
-    3. Check: each proposal goes through the startup validation (lib/metrics.py), then the
+    3. Check: a proposal named or written like a known metric, or summing distinct values, is
+       skipped (skip_reason); the others go through the startup validation (lib/metrics.py), then the
        database compiles it on an empty result (WHERE 1 = 0); a failing one is dropped with a warning.
 
     Additive only: reviewed metrics are never modified, rejected ones never come back.
@@ -129,14 +135,8 @@ def generate_metrics(db_name: str):
         if not entry["time_dimension"]:
             del entry["time_dimension"]
 
-        if name in entries or name in added or name in ignored:
-            logger.info(f"[{db_name}] Skipped metric '{name}': already defined or rejected")
-            continue
-        # Same expression whatever the aliases: each one contains the other (a ratio only contains its parts)
-        if any(contains_expression(proposal.expr, e.get("expr", ""), dialect)
-               and contains_expression(e.get("expr", ""), proposal.expr, dialect)
-               for e in [*entries.values(), *added.values()]):
-            logger.info(f"[{db_name}] Skipped metric '{name}': same expression as an existing metric")
+        if reason := skip_reason(name, proposal.expr, {**entries, **added}, ignored, dialect):
+            logger.info(f"[{db_name}] Skipped metric '{name}': {reason}")
             continue
 
         try:
@@ -156,6 +156,23 @@ def generate_metrics(db_name: str):
 # ------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------
+
+def skip_reason(name: str, expr: str, known: dict[str, dict], ignored: list[str], dialect: str) -> str | None:
+    """
+    Why a proposed metric is not added (None: it goes on to validation): its name is defined or
+    rejected, its expression is the one of a known metric, or it sums distinct values. The last two
+    are checked on the expression, as the LLM proposes a rejected metric again under another name.
+    """
+    if name in known or name in ignored:
+        return "already defined or rejected"
+    # Same expression whatever the aliases: each one contains the other (a ratio only contains its parts)
+    if any(contains_expression(expr, e.get("expr", ""), dialect) and contains_expression(e.get("expr", ""), expr, dialect)
+           for e in known.values()):
+        return "same expression as an existing metric"
+    if DISTINCT_AMOUNT.search(expr):
+        return "SUM(DISTINCT ...) or AVG(DISTINCT ...) drops the equal amounts of different rows"
+    return None
+
 
 def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantics: dict) -> dict[str, dict]:
     """

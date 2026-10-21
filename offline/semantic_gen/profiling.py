@@ -9,10 +9,12 @@ Read by the generators so the semantic layer states facts instead of guesses:
       relations found without an LLM (a key unique in one table, present in others).
     - text columns: shapes of their values (digits → 9, other letters → a) on a sample,
       giving the `formats` of dates and numbers stored as text, and the empty columns.
-    - personal data: columns whose name says so (names, ids, contacts, free text).
+    - personal data: columns whose name says so (names, ids, contacts, free text, authors),
+      or whose values look like logins or emails.
 
 Formats and exclusions are proposals: the semantics generator writes them into tables.yaml
-only for a table that has none yet, for review. The profile itself is overwritten each run.
+only for a table that has none yet, for review. Each run replaces the entries of the tables it
+measures (every table, or the ones asked for) and keeps the others.
 
 Pipeline order: profile → semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
@@ -25,10 +27,10 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 
-from lib.semantics import profile_path
+from lib.semantics import load_profile, profile_path
 
 PROFILE_HEADER = """\
-# Data profile, measured by `make profile` (no LLM): overwritten at each run, never edited.
+# Data profile, measured by `make profile` (no LLM): the tables measured replace their entry, never edited.
 # Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
 #   rows, keys          : row count, and per identifier-like column its non-null and distinct values
 #   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
@@ -50,9 +52,17 @@ CODE_NAME = re.compile(r"(^|_)(code|cod|cd|id|numero|num|nr|n|ref|matricule|rowd
 PERSONAL_NAME = re.compile(
     r"(^|_)(nom|noms|prenom|prenoms|raison_?sociale?|denomination|cin|passeport|email|mail\d?|gsm|tel|"
     r"telephone|fax|adresse|adr|contact|commentaires?|login|porteur|iban|rib|swift|masque_carte|"
-    r"num_?crt|signataire|beneficiaire|intitule|intit\d|employeur|date_naiss\w*|lieu_naissance|"
-    r"first_?name|last_?name|phone|address|birth_?date|ssn)(_|$)"
+    r"num_?crt|signataire|beneficiaire|intitule|intit\d|employeur|lieu_naissance|"
+    r"(cree|creee|crea|modifie|modifiee|modif|maj|valide|validee|saisi|saisie)_?par|"
+    r"first_?name|last_?name|phone|address|birth_?date|ssn|(created|modified|updated)_?by)(_|$)"
+    # Birth date, misspelled too (date_naisance)
+    r"|(^|_)(date|dt)_?nais"
+    # A name glued to the next word (nomintervenants, prenomclient), not nombre, nominal, nomenclature
+    r"|(^|_)(pre)?noms?(?!bre|ina|encl|ade)[a-z]"
 )
+# Values shaped like a login (first.last, first-name.last) or an email: personal data whatever the name
+PERSONAL_SHAPE = re.compile(r"^a([ -]a)*\.a([ -]a)*9*$|^[a9.+-]+@[a9.-]+\.a$")
+PERSONAL_SHARE = 0.5   # share of the filled values shaped like one, a user column mixing logins and codes
 
 # Shapes (digits → 9) of dates stored as text → their Java pattern
 DATE_SHAPES = [
@@ -62,6 +72,9 @@ DATE_SHAPES = [
     (re.compile(r"^9999-99-99$"),                         "yyyy-MM-dd"),
     (re.compile(r"^9999-99-99 99:99:99(\.9+)?$"),         "yyyy-MM-dd HH:mm:ss"),
     (re.compile(r"^9999/99/99$"),                         "yyyy/MM/dd"),
+    # DB2 timestamps, written with their microseconds or without
+    (re.compile(r"^9999-99-99-99\.99\.99$"),              "yyyy-MM-dd-HH.mm.ss"),
+    (re.compile(r"^9999-99-99-99\.99\.99\.999999$"),      "yyyy-MM-dd-HH.mm.ss.SSSSSS"),
 ]
 # Numbers stored as text: 12, 12.5, 12,5, .5, -3, 1,5E+5, 1.5E5 (the exponent letter is an a).
 # An exponent follows digits and has a sign, or a decimal mantissa: A123 or 12A345 is a code
@@ -73,29 +86,57 @@ WHOLE_NUMBER = re.compile(r"^[+-]?9+$")
 # Profile
 # ------------------------------------------------------------
 
-def profile_database(db: SQLDatabase, db_name: str) -> dict:
+def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = None,
+                     missing: bool = False) -> dict:
     """
-    Profile every usable table of the database, one table after the other (a Hive or Impala job
-    at a time), and write semantic_layer/<db>/profile.yaml. A table whose queries fail is left
-    out with a warning: the profile is an enrichment, never required.
+    Profile the usable tables of the database, one table after the other (a Hive or Impala job
+    at a time), and merge them into semantic_layer/<db>/profile.yaml: every table, only `tables`,
+    and with `missing` only the ones the profile lacks (see tables_to_profile). The entries of the
+    other tables are kept, those of tables no longer usable dropped. A table whose queries fail
+    keeps its previous entry, if any, with a warning: the profile is an enrichment, never required.
     """
+    usable   = db.get_usable_table_names()
+    existing = load_profile(db_name)
+    todo     = tables_to_profile(usable, existing, tables, missing)
+    if not todo:
+        logger.info(f"[{db_name}] No table to profile: every one asked for is in {profile_path(db_name).name}")
+        return existing
+
     inspector = sa_inspect(db._engine)
     quote     = db._engine.dialect.identifier_preparer.quote
-    profile   = {}
-
-    for table in db.get_usable_table_names():
+    measured  = {}
+    for table in todo:
         columns = inspector.get_columns(table)
         logger.info(f"[{db_name}] Profiling: {table}")
         try:
-            profile[table] = profile_table(db, table, columns, quote)
+            measured[table] = profile_table(db, table, columns, quote)
         except Exception as e:
             logger.warning(f"[{db_name}] Not profiled: {table} — {str(e).splitlines()[0][:200]}")
 
+    profile = merge_profiles(usable, existing, measured)
+    if dropped := sorted(set(existing) - set(profile)):
+        logger.info(f"[{db_name}] Dropped from the profile, no longer usable: {', '.join(dropped)}")
     path = profile_path(db_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(PROFILE_HEADER + yaml.safe_dump(profile, sort_keys=False, allow_unicode=True, width=1000))
-    logger.info(f"[{db_name}] {len(profile)} table(s) profiled → {path}")
+    logger.info(f"[{db_name}] {len(measured)} table(s) profiled, {len(profile)} in the profile → {path}")
     return profile
+
+
+def tables_to_profile(usable: list[str], existing: dict, tables: list[str] | None, missing: bool) -> list[str]:
+    """
+    The tables to measure, in the order of the database: `tables` (all usable ones when None),
+    and with `missing` only those absent from the existing profile. Raises ValueError on a
+    table that is not usable (a typo would silently measure nothing).
+    """
+    if tables and (unknown := sorted(set(tables) - set(usable))):
+        raise ValueError(f"Unknown or excluded table(s): {', '.join(unknown)}")
+    return [t for t in usable if (not tables or t in tables) and not (missing and t in existing)]
+
+
+def merge_profiles(usable: list[str], existing: dict, measured: dict) -> dict:
+    """The measured entries over the existing ones, for the usable tables, in the order of the database."""
+    return {t: measured.get(t, existing.get(t)) for t in usable if t in measured or t in existing}
 
 
 def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> dict:
@@ -114,6 +155,8 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
         entry["text_columns"][column] = facts
         if facts["filled"] < EMPTY_FILL:
             exclude[column] = "empty"
+        elif personal_values(column_shapes):
+            exclude[column] = "personal data"
         elif fmt := text_format(column_shapes, column):
             formats[column] = fmt
     for column in names:
@@ -147,20 +190,34 @@ def key_overlap(db: SQLDatabase, source: str, target: str, sample: int = 10_000)
     """
     Share of the distinct values of source (table.column), on a sample, found in target: the same
     column name in two tables is a relation only when the values match (numero_contrat of a card
-    is not the one of a loan). Compared as text, the two columns may be stored as int and string.
-    None when source holds no value: nothing to check.
+    is not the one of a loan). None when source holds no value: nothing to check.
     """
     quote = db._engine.dialect.identifier_preparer.quote
-    (s_table, s_col), (t_table, t_col) = source.split("."), target.split(".")
-    query = (
-        f"SELECT COUNT(*), COUNT(t.k) FROM "
-        f"(SELECT DISTINCT CAST({quote(s_col)} AS STRING) AS k FROM {quote(s_table)} "
-        f"WHERE {quote(s_col)} IS NOT NULL LIMIT {sample}) s "
-        f"LEFT JOIN (SELECT DISTINCT CAST({quote(t_col)} AS STRING) AS k FROM {quote(t_table)}) t ON s.k = t.k"
-    )
     with db._engine.connect() as conn:
-        total, found = conn.execute(text(query)).fetchone()
+        total, found = conn.execute(text(key_overlap_sql(source, target, quote, sample))).fetchone()
     return found / total if total else None
+
+
+def key_overlap_sql(source: str, target: str, quote, sample: int) -> str:
+    """The query of key_overlap: distinct sampled source values, and how many of them target holds."""
+    (s_table, s_col), (t_table, t_col) = source.split("."), target.split(".")
+    s_key, t_key = _key_sql(quote(s_col)), _key_sql(quote(t_col))
+    return (
+        f"SELECT COUNT(*), COUNT(t.k) FROM "
+        f"(SELECT DISTINCT {s_key} AS k FROM {quote(s_table)} "
+        f"WHERE {quote(s_col)} IS NOT NULL LIMIT {sample}) s "
+        f"LEFT JOIN (SELECT DISTINCT {t_key} AS k FROM {quote(t_table)}) t ON s.k = t.k"
+    )
+
+
+def _key_sql(column: str) -> str:
+    """
+    A key value as comparable text: the two columns may be stored as int and string, and a string
+    of digits may be padded with zeros or blanks ('01234567' is 1234567). Digits only (up to 18,
+    a BIGINT) → the number, written without its leading zeros; anything else → the trimmed text.
+    """
+    value = f"TRIM(CAST({column} AS STRING))"
+    return f"CASE WHEN {value} RLIKE '^[0-9]{{1,18}}$' THEN CAST(CAST({value} AS BIGINT) AS STRING) ELSE {value} END"
 
 
 def _shape_sql(column: str) -> str:
@@ -238,6 +295,13 @@ def text_format(shapes: dict, column: str) -> str | None:
         if all(WHOLE_NUMBER.match(s) for s in numbers) and len({len(s.lstrip("+-")) for s in numbers}) == 1:
             return None
     return kind
+
+
+def personal_values(shapes: dict) -> bool:
+    """Values shaped like logins or emails (PERSONAL_SHAPE) for PERSONAL_SHARE of the filled ones."""
+    filled = {s: n for s, n in shapes.items() if not _is_empty(s)}
+    total  = sum(filled.values())
+    return bool(total) and sum(n for s, n in filled.items() if PERSONAL_SHAPE.match(s)) / total >= PERSONAL_SHARE
 
 
 def row_facts(table_profile: dict | None) -> str:

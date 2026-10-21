@@ -281,6 +281,8 @@ class TurnRenderer:
 
     async def _end_sql_coder(self, input: dict, output: dict) -> tuple:
         query  = output.get("generated_query", "")
+        if not query:
+            return "Aucune requête : la donnée demandée n'est dans aucune colonne", ""
         title  = "Requête SQL corrigée" if input.get("validation_feedback") else "Requête SQL écrite"
         detail = _sql_block(query)
         tables = _tables_in_sql(query, input["selected_db"])
@@ -296,6 +298,10 @@ class TurnRenderer:
         if output.get("validation_feedback"):
             # Only the database error is shown, never the instructions written for sql_coder
             self.rejected += 1
+            if output.get("validation_check") == "excluded":
+                # Caught before execution: columns hidden from the agent, never run
+                return ("Colonnes non disponibles pour l'agent", f"```\n{output.get('validation_error', '')}\n```\n"
+                        "La requête n'a pas été exécutée : l'agent la réécrit sans elles.", True)
             if output.get("validation_check") == "values":
                 # Caught before execution: a filtered value the data doesn't hold
                 return ("Valeur absente des données", f"```\n{output.get('validation_error', '')}\n```\n"

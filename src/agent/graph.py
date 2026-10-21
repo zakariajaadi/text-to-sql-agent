@@ -15,6 +15,7 @@ from agent.nodes import (
     rerank_tables,
     resolve_database,
     retrieve_schema,
+    route_after_coder,
     route_after_validation,
     route_by_scope,
     sql_coder,
@@ -52,7 +53,10 @@ def build_graph():
     builder.add_edge("match_values",  "prune_columns")
     builder.add_edge("prune_columns", "planner")
     builder.add_edge("planner", "sql_coder")
-    builder.add_edge("sql_coder",       "sql_validator")
+    builder.add_conditional_edges("sql_coder", route_after_coder, {
+        "query":         "sql_validator",
+        "not_available": "format_answer",   # the information is in no column: no query
+    })
     builder.add_conditional_edges("sql_validator", route_after_validation, {
         "error":       "sql_coder",
         "success":     "format_answer",

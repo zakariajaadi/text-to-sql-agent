@@ -1,7 +1,8 @@
 """
 SQL helpers built on sqlglot: deterministic fixes applied to every generated query (Hive, Impala),
-tables a query reads, the text values it filters on, whether a query computes a given expression,
-and the join condition of a declared relationship.
+tables a query reads, the text values it filters on, the excluded columns it reads, whether it is
+a refusal rather than a query, whether a query computes a given expression, and the join condition
+of a declared relationship.
 Used by: agent/nodes.py (sql_coder, sql_validator), ui/streaming.py (result card), lib/metrics.py,
 lib/semantics.py, offline/semantic_gen/metrics.py
 """
@@ -11,7 +12,8 @@ import re
 import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.hive import Hive
-from sqlglot.errors import ParseError, TokenError
+from sqlglot.errors import ParseError, SqlglotError, TokenError
+from sqlglot.optimizer.scope import traverse_scope
 
 
 class Impala(Hive):
@@ -104,6 +106,74 @@ def get_value_filters(query: str, dialect: str) -> list[tuple[str, str, str]]:
         table = tables.get(column.table.lower(), column.table.lower()) if column.table else ""
         filters += [(table, column.name.lower(), value) for value in values]
     return filters
+
+
+def find_excluded_columns(query: str, dialect: str, excluded: dict[str, set[str]]) -> list[str]:
+    """
+    The excluded columns the query reads, as table.column, and "table.*" for a SELECT * (or t.*)
+    over a table that has some. excluded: {table: {column, ...}}, the `exclude_columns` of
+    tables.yaml; names compare case-insensitively.
+
+    Each column is resolved to its table in its own scope (subqueries, CTEs, correlated references
+    to an outer query, table aliases); an unqualified one counts for every table of its FROM that
+    excludes a column of that name. COUNT(*) reads no column. When sqlglot can't parse the query,
+    every word naming an excluded column of a table the query names counts.
+    """
+    excluded = {t.lower(): {c.lower() for c in columns} for t, columns in excluded.items() if columns}
+    if not excluded:
+        return []
+    try:
+        scopes = traverse_scope(sqlglot.parse_one(query, read=sqlglot_dialect(dialect)))
+    except SqlglotError:   # unparseable SQL: words naming an excluded column of a named table
+        words = {word.lower() for word in re.findall(r"\w+", query)}
+        return [f"{t}.{c}" for t, columns in excluded.items() if t in words for c in sorted(columns) if c in words]
+
+    def tables_of(scope) -> dict[str, str]:
+        """Alias (or name) → table of the database, for the tables read directly by the scope."""
+        return {alias.lower(): source.name.lower() for alias, source in scope.sources.items()
+                if isinstance(source, exp.Table)}
+
+    def table_of(scope, alias: str) -> str | None:
+        """Table an alias stands for, in the scope or an outer one (correlated subquery)."""
+        while scope is not None:
+            if alias.lower() in {a.lower() for a in scope.sources}:
+                return tables_of(scope).get(alias.lower())   # None: a subquery or a CTE, checked on its own
+            scope = scope.parent
+        return None
+
+    found = []
+    for scope in scopes:
+        for column in scope.columns:
+            if isinstance(column.this, exp.Star):
+                continue
+            tables = [table_of(scope, column.table)] if column.table else tables_of(scope).values()
+            found += [f"{t}.{column.name.lower()}" for t in tables if column.name.lower() in excluded.get(t, ())]
+        # SELECT * and t.* read every column of their tables, the excluded ones too
+        for projection in scope.expression.expressions if isinstance(scope.expression, exp.Select) else []:
+            if isinstance(projection, exp.Star):
+                tables = tables_of(scope).values()
+            elif isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star):
+                tables = [table_of(scope, projection.table)]
+            else:
+                continue
+            found += [f"{t}.*" for t in tables if t in excluded]
+    return list(dict.fromkeys(found))
+
+
+def is_refusal(query: str, dialect: str) -> bool:
+    """
+    True when sql_coder wrote no query to run: only comments (the "-- Not available: ..." line of
+    agent/prompts.py), or a SELECT of text literals from no table (a message dressed as a query).
+    """
+    sql = "\n".join(line for line in query.splitlines() if not line.lstrip().startswith("--")).strip()
+    if not sql:
+        return True
+    try:
+        tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))
+    except SqlglotError:
+        return False
+    return (isinstance(tree, exp.Select) and tree.find(exp.From) is None
+            and all(isinstance(p.unalias(), exp.Literal) and p.unalias().is_string for p in tree.expressions))
 
 
 def contains_expression(query: str, expression: str, dialect: str) -> bool:

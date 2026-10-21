@@ -58,13 +58,15 @@ doctor:  ## Can Windows, then the container, reach Impala and Kerberos? (Docker 
 	$(RUN_T) python -m offline.doctor && echo "Network OK." || \
 	echo "The container can't reach the cluster: if Windows can, restart Docker Desktop (Quit, then start it), else check the VPN."
 
-shell:  ## Open a bash shell in a container of the app image
-	$(RUN) bash
+# The UBI image activates its own Python (/opt/app-root) in every bash: at each prompt (PROMPT_COMMAND)
+# and in scripts (BASH_ENV, ENV). The shell activates the project's instead, so python is /app/.venv's
+shell:  ## Open a bash shell in a container of the app image, with the project's python
+	$(COMPOSE) run --rm -e BASH_ENV= -e ENV= -e PROMPT_COMMAND='. /app/.venv/bin/activate' app bash
 
 ##@ Semantic layer
 
-profile:  ## Measure the data: row facts, formats, empty and personal columns → profile.yaml (no LLM, one query at a time)
-	$(RUN) python -m offline.cli profile --db $(DB)
+profile:  ## Measure the data → profile.yaml (no LLM, one query at a time; ARGS="--tables a,b" or "--missing": only those, merged)
+	$(RUN) python -m offline.cli profile --db $(DB) $(ARGS)
 
 semantics:  ## Generate the table descriptions and categorical columns (review tables.yaml; ARGS="--fresh" to redo them)
 	$(RUN) python -m offline.cli semantics --db $(DB) $(ARGS)

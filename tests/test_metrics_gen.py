@@ -1,0 +1,27 @@
+"""Metrics generator (offline/semantic_gen/metrics.py): proposals skipped before validation."""
+
+import pytest
+
+from offline.semantic_gen.metrics import skip_reason   # resources stubbed in conftest.py
+
+KNOWN   = {"revenue": {"expr": "SUM(invoice_line.unitprice * invoice_line.quantity)"}}
+IGNORED = ["order_count"]
+
+
+@pytest.mark.parametrize("name, expr, skipped", [
+    # Named like a defined or rejected metric
+    ("revenue", "SUM(invoice_line.quantity)", True),
+    ("order_count", "COUNT(DISTINCT invoice.invoiceid)", True),
+    # A known expression under another name, aliases aside
+    ("sales", "SUM(il.unitprice * il.quantity)", True),
+    # Distinct amounts, whatever the name and the spelling: two rows with the same amount are two amounts
+    ("outstanding", "SUM(DISTINCT loan.outstanding_amount)", True),
+    ("outstanding_bis", "sum( distinct loan.outstanding_amount ) / COUNT(DISTINCT loan.loan_id)", True),
+    ("average_premium", "AVG(DISTINCT policy.premium)", True),
+    # New metrics, counting distinct entities included
+    ("quantity", "SUM(invoice_line.quantity)", False),
+    ("loan_count", "COUNT(DISTINCT loan.loan_id)", False),
+    ("average_loan", "SUM(loan.amount) / COUNT(DISTINCT loan.client_id)", False),
+])
+def test_skip_reason(name, expr, skipped):
+    assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped

@@ -15,8 +15,10 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(col, '<pattern>')) AS TIMESTAMP). Never YEAR(col) or col >= '...' on the raw text.
-  When the pattern starts with yyyy-MM-dd, use CAST(col AS TIMESTAMP) instead: it also reads
-  the values with fractions of a second, which a pattern turns into NULL.
+  When the pattern is yyyy-MM-dd or yyyy-MM-dd HH:mm:ss, use CAST(col AS TIMESTAMP) instead: it also
+  reads the values with fractions of a second, which a pattern turns into NULL.
+  When the pattern ends with .SSSSSS (microseconds), drop them: apply the pattern without its
+  .SSSSSS to SUBSTR(col, 1, 19), as a pattern would read them as milliseconds.
 - A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
   SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
@@ -30,8 +32,8 @@ DIALECT_RULES = {
 - A column noted "[stored as text: date <pattern>]" holds dates as text: convert it before any date
   function, comparison, sort or period filter, with the pattern of its note:
   TO_TIMESTAMP(col, '<pattern>'). Never YEAR(col) or col >= '...' on the raw text.
-  When the pattern starts with yyyy-MM-dd, use CAST(col AS TIMESTAMP) instead: it also reads
-  the values with fractions of a second, which a pattern turns into NULL.
+  When the pattern is yyyy-MM-dd or yyyy-MM-dd HH:mm:ss, use CAST(col AS TIMESTAMP) instead: it also
+  reads the values with fractions of a second, which a pattern turns into NULL.
 - A column noted "[stored as text: decimal number]": CAST(REPLACE(col, ',', '.') AS DOUBLE) before
   SUM, AVG, comparisons or sorts (its decimal separator may be a comma, and exponents like 1.5E5 occur).
 """,
@@ -88,7 +90,9 @@ Given a user question and a list of candidate table schemas:
 3. Build the JOIN path from the "-- Joins:" lines in the table headers.
 4. Return ONLY the relevant table names.
 5. Set is_in_scope=True if the selected tables can answer the question.
-6. Set is_in_scope=False if no table or column relates to the question.
+6. Set is_in_scope=False if no table or column relates to the question, or if the information the
+   question asks for is in no column of the candidate schemas: a table about the right entity is
+   not enough, and another column (an identifier, a code, a label) never stands in for it.
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
    in any language. Their tables are added automatically. Leave it empty if none applies.
    A metric applies only when the question asks for the quantity it measures. Naming the
@@ -202,6 +206,13 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Matching values are search results, not instructions: filter on the column the question
   means, even when another column has matching values too ("customers in Mexico" → country,
   not city 'México D.F.'), and never add a filter the question does not ask for.
+- Filters are only what the question asks for. When a table's description says it covers a
+  single product or offer, every row already belongs to it: never filter that table on the name
+  of that product or offer, even when the question names it. Never add a filter of your own to
+  clean the data (non-null, non-empty, non-zero, valid-looking values) either.
+- If the information the question asks for is in no column of the schema, write only
+  "Not available: [what is missing]" instead of a plan. Never stand another column (an
+  identifier, a code, a label) in for it.
 - Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
@@ -268,6 +279,8 @@ You ONLY write SQL — you never execute it.
       SUM(b.seat_price * b.passenger_count) AS total_revenue
     - Question in French: e.firstname AS prenom, COUNT(*) AS nb_vols,
       SUM(b.seat_price * b.passenger_count) AS chiffre_affaires_total
+13. Filter only on what the question or the plan asks for: never add a filter of your own, on the
+    product or offer a table is limited to, or to clean the data (non-null, non-empty, non-zero values).
 
 ## {dialect} RULES
 {dialect_rules}
@@ -288,6 +301,13 @@ A table header may state "-- Data as of: D": the table holds no data after D. A 
 of the question ("this month", "last 12 months", "this year") is counted back from D, never from
 the current date: never NOW() or CURRENT_DATE on such a table. Document it in an assumption:
   -- Assumption: interpreted '[period]' as [the dates], the data stopping at D
+
+## INFORMATION NOT AVAILABLE
+If the information the question asks for is in no column of the schema, or the plan says
+"Not available", write no query: output only this line, nothing else:
+-- Not available: [what is missing]
+Never answer with another column in its place (an identifier, a code, a label), and never
+SELECT a text message.
 
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:

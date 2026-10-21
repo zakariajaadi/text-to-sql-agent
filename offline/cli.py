@@ -6,6 +6,7 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
     python -m offline.cli [command] [--db NAME]     (PYTHONPATH=src, see the Makefile)
 
     profile       → semantic_layer/<db>/profile.yaml        facts measured on the data (no LLM)
+                    (--tables a,b / --missing: only those tables, merged into the profile)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
                     (--fresh: generated again from scratch, the manual keys kept)
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
@@ -33,11 +34,16 @@ def main():
     parser.add_argument("--fresh", action="store_true",
                         help="semantics: regenerate the descriptions and categorical columns, "
                              "keeping the manual keys (formats, exclude_columns, data_as_of...)")
+    parser.add_argument("--tables", type=lambda s: [t.strip() for t in s.split(",") if t.strip()],
+                        help="profile: only these tables (comma-separated), the others kept in profile.yaml")
+    parser.add_argument("--missing", action="store_true",
+                        help="profile: only the tables not in profile.yaml yet")
     args = parser.parse_args()
 
     commands = {
         "index":        lambda name: SchemaIndexer(name).run(),
-        "profile":      lambda name: profiling.profile_database(db_registry[name], name),
+        "profile":      lambda name: profiling.profile_database(db_registry[name], name,
+                                                                tables=args.tables, missing=args.missing),
         "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh),
         "fk-relations": relationships.infer_fk_relations,
         "metrics":      metrics.generate_metrics,
