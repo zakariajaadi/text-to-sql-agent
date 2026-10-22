@@ -2,40 +2,40 @@
   "summary": {
     "total_questions": 25,
     "evaluated": 25,
-    "avg_latency_s": 5.84,
-    "avg_table_selection": 4.92,
-    "avg_column_selection": 4.6,
-    "avg_join_correctness": 5.0,
-    "avg_filter_logic": 4.92,
-    "avg_aggregation": 4.52,
+    "avg_latency_s": 6.09,
+    "avg_table_selection": 4.76,
+    "avg_column_selection": 4.4,
+    "avg_join_correctness": 4.84,
+    "avg_filter_logic": 4.72,
+    "avg_aggregation": 4.56,
     "avg_overall": 4.24,
     "avg_table_recall": 0.99,
-    "exec_exact": 0.913,
-    "execution_evaluated": 23,
+    "exec_exact": 0.955,
+    "execution_evaluated": 22,
     "score_distribution": {
-      "perfect (5)": 14,
-      "good (4)": 4,
-      "partial (3)": 6,
-      "poor (2)": 1,
-      "wrong (1)": 0
+      "perfect (5)": 13,
+      "good (4)": 7,
+      "partial (3)": 4,
+      "poor (2)": 0,
+      "wrong (1)": 1
     },
-    "avg_overall_simple": 4.38,
+    "avg_overall_simple": 4.62,
     "exec_exact_simple": 1.0,
     "avg_overall_medium": 4.33,
     "exec_exact_medium": 1.0,
-    "avg_overall_hard": 4.09,
-    "exec_exact_hard": 0.818
+    "avg_overall_hard": 3.91,
+    "exec_exact_hard": 0.9
   },
   "results": [
     {
       "question": "How many products are there?",
       "difficulty": "simple",
       "category": "count",
-      "generated_sql": "SELECT\n  COUNT(`p`.`productid`) AS `product_count`\nFROM `products` AS `p`",
+      "generated_sql": "SELECT\n  COUNT(`t`.`productid`) AS `product_count`\nFROM `products` AS `t`",
       "selected_tables": [
         "products"
       ],
-      "latency_s": 4.65,
+      "latency_s": 5.43,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -43,27 +43,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'products' table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly uses the 'products' table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly counts the 'productid' column, which is equivalent to the ground truth's COUNT(*) and COUNT(ProductID)."
+          "reasoning": "The query correctly selects the 'productid' column to count, which is a valid approach to counting the number of products."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this question, and the query correctly does not use any."
+          "reasoning": "No joins are necessary for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required for this question, and the query correctly does not use any."
+          "reasoning": "No filters are necessary for this query, and none were used."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT aggregation function to count all products, which perfectly matches the user's request."
+          "reasoning": "The query correctly uses the COUNT aggregation function to count the number of products."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the accepted ground truth queries and correctly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and will produce the correct result."
         }
       }
     },
@@ -71,11 +71,11 @@
       "question": "How many customers are there?",
       "difficulty": "simple",
       "category": "count",
-      "generated_sql": "SELECT\n  COUNT(`c`.`customerid`) AS `customer_count`\nFROM `customers` AS `c`",
+      "generated_sql": "SELECT\n  COUNT(`t`.`customerid`) AS `number_of_customers`\nFROM `customers` AS `t`",
       "selected_tables": [
         "customers"
       ],
-      "latency_s": 3.95,
+      "latency_s": 5.07,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -87,23 +87,23 @@
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the `customerid` column to count, which is equivalent to the ground truth queries using `COUNT(*)` or `COUNT(CustomerID)`."
+          "reasoning": "The query correctly selects the `customerid` column for counting, which is equivalent to `COUNT(*)` or the ground truth's `COUNT(CustomerID)`."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are necessary to answer this question, and the query correctly avoids using any."
+          "reasoning": "No joins are required for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to count all customers, and the query correctly omits a WHERE clause."
+          "reasoning": "No filters are required to count all customers, and the query correctly omits a WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the `COUNT` aggregation function to count the number of customers, which directly answers the user's question."
+          "reasoning": "The query correctly uses the `COUNT` aggregation function to count the number of customers."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and perfectly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and correctly answers the user's question."
         }
       }
     },
@@ -111,11 +111,11 @@
       "question": "Which products are discontinued?",
       "difficulty": "simple",
       "category": "filtering",
-      "generated_sql": "SELECT\n  `p`.`productid`,\n  `p`.`productname`,\n  `p`.`supplierid`,\n  `p`.`categoryid`,\n  `p`.`quantityperunit`,\n  `p`.`unitprice`,\n  `p`.`unitsinstock`,\n  `p`.`unitsonorder`,\n  `p`.`reorderlevel`,\n  `p`.`discontinued`\nFROM `products` AS `p`\nWHERE\n  `p`.`discontinued` = '1'",
+      "generated_sql": "SELECT\n  `p`.`productname` AS `product_name`\nFROM `products` AS `p`\nWHERE\n  `p`.`discontinued` = '1'",
       "selected_tables": [
         "products"
       ],
-      "latency_s": 5.13,
+      "latency_s": 4.97,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -123,27 +123,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects from the 'products' table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly uses the 'products' table, which is the only one required to answer the question."
         },
         "column_selection": {
-          "score": 3,
-          "reasoning": "The query selects all columns from the table, which is unnecessary; only the product name or ID was required to answer the question."
+          "score": 5,
+          "reasoning": "The query correctly selects the 'productname' column, which directly answers the user's question."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this question, and the query correctly does not use any."
+          "reasoning": "No joins are necessary for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The WHERE clause correctly filters for products where the 'discontinued' flag is set to '1'."
+          "reasoning": "The WHERE clause correctly filters for products where the 'discontinued' column is '1'."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "No aggregation is needed to answer the question, and the query correctly omits any aggregation functions."
+          "reasoning": "No aggregation is needed to answer this question, and the query correctly omits any aggregation functions."
         },
         "overall": {
-          "score": 3,
-          "reasoning": "The query correctly identifies the discontinued products, but it returns many unnecessary columns instead of just the product name as requested."
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
         }
       }
     },
@@ -151,11 +151,11 @@
       "question": "What is the most expensive product?",
       "difficulty": "simple",
       "category": "aggregation",
-      "generated_sql": "SELECT\n  `productname`,\n  `unitprice`\nFROM `products`\nWHERE\n  `discontinued` = '0'\nORDER BY\n  `unitprice` DESC\nLIMIT 1",
+      "generated_sql": "SELECT\n  `p`.`productname` AS `product_name`,\n  `p`.`unitprice` AS `unit_price`\nFROM `products` AS `p`\nORDER BY\n  `p`.`unitprice` DESC\nLIMIT 1",
       "selected_tables": [
         "products"
       ],
-      "latency_s": 4.51,
+      "latency_s": 5.32,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -163,27 +163,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the 'products' table, which is the only one needed."
+          "reasoning": "The query correctly selects from the 'products' table, which is the only table needed."
         },
         "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the product name and unit price, which directly answer the user's question."
+          "score": 4,
+          "reasoning": "The query selects the correct columns but uses aliases which are a minor cosmetic difference from the ground truth."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are necessary for this query, and none were used."
+          "reasoning": "No joins are required for this query, and none were used."
         },
         "filter_logic": {
-          "score": 4,
-          "reasoning": "The query adds a filter to exclude discontinued products, which is a reasonable assumption but not explicitly requested by the user or present in the ground truth."
+          "score": 5,
+          "reasoning": "No filters are required for this query, and none were used."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The use of ORDER BY unitprice DESC and LIMIT 1 is a perfect way to find the single most expensive product."
+          "reasoning": "The query correctly uses ORDER BY with DESC and LIMIT 1 to find the single most expensive product."
         },
         "overall": {
           "score": 4,
-          "reasoning": "The query is almost perfect but makes an assumption by filtering out discontinued products, which, while logical, deviates slightly from the ground truth and the literal question."
+          "reasoning": "The generated query is functionally identical to the ground truth and returns the correct result, with only minor cosmetic differences such as column aliases."
         }
       }
     },
@@ -191,11 +191,11 @@
       "question": "Which suppliers are from Germany?",
       "difficulty": "simple",
       "category": "filtering",
-      "generated_sql": "SELECT\n  `s`.`supplierid`,\n  `s`.`companyname`,\n  `s`.`contactname`,\n  `s`.`contacttitle`,\n  `s`.`address`,\n  `s`.`city`,\n  `s`.`region`,\n  `s`.`postalcode`,\n  `s`.`country`,\n  `s`.`phone`,\n  `s`.`fax`,\n  `s`.`homepage`\nFROM `suppliers` AS `s`\nWHERE\n  `s`.`country` = 'Germany'",
+      "generated_sql": "SELECT\n  `s`.`supplierid`,\n  `s`.`companyname`,\n  `s`.`contactname`,\n  `s`.`city`,\n  `s`.`country`\nFROM `suppliers` AS `s`\nWHERE\n  `s`.`country` = 'Germany'",
       "selected_tables": [
         "suppliers"
       ],
-      "latency_s": 4.12,
+      "latency_s": 5.14,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -203,15 +203,15 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'suppliers' table, which is the only one needed to answer the question."
+          "reasoning": "The query correctly uses the 'suppliers' table, which is the only table needed."
         },
         "column_selection": {
           "score": 3,
-          "reasoning": "The query selects all columns from the table, which is more information than requested; the question only asks for the supplier names."
+          "reasoning": "The query includes the required 'companyname' but also selects several extra, unrequested columns."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are necessary for this query, and none were used."
+          "reasoning": "No joins are necessary for this question, and the query correctly uses none."
         },
         "filter_logic": {
           "score": 5,
@@ -223,7 +223,7 @@
         },
         "overall": {
           "score": 3,
-          "reasoning": "The query correctly filters for German suppliers but returns all available information about them instead of just their names, making the output unnecessarily verbose."
+          "reasoning": "The query correctly filters for suppliers from Germany but selects several extra columns not requested by the user, making the result less direct."
         }
       }
     },
@@ -231,11 +231,11 @@
       "question": "How many orders were placed in 1997?",
       "difficulty": "simple",
       "category": "date_filter",
-      "generated_sql": "SELECT\n  COUNT(`o`.`orderid`) AS `order_count`\nFROM `orders` AS `o`\nWHERE\n  `o`.`orderdate` >= '1997-01-01 00:00:00'\n  AND `o`.`orderdate` <= '1997-12-31 23:59:59'",
+      "generated_sql": "SELECT\n  COUNT(DISTINCT `o`.`orderid`) AS `order_count`\nFROM `orders` AS `o`\nWHERE\n  `o`.`orderdate` >= '1997-01-01 00:00:00'\n  AND `o`.`orderdate` <= '1997-12-31 23:59:59'",
       "selected_tables": [
         "orders"
       ],
-      "latency_s": 5.03,
+      "latency_s": 5.0,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -243,11 +243,11 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the `orders` table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly uses the `orders` table, which contains the necessary information to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the count of orders, which directly answers the user's question."
+          "reasoning": "The query correctly uses `COUNT(DISTINCT o.orderid)`, which is a valid way to count the number of orders."
         },
         "join_correctness": {
           "score": 5,
@@ -255,15 +255,15 @@
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The WHERE clause correctly and robustly filters for all orders placed within the year 1997."
+          "reasoning": "The WHERE clause correctly filters for orders placed within the year 1997, which is equivalent to the logic in the ground-truth queries."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses the COUNT aggregation function to count the number of orders."
+          "reasoning": "The query correctly uses the COUNT aggregation function to count the number of orders, which directly answers the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is a perfect and robust alternative to the accepted queries, correctly answering the user's question."
+          "reasoning": "The generated query is a perfectly valid and correct alternative to the ground-truth queries and will produce the correct result."
         }
       }
     },
@@ -271,12 +271,12 @@
       "question": "How many products does each category have?",
       "difficulty": "medium",
       "category": "join_aggregation",
-      "generated_sql": "SELECT\n  `c`.`categoryname`,\n  COUNT(`p`.`productid`) AS `product_count`\nFROM `products` AS `p`\nJOIN `categories` AS `c`\n  ON `p`.`categoryid` = `c`.`categoryid`\nGROUP BY\n  `c`.`categoryname`",
+      "generated_sql": "SELECT\n  `c`.`categoryname` AS `category_name`,\n  COUNT(`p`.`productid`) AS `number_of_products`\nFROM `products` AS `p`\nJOIN `categories` AS `c`\n  ON `p`.`categoryid` = `c`.`categoryid`\nGROUP BY\n  `c`.`categoryname`",
       "selected_tables": [
         "categories",
         "products"
       ],
-      "latency_s": 4.22,
+      "latency_s": 4.49,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -288,23 +288,23 @@
         },
         "column_selection": {
           "score": 4,
-          "reasoning": "The query selects the correct columns, but the alias for the count column ('product_count') differs slightly from the ground truth ('ProductCount')."
+          "reasoning": "The query selects the correct columns, but the aliases for the selected columns are different from the ground truth."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between the 'products' and 'categories' tables is correctly performed on the 'categoryid' column."
+          "reasoning": "The join between the 'products' and 'categories' tables is correctly implemented using the 'categoryid' column."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to answer this question, and the query correctly omits any WHERE or HAVING clauses."
+          "reasoning": "No filtering is required for this question, and the query correctly omits any WHERE or HAVING clauses."
         },
         "aggregation": {
           "score": 3,
-          "reasoning": "The query correctly groups by category name and counts the products, but it is missing the 'ORDER BY' clause that is present in the ground truth queries, making the result set less organized."
+          "reasoning": "The query correctly groups by category name and counts the products, but it is missing the ORDER BY clause present in the ground truth queries, which makes the output less useful."
         },
         "overall": {
           "score": 3,
-          "reasoning": "The query produces the correct data but is suboptimal because it lacks the 'ORDER BY' clause, which would make the results more user-friendly and align with the ground truth."
+          "reasoning": "The query is functionally correct and provides the right numbers, but it is suboptimal because it lacks an ORDER BY clause to rank the results, which is a standard practice for this type of question."
         }
       }
     },
@@ -312,12 +312,12 @@
       "question": "Which customers have placed the most orders?",
       "difficulty": "medium",
       "category": "join_aggregation",
-      "generated_sql": "SELECT\n  `c`.`customerid`,\n  `c`.`companyname`,\n  COUNT(`o`.`orderid`) AS `order_count`\nFROM `customers` AS `c`\nJOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nGROUP BY\n  `c`.`customerid`,\n  `c`.`companyname`\nORDER BY\n  `order_count` DESC",
+      "generated_sql": "SELECT\n  `c`.`companyname` AS `customer_name`,\n  COUNT(DISTINCT `o`.`orderid`) AS `order_count`\nFROM `customers` AS `c`\nJOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nGROUP BY\n  `c`.`customerid`,\n  `c`.`companyname`\nORDER BY\n  `order_count` DESC",
       "selected_tables": [
-        "customers",
-        "orders"
+        "orders",
+        "customers"
       ],
-      "latency_s": 5.96,
+      "latency_s": 5.59,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -325,27 +325,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the `customers` and `orders` tables, which are the exact tables needed to answer the question."
+          "reasoning": "The query correctly selects the `customers` and `orders` tables, which are the same as the ground truth."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the customer's company name and the count of their orders, which directly answers the user's question."
+          "reasoning": "The query correctly selects the customer's company name and a count of their orders, which matches the intent of the question and the ground truth."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The query correctly joins the `customers` and `orders` tables on the `customerid` column."
+          "reasoning": "The join between `customers` and `orders` on `customerid` is correct."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filtering is required for this question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by customer and orders the results by the count of orders in descending order. The absence of a LIMIT is acceptable as the question asks for a ranking without specifying a number."
+          "reasoning": "The query correctly groups by customer and orders the results by the count of orders in descending order. The absence of a LIMIT is a valid interpretation of the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is a perfect and valid way to answer the question, providing a correctly ranked list of all customers by their order count."
+          "reasoning": "The generated query is functionally equivalent to the ground truth, providing a correctly ranked list of customers by their order count."
         }
       }
     },
@@ -355,10 +355,10 @@
       "category": "join_aggregation",
       "generated_sql": "SELECT\n  `p`.`productname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `order_details` AS `od`\nJOIN `products` AS `p`\n  ON `od`.`productid` = `p`.`productid`\nGROUP BY\n  `p`.`productname`",
       "selected_tables": [
-        "products",
-        "order_details"
+        "order_details",
+        "products"
       ],
-      "latency_s": 6.49,
+      "latency_s": 6.7,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -369,24 +369,24 @@
           "reasoning": "The query correctly selects the `products` and `order_details` tables, which are the same as the ground truth."
         },
         "column_selection": {
-          "score": 4,
-          "reasoning": "The query correctly selects the product name and calculates the revenue, but uses a different alias (`total_revenue` vs `Revenue`) than the ground truth."
+          "score": 5,
+          "reasoning": "The query correctly selects the product name and calculates the revenue using the same formula as the ground truth."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between `products` and `order_details` is correctly performed on `productid`."
+          "reasoning": "The join between `order_details` and `products` is correctly performed on `productid`."
         },
         "filter_logic": {
           "score": 5,
           "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
-          "score": 3,
-          "reasoning": "The query correctly groups by product name but is missing the `ORDER BY` clause present in the ground truth, which makes the result set less useful."
+          "score": 4,
+          "reasoning": "The query correctly groups by product name and calculates the sum, but it is missing the ORDER BY clause present in the ground truth queries."
         },
         "overall": {
-          "score": 3,
-          "reasoning": "The query correctly calculates the revenue per product but fails to order the results, which is a key part of presenting this type of data and is included in both ground-truth queries."
+          "score": 4,
+          "reasoning": "The query is functionally correct and would return the right data, but it is missing the ORDER BY clause which makes the result set less useful for ranking purposes."
         }
       }
     },
@@ -394,12 +394,12 @@
       "question": "Which employees have handled the most orders?",
       "difficulty": "medium",
       "category": "join_aggregation",
-      "generated_sql": "SELECT\n  `e`.`firstname`,\n  `e`.`lastname`,\n  COUNT(`o`.`orderid`) AS `total_orders_handled`\nFROM `employees` AS `e`\nJOIN `orders` AS `o`\n  ON `e`.`employeeid` = `o`.`employeeid`\nGROUP BY\n  `e`.`employeeid`,\n  `e`.`firstname`,\n  `e`.`lastname`\nORDER BY\n  `total_orders_handled` DESC",
+      "generated_sql": "SELECT\n  `e`.`firstname` AS `first_name`,\n  `e`.`lastname` AS `last_name`,\n  COUNT(DISTINCT `o`.`orderid`) AS `order_count`\nFROM `employees` AS `e`\nJOIN `orders` AS `o`\n  ON `e`.`employeeid` = `o`.`employeeid`\nGROUP BY\n  `e`.`employeeid`,\n  `e`.`firstname`,\n  `e`.`lastname`\nORDER BY\n  `order_count` DESC",
       "selected_tables": [
         "employees",
         "orders"
       ],
-      "latency_s": 6.89,
+      "latency_s": 6.09,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -407,27 +407,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the `employees` and `orders` tables, which are the same as the ground truth."
+          "reasoning": "The query correctly selects the `employees` and `orders` tables, which are the exact tables needed to answer the question."
         },
         "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the employee's first and last name and counts the orders, which is exactly what the question asks for."
+          "score": 4,
+          "reasoning": "The query selects the correct columns, but uses `COUNT(DISTINCT o.orderid)` which is functionally equivalent to `COUNT(o.orderid)` but slightly less optimal as orderid is a primary key."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between `employees` and `orders` on `employeeid` is correct."
+          "reasoning": "The join between `employees` and `orders` on the `employeeid` column is correct."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filtering is required for this question, and the query correctly omits a WHERE clause."
         },
         "aggregation": {
-          "score": 5,
-          "reasoning": "The query correctly groups by employee and orders the results by the count of orders in descending order. The absence of a LIMIT is acceptable as the question asks for a ranking without specifying a number."
+          "score": 4,
+          "reasoning": "The grouping and ordering are correct, but the ground truth query includes a LIMIT clause which is a reasonable interpretation of 'most', although not strictly required by the prompt."
         },
         "overall": {
-          "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question by providing a ranked list of employees by the number of orders they handled."
+          "score": 4,
+          "reasoning": "The query is functionally correct and would return the right data, but it differs from the ground truth by not including a LIMIT and using a slightly suboptimal COUNT(DISTINCT), which are minor issues."
         }
       }
     },
@@ -435,11 +435,11 @@
       "question": "What are the top 5 countries by number of customers?",
       "difficulty": "medium",
       "category": "aggregation",
-      "generated_sql": "SELECT\n  `c`.`country`,\n  COUNT(`c`.`customerid`) AS `customer_count`\nFROM `customers` AS `c`\nGROUP BY\n  `c`.`country`\nORDER BY\n  `customer_count` DESC\nLIMIT 5",
+      "generated_sql": "SELECT\n  `c`.`country`,\n  COUNT(DISTINCT `c`.`customerid`) AS `number_of_customers`\nFROM `customers` AS `c`\nGROUP BY\n  `c`.`country`\nORDER BY\n  `number_of_customers` DESC\nLIMIT 5",
       "selected_tables": [
         "customers"
       ],
-      "latency_s": 5.68,
+      "latency_s": 5.3,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -447,27 +447,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'customers' table, which is the only table needed to answer the question."
+          "reasoning": "The query correctly uses the 'customers' table, which is the only table needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the 'country' and a count of 'customerid', which perfectly matches the user's request."
+          "reasoning": "The query correctly selects the 'country' and a count of 'customerid', which are the necessary columns."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this query, and none were used, which is correct."
+          "reasoning": "No joins are required for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to answer this question, and the query correctly omits any WHERE or HAVING clauses."
+          "reasoning": "No filters are required for this query, and none were used."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by country, orders the results by the customer count in descending order, and applies a LIMIT of 5, exactly as requested."
+          "reasoning": "The query correctly groups by country, orders by the count of customers in descending order, and limits the result to the top 5, perfectly matching the user's request."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and perfectly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct result."
         }
       }
     },
@@ -475,12 +475,12 @@
       "question": "Which shippers have delivered the most orders?",
       "difficulty": "medium",
       "category": "join_aggregation",
-      "generated_sql": "SELECT\n  `s`.`companyname`,\n  COUNT(`o`.`orderid`) AS `delivered_orders_count`\nFROM `shippers` AS `s`\nJOIN `orders` AS `o`\n  ON `s`.`shipperid` = `o`.`shipvia`\nGROUP BY\n  `s`.`shipperid`,\n  `s`.`companyname`\nORDER BY\n  `delivered_orders_count` DESC",
+      "generated_sql": "SELECT\n  `s`.`companyname` AS `shipper_name`,\n  COUNT(DISTINCT `o`.`orderid`) AS `order_count`\nFROM `shippers` AS `s`\nJOIN `orders` AS `o`\n  ON `s`.`shipperid` = `o`.`shipvia`\nGROUP BY\n  `s`.`shipperid`,\n  `s`.`companyname`\nORDER BY\n  `order_count` DESC",
       "selected_tables": [
         "shippers",
         "orders"
       ],
-      "latency_s": 4.73,
+      "latency_s": 6.01,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -488,27 +488,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the `shippers` and `orders` tables, which are the same as the ground truth."
+          "reasoning": "The query correctly selects the 'shippers' and 'orders' tables, which are the exact tables needed to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the shipper's company name and a count of order IDs, which matches the intent of the question and the ground truth."
+          "reasoning": "The query correctly selects the shipper's company name and a count of orders, which directly answers the user's question."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between `shippers` and `orders` is correctly performed on the `shipperid` and `shipvia` columns."
+          "reasoning": "The join between the 'shippers' and 'orders' tables on the correct keys ('shipperid' and 'shipvia') is perfectly executed."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE or HAVING clauses."
+          "reasoning": "No filtering is required for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by shipper and orders the results by the count of orders in descending order, which perfectly matches the ground truth."
+          "reasoning": "The query correctly groups by shipper and counts the orders, then orders the results in descending order to find the shippers with the most orders."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth query and correctly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth and will produce the correct answer. The use of COUNT(DISTINCT) is unnecessary as orderid is unique, but it does not alter the result."
         }
       }
     },
@@ -516,13 +516,13 @@
       "question": "What is the total revenue per category?",
       "difficulty": "hard",
       "category": "multi_join_aggregation",
-      "generated_sql": "SELECT\n  `c`.`categoryname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `categories` AS `c`\nJOIN `products` AS `p`\n  ON `c`.`categoryid` = `p`.`categoryid`\nJOIN `order_details` AS `od`\n  ON `p`.`productid` = `od`.`productid`\nGROUP BY\n  `c`.`categoryid`,\n  `c`.`categoryname`",
+      "generated_sql": "SELECT\n  `c`.`categoryname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `categories` AS `c`\nJOIN `products` AS `p`\n  ON `c`.`categoryid` = `p`.`categoryid`\nJOIN `order_details` AS `od`\n  ON `p`.`productid` = `od`.`productid`\nGROUP BY\n  `c`.`categoryname`",
       "selected_tables": [
         "categories",
         "products",
         "order_details"
       ],
-      "latency_s": 6.55,
+      "latency_s": 6.86,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -530,27 +530,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the necessary tables: categories, products, and order_details."
+          "reasoning": "The query correctly selects the `categories`, `products`, and `order_details` tables, which are all necessary to link categories to their sales data."
         },
         "column_selection": {
-          "score": 4,
-          "reasoning": "The query selects the correct columns and performs the correct revenue calculation, but uses a different alias ('total_revenue' vs 'Revenue') than the ground truth."
+          "score": 5,
+          "reasoning": "The query correctly selects the category name and calculates the total revenue using the formula `unitprice * quantity * (1 - discount)`."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are performed correctly using the appropriate keys to link categories to products and products to order details."
+          "reasoning": "All joins are correct, properly linking `categories` to `products` on `categoryid` and `products` to `order_details` on `productid`."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
-          "score": 3,
-          "reasoning": "The query correctly groups by category but is missing the ORDER BY clause to sort the results by revenue, which is present in the ground truth queries."
+          "score": 4,
+          "reasoning": "The query correctly groups by category name and uses the SUM function, but it omits the ORDER BY clause which is present in the ground truth to sort the results."
         },
         "overall": {
-          "score": 3,
-          "reasoning": "The query is mostly correct and calculates the right values, but it fails to order the results by revenue, making the output less useful for comparison between categories."
+          "score": 4,
+          "reasoning": "The query is functionally correct and produces the right revenue numbers for each category, but it lacks the ORDER BY clause which would make the results more user-friendly."
         }
       }
     },
@@ -558,12 +558,12 @@
       "question": "What is the average order value by country?",
       "difficulty": "hard",
       "category": "nested_aggregation",
-      "generated_sql": "WITH `order_total_values` AS (\n  SELECT\n    `o`.`orderid`,\n    `o`.`shipcountry`,\n    SUM(`od`.`unitprice` * `od`.`quantity` * (\n      1 - `od`.`discount`\n    )) AS `total_order_value`\n  FROM `orders` AS `o`\n  JOIN `order_details` AS `od`\n    ON `o`.`orderid` = `od`.`orderid`\n  GROUP BY\n    `o`.`orderid`,\n    `o`.`shipcountry`\n)\nSELECT\n  `otv`.`shipcountry`,\n  AVG(`otv`.`total_order_value`) AS `average_order_value`\nFROM `order_total_values` AS `otv`\nGROUP BY\n  `otv`.`shipcountry`",
+      "generated_sql": "SELECT\n  `order_totals`.`country`,\n  AVG(`order_totals`.`order_value`) AS `average_order_value`\nFROM (\n  SELECT\n    `o`.`shipcountry` AS `country`,\n    SUM(`od`.`unitprice` * `od`.`quantity` * (\n      1 - `od`.`discount`\n    )) AS `order_value`\n  FROM `orders` AS `o`\n  JOIN `order_details` AS `od`\n    ON `o`.`orderid` = `od`.`orderid`\n  GROUP BY\n    `o`.`orderid`,\n    `o`.`shipcountry`\n) AS `order_totals`\nGROUP BY\n  `order_totals`.`country`",
       "selected_tables": [
         "orders",
         "order_details"
       ],
-      "latency_s": 8.69,
+      "latency_s": 10.3,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -575,7 +575,7 @@
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the country and calculates the order value using unit price, quantity, and discount, which perfectly matches the ground truth."
+          "reasoning": "The query correctly selects the country and calculates the order value using unit price, quantity, and discount, which is exactly what is required."
         },
         "join_correctness": {
           "score": 5,
@@ -583,15 +583,15 @@
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 4,
-          "reasoning": "The aggregation logic is correct, but the query is missing the ORDER BY clause present in the ground truth, which is a minor formatting difference."
+          "reasoning": "The aggregation logic is correct, but the query is missing the ORDER BY clause present in the ground truth query, which is a minor difference."
         },
         "overall": {
           "score": 4,
-          "reasoning": "The query is functionally identical to the ground truth and produces the correct results, with the only minor difference being the lack of an ORDER BY clause."
+          "reasoning": "The query is functionally correct and produces the right answer, but it lacks the final ordering clause that is present in the accepted query, making it a minor cosmetic difference."
         }
       }
     },
@@ -599,12 +599,12 @@
       "question": "What is the average order value per customer?",
       "difficulty": "hard",
       "category": "nested_aggregation",
-      "generated_sql": "SELECT\n  `o`.`customerid`,\n  AVG(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `average_order_value`\nFROM `orders` AS `o`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nGROUP BY\n  `o`.`customerid`",
+      "generated_sql": "WITH `order_totals` AS (\n  SELECT\n    `o`.`customerid`,\n    `o`.`orderid`,\n    SUM(`od`.`unitprice` * `od`.`quantity` * (\n      1 - `od`.`discount`\n    )) AS `order_value`\n  FROM `orders` AS `o`\n  JOIN `order_details` AS `od`\n    ON `o`.`orderid` = `od`.`orderid`\n  GROUP BY\n    `o`.`customerid`,\n    `o`.`orderid`\n)\nSELECT\n  `ot`.`customerid`,\n  AVG(`ot`.`order_value`) AS `average_order_value`\nFROM `order_totals` AS `ot`\nGROUP BY\n  `ot`.`customerid`",
       "selected_tables": [
         "orders",
         "order_details"
       ],
-      "latency_s": 6.6,
+      "latency_s": 8.57,
       "table_recall": 0.667,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -612,27 +612,27 @@
       "judge": {
         "table_selection": {
           "score": 3,
-          "reasoning": "The query is missing the `customers` table, which is needed to display the customer's name as shown in the ground truth query."
+          "reasoning": "The query is missing the 'customers' table, which is needed to display the customer's company name as shown in the ground truth query."
         },
         "column_selection": {
-          "score": 4,
-          "reasoning": "The query correctly calculates the value of each order line item but omits the customer's company name from the final output."
+          "score": 3,
+          "reasoning": "The query correctly calculates the average order value but selects 'customerid' instead of the more user-friendly 'CompanyName'."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between the `orders` and `order_details` tables is correct."
+          "reasoning": "The joins between 'orders' and 'order_details' are correct."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required for this question, and the query correctly omits a WHERE clause."
+          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
-          "score": 2,
-          "reasoning": "The aggregation logic is incorrect; it calculates the average value of each line item per customer, not the average value of each complete order per customer as the question asks."
+          "score": 4,
+          "reasoning": "The aggregation logic is correct, but it lacks the ORDER BY clause present in the ground truth query."
         },
         "overall": {
-          "score": 2,
-          "reasoning": "The query fails to answer the question correctly because its aggregation logic is flawed. It calculates the average line item value instead of the average order value, which requires summing line items per order before averaging those totals per customer."
+          "score": 3,
+          "reasoning": "The query correctly calculates the average order value per customer but fails to join the 'customers' table to display the company name, making the output less informative than the ground truth."
         }
       }
     },
@@ -640,11 +640,11 @@
       "question": "What is the average number of items per order?",
       "difficulty": "hard",
       "category": "nested_aggregation",
-      "generated_sql": "SELECT\n  AVG(`order_total_quantity`) AS `average_items_per_order`\nFROM (\n  SELECT\n    `od`.`orderid`,\n    SUM(`od`.`quantity`) AS `order_total_quantity`\n  FROM `order_details` AS `od`\n  GROUP BY\n    `od`.`orderid`\n) AS `subquery`",
+      "generated_sql": "SELECT\n  AVG(`total_items_per_order`) AS `average_items_per_order`\nFROM (\n  SELECT\n    `od`.`orderid`,\n    SUM(`od`.`quantity`) AS `total_items_per_order`\n  FROM `order_details` AS `od`\n  GROUP BY\n    `od`.`orderid`\n) AS `subquery`",
       "selected_tables": [
         "order_details"
       ],
-      "latency_s": 5.7,
+      "latency_s": 6.23,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -652,27 +652,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the order_details table, which is the only one needed to answer the question."
+          "reasoning": "The query correctly uses the `order_details` table, which is the only one required."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the quantity and orderid columns for the calculation."
+          "reasoning": "The query correctly selects the `quantity` for summation and the `orderid` for grouping, which is all that is needed."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "No joins are required for this question, and the query correctly uses a single table."
+          "reasoning": "No joins are necessary for this query, and none were used."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are required for this question, and the query correctly omits any WHERE or HAVING clauses."
+          "reasoning": "No filters are required to answer the question, and the query correctly omits any WHERE clause."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly uses a SUM grouped by order and then an AVG of that sum, which perfectly matches the question's intent."
+          "reasoning": "The query correctly uses a nested aggregation (SUM within an AVG) via a subquery, which perfectly matches the logic of the ground truth."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the accepted ground-truth queries and will produce the correct result."
+          "reasoning": "The generated query is logically identical to the accepted queries and will produce the correct result."
         }
       }
     },
@@ -680,13 +680,13 @@
       "question": "Which supplier has generated the most revenue?",
       "difficulty": "hard",
       "category": "multi_join_aggregation",
-      "generated_sql": "SELECT\n  `s`.`companyname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `order_details` AS `od`\nJOIN `products` AS `p`\n  ON `od`.`productid` = `p`.`productid`\nJOIN `suppliers` AS `s`\n  ON `p`.`supplierid` = `s`.`supplierid`\nGROUP BY\n  `s`.`supplierid`,\n  `s`.`companyname`\nORDER BY\n  `total_revenue` DESC\nLIMIT 1",
+      "generated_sql": "SELECT\n  `s`.`companyname` AS `supplier_name`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `order_details` AS `od`\nJOIN `products` AS `p`\n  ON `od`.`productid` = `p`.`productid`\nJOIN `suppliers` AS `s`\n  ON `p`.`supplierid` = `s`.`supplierid`\nGROUP BY\n  `s`.`supplierid`,\n  `s`.`companyname`\nORDER BY\n  `total_revenue` DESC\nLIMIT 1",
       "selected_tables": [
         "suppliers",
         "products",
         "order_details"
       ],
-      "latency_s": 7.41,
+      "latency_s": 9.16,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -694,15 +694,15 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the same tables as the ground truth: order_details, products, and suppliers."
+          "reasoning": "The query correctly selects the `order_details`, `products`, and `suppliers` tables, which are all necessary to answer the question."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the supplier's company name and calculates the total revenue using the same formula as the ground truth."
+          "reasoning": "The query correctly selects the supplier's company name and calculates the total revenue using the correct formula."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are correct, using the appropriate keys to link order details to products and products to suppliers."
+          "reasoning": "All joins are correct, linking `order_details` to `products` on `productid` and `products` to `suppliers` on `supplierid`."
         },
         "filter_logic": {
           "score": 5,
@@ -710,11 +710,11 @@
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by supplier, orders the results by revenue in descending order, and limits the output to the top result, matching the ground truth perfectly."
+          "reasoning": "The query correctly groups by supplier, orders the results by total revenue in descending order, and limits the result to the top one, perfectly matching the user's request."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth query and will produce the correct result."
+          "reasoning": "The generated query is functionally identical to the ground truth query and will produce the correct answer."
         }
       }
     },
@@ -722,12 +722,12 @@
       "question": "Which customers have never placed an order?",
       "difficulty": "hard",
       "category": "anti_join",
-      "generated_sql": "SELECT\n  `c`.`customerid`,\n  `c`.`companyname`,\n  `c`.`contactname`\nFROM `customers` AS `c`\nLEFT JOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nWHERE\n  `o`.`orderid` IS NULL",
+      "generated_sql": "SELECT\n  `c`.`customerid` AS `customer_id`,\n  `c`.`companyname` AS `company_name`,\n  `c`.`contactname` AS `contact_name`\nFROM `customers` AS `c`\nLEFT JOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nWHERE\n  `o`.`orderid` IS NULL",
       "selected_tables": [
         "customers",
         "orders"
       ],
-      "latency_s": 4.76,
+      "latency_s": 6.92,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -735,19 +735,19 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the 'customers' and 'orders' tables, which is the same as the ground truth."
+          "reasoning": "The query uses the exact same tables as the ground truth queries."
         },
         "column_selection": {
           "score": 4,
-          "reasoning": "The query selects the company name as requested, but also includes customer ID and contact name, which are extra but still relevant columns."
+          "reasoning": "The query selects two extra columns (customerid, contactname) that are not in the ground truth, but these columns are relevant for identifying the customer and do not change the correctness of the result."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The LEFT JOIN from customers to orders on the customerid is perfectly correct."
+          "reasoning": "The LEFT JOIN from customers to orders on the correct key (customerid) is perfect."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The WHERE clause correctly filters for rows where the orderid is NULL, which identifies customers without orders after the LEFT JOIN."
+          "reasoning": "The WHERE clause correctly filters for customers where the corresponding order ID is NULL, which is the correct logic for a LEFT JOIN approach."
         },
         "aggregation": {
           "score": 5,
@@ -755,7 +755,7 @@
         },
         "overall": {
           "score": 4,
-          "reasoning": "The query is functionally correct and returns the right customers, with the only minor issue being the selection of two extra columns."
+          "reasoning": "The query is logically identical to one of the ground truth queries and produces the correct set of customers; the only difference is the inclusion of extra, but relevant, columns in the SELECT statement."
         }
       }
     },
@@ -763,13 +763,13 @@
       "question": "What are the top 3 employees by total revenue generated?",
       "difficulty": "hard",
       "category": "multi_join_aggregation",
-      "generated_sql": "SELECT\n  `e`.`firstname`,\n  `e`.`lastname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue_generated`\nFROM `employees` AS `e`\nJOIN `orders` AS `o`\n  ON `e`.`employeeid` = `o`.`employeeid`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nGROUP BY\n  `e`.`employeeid`,\n  `e`.`firstname`,\n  `e`.`lastname`\nORDER BY\n  `total_revenue_generated` DESC\nLIMIT 3",
+      "generated_sql": "SELECT\n  `e`.`firstname` AS `first_name`,\n  `e`.`lastname` AS `last_name`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `employees` AS `e`\nJOIN `orders` AS `o`\n  ON `e`.`employeeid` = `o`.`employeeid`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nGROUP BY\n  `e`.`employeeid`,\n  `e`.`firstname`,\n  `e`.`lastname`\nORDER BY\n  `total_revenue` DESC\nLIMIT 3",
       "selected_tables": [
         "employees",
         "orders",
         "order_details"
       ],
-      "latency_s": 7.57,
+      "latency_s": 7.6,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -777,27 +777,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the `employees`, `orders`, and `order_details` tables, which are all necessary to link employees to their sales revenue."
+          "reasoning": "The generated query correctly selected the same tables as the ground truth query."
         },
         "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the employee's first and last names and accurately calculates the total revenue from the order details."
+          "score": 4,
+          "reasoning": "The selected columns are correct, but the aliases differ slightly from the ground truth query."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are correct, properly linking employees to orders and orders to their corresponding details using the correct primary and foreign keys."
+          "reasoning": "All joins are correct and use the appropriate keys."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed for this question, and the query correctly omits any WHERE or HAVING clauses."
+          "reasoning": "No filters were needed, and none were included, which is correct."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by employee, orders the results by total revenue in descending order, and limits the output to the top 3 as requested."
+          "reasoning": "The aggregation, grouping, ordering, and limit are all perfectly implemented."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and perfectly answers the user's question."
+          "reasoning": "The generated query is functionally identical to the ground truth and would produce the correct result."
         }
       }
     },
@@ -805,12 +805,12 @@
       "question": "What is the monthly revenue trend for 1997?",
       "difficulty": "hard",
       "category": "date_aggregation",
-      "generated_sql": "SELECT\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM') AS `sales_month`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `orders` AS `o`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nWHERE\n  YEAR(`o`.`orderdate`) = 1997\nGROUP BY\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM')\nORDER BY\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM') NULLS LAST",
+      "generated_sql": "SELECT\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM') AS `month`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `revenue`\nFROM `orders` AS `o`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nWHERE\n  LOWER(CAST(`o`.`orderdate` AS STRING)) LIKE LOWER('%1997%')\nGROUP BY\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM')\nORDER BY\n  DATE_FORMAT(`o`.`orderdate`, 'yyyy-MM') NULLS LAST",
       "selected_tables": [
         "orders",
         "order_details"
       ],
-      "latency_s": 10.59,
+      "latency_s": 8.84,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -818,27 +818,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly uses the `orders` and `order_details` tables, which are the same as the ground truth."
+          "reasoning": "The generated query correctly selected the `orders` and `order_details` tables, which is identical to the ground truth."
         },
         "column_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the month from the order date and calculates the revenue using the correct formula for price, quantity, and discount."
+          "reasoning": "The query correctly calculates the revenue and formats the date to show the month, which aligns with the user's request."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The join between `orders` and `order_details` is correctly performed on `orderid`."
+          "reasoning": "The join between `orders` and `order_details` on `orderid` is correct."
         },
         "filter_logic": {
-          "score": 5,
-          "reasoning": "The query correctly filters the data to include only orders from the year 1997."
+          "score": 2,
+          "reasoning": "The query uses `LOWER(CAST(o.orderdate AS STRING)) LIKE LOWER('%1997%')` to filter by year, which is a fragile and incorrect method; it should use the `YEAR()` function as seen in the ground truth."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups the results by month and orders them chronologically to show the trend."
+          "reasoning": "The query correctly groups by the formatted month and orders the results to show the trend, which is what the question asks for."
         },
         "overall": {
-          "score": 5,
-          "reasoning": "The generated query is functionally identical to the ground truth and correctly answers the user's question."
+          "score": 3,
+          "reasoning": "The query is mostly correct in its structure, joins, and aggregation, but the filtering logic for the year is fundamentally flawed and unreliable, requiring a significant fix."
         }
       }
     },
@@ -846,13 +846,13 @@
       "question": "Who are our best customers?",
       "difficulty": "hard",
       "category": "ambiguous",
-      "generated_sql": "-- Assumption: interpreted 'best customers' as customers with the highest total revenue\nSELECT\n  `c`.`customerid`,\n  `c`.`companyname`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `customers` AS `c`\nJOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nGROUP BY\n  `c`.`customerid`,\n  `c`.`companyname`\nORDER BY\n  `total_revenue` DESC",
+      "generated_sql": "SELECT\n  `c`.`companyname` AS `customer_name`,\n  SUM(`od`.`unitprice` * `od`.`quantity` * (\n    1 - `od`.`discount`\n  )) AS `total_revenue`\nFROM `customers` AS `c`\nJOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nJOIN `order_details` AS `od`\n  ON `o`.`orderid` = `od`.`orderid`\nGROUP BY\n  `c`.`customerid`,\n  `c`.`companyname`\nORDER BY\n  `total_revenue` DESC",
       "selected_tables": [
         "customers",
         "orders",
         "order_details"
       ],
-      "latency_s": 8.33,
+      "latency_s": 7.42,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -860,27 +860,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The query correctly selects the `customers`, `orders`, and `order_details` tables, which is identical to the ground truth."
+          "reasoning": "The generated query uses the exact same tables as the first accepted ground-truth query."
         },
         "column_selection": {
-          "score": 5,
-          "reasoning": "The query selects the correct columns to identify the customer and calculate their total spending, matching the logic of the first accepted query."
+          "score": 4,
+          "reasoning": "The query selects the correct columns and performs the correct calculation, but uses different aliases (`customer_name`, `total_revenue`) than the ground truth (`CompanyName`, `TotalSpent`)."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "All joins are performed on the correct keys (`customerid` and `orderid`) and are logically sound."
+          "reasoning": "All joins are correct, using the appropriate keys to link customers to their orders and order details."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "No filters are needed to answer this question, and the query correctly omits any WHERE clause."
+          "reasoning": "No filters are needed to answer the question, and none were applied, which is correct."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "The query correctly groups by customer and orders the results by total spending in descending order; the lack of a LIMIT is acceptable as the question does not specify a number."
+          "reasoning": "The query correctly groups by customer and orders the results by total spending in descending order, which is a perfect interpretation of the question."
         },
         "overall": {
           "score": 5,
-          "reasoning": "The query correctly interprets 'best customers' as those with the highest total spending and produces a perfectly valid and correct result, matching one of the accepted answers."
+          "reasoning": "The generated query is a perfect and valid interpretation of the ambiguous question 'best customers', matching the logic of the first ground-truth query exactly, with only minor cosmetic differences in aliasing."
         }
       }
     },
@@ -888,40 +888,40 @@
       "question": "Which products are underperforming?",
       "difficulty": "hard",
       "category": "ambiguous",
-      "generated_sql": "-- Assumption: interpreted 'underperforming' as products with the lowest total quantity sold\nSELECT\n  `p`.`productname`,\n  SUM(`od`.`quantity`) AS `total_quantity_sold`\nFROM `products` AS `p`\nJOIN `order_details` AS `od`\n  ON `p`.`productid` = `od`.`productid`\nWHERE\n  `p`.`discontinued` = '0'\nGROUP BY\n  `p`.`productid`,\n  `p`.`productname`\nORDER BY\n  `total_quantity_sold` ASC NULLS LAST",
+      "generated_sql": null,
       "selected_tables": [
         "products",
         "order_details"
       ],
-      "latency_s": 8.48,
+      "latency_s": 4.46,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
-      "exec_exact": 0.0,
+      "exec_exact": null,
       "judge": {
         "table_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the `products` and `order_details` tables, which is identical to the ground truth queries."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         },
         "column_selection": {
-          "score": 5,
-          "reasoning": "The query correctly selects the product name and calculates the sum of quantity sold, which matches the intent of the first ground truth query."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         },
         "join_correctness": {
-          "score": 5,
-          "reasoning": "The join between `products` and `order_details` on `productid` is correct."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         },
         "filter_logic": {
-          "score": 4,
-          "reasoning": "The query adds a reasonable filter to exclude discontinued products, which is not in the ground truth but is a valid interpretation of 'underperforming'."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         },
         "aggregation": {
-          "score": 3,
-          "reasoning": "The query correctly groups by product and orders by the total quantity sold, but it is missing a LIMIT clause to show only the top underperforming products as requested by the ground truth."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         },
         "overall": {
-          "score": 3,
-          "reasoning": "The query correctly identifies underperforming products based on quantity sold but fails to limit the results, returning a full ranked list instead of the most underperforming items."
+          "score": 1,
+          "reasoning": "No SQL generated for in-scope question."
         }
       }
     },
@@ -929,12 +929,12 @@
       "question": "Show me inactive customers",
       "difficulty": "hard",
       "category": "ambiguous",
-      "generated_sql": "-- Assumption: interpreted 'inactive customers' as customers who have no orders\nSELECT\n  `c`.`customerid`,\n  `c`.`companyname`,\n  `c`.`contactname`,\n  `c`.`contacttitle`,\n  `c`.`address`,\n  `c`.`city`,\n  `c`.`region`,\n  `c`.`postalcode`,\n  `c`.`country`,\n  `c`.`phone`,\n  `c`.`fax`\nFROM `customers` AS `c`\nLEFT JOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid`\nWHERE\n  `o`.`orderid` IS NULL",
+      "generated_sql": "SELECT\n  `c`.`customerid`,\n  `c`.`companyname`,\n  `c`.`contactname`,\n  `c`.`contacttitle`,\n  `c`.`address`,\n  `c`.`city`,\n  `c`.`region`,\n  `c`.`postalcode`,\n  `c`.`country`,\n  `c`.`phone`,\n  `c`.`fax`\nFROM `customers` AS `c`\nWHERE\n  NOT `c`.`customerid` IN (\n    SELECT DISTINCT\n      `o`.`customerid`\n    FROM `orders` AS `o`\n  )",
       "selected_tables": [
         "customers",
         "orders"
       ],
-      "latency_s": 6.14,
+      "latency_s": 5.09,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -942,27 +942,27 @@
       "judge": {
         "table_selection": {
           "score": 5,
-          "reasoning": "The generated query uses the exact same tables as the ground truth queries."
+          "reasoning": "The query correctly uses the `customers` and `orders` tables, which are the same as in the ground truth queries."
         },
         "column_selection": {
           "score": 4,
-          "reasoning": "The generated query selects all columns from the customers table, while the ground truth only selects the company name, but this is a minor difference that still answers the question."
+          "reasoning": "The query selects all columns from the customers table, while the ground truth only selects the company name; this is a minor formatting difference that still answers the question."
         },
         "join_correctness": {
           "score": 5,
-          "reasoning": "The LEFT JOIN from customers to orders on the customerid is correct and matches the logic of the first ground truth query."
+          "reasoning": "The query uses a `NOT IN` clause with a subquery, which is a valid and correct alternative to the `LEFT JOIN` used in one of the ground truth queries."
         },
         "filter_logic": {
           "score": 5,
-          "reasoning": "The WHERE clause correctly filters for customers where the orderid is NULL, which correctly identifies customers with no orders."
+          "reasoning": "The `WHERE NOT IN` clause correctly identifies customers who do not have any corresponding orders, which perfectly matches the intent of the question."
         },
         "aggregation": {
           "score": 5,
-          "reasoning": "No aggregation is required for this question, and none was used, which is correct."
+          "reasoning": "No aggregation is required for this question, and the query correctly omits any aggregation clauses."
         },
         "overall": {
           "score": 4,
-          "reasoning": "The query correctly identifies inactive customers using the same logic as an accepted query, with the only minor difference being the selection of more columns, which still provides a correct and useful answer."
+          "reasoning": "The query is logically correct and returns the right set of inactive customers, with the only minor difference being the selection of more columns than the ground truth, which is a cosmetic issue."
         }
       }
     },
@@ -972,7 +972,7 @@
       "category": "out_of_scope",
       "generated_sql": null,
       "selected_tables": [],
-      "latency_s": 1.99,
+      "latency_s": 2.84,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -1010,7 +1010,7 @@
       "category": "out_of_scope",
       "generated_sql": null,
       "selected_tables": [],
-      "latency_s": 1.8,
+      "latency_s": 2.9,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
