@@ -93,10 +93,6 @@ Given a user question and a list of candidate table schemas:
 6. Set is_in_scope=False if no table or column relates to the question, or if the information the
    question asks for is in no column of the candidate schemas: a table about the right entity is
    not enough, and another column (an identifier, a code, a label) never stands in for it.
-   Same when the entity the question asks about is in no candidate table: a narrower table
-   (named after it with a qualifier the question does not use, a status, a state or an event,
-   and with no "One row per" that entity in its header) never stands in for it. A table about
-   the same entity under another name (a synonym, another language) is not narrower.
    Then set unavailable to "restricted" when a table or column description says that information
    exists but was withheld (excluded, confidential), to "absent" otherwise.
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
@@ -221,11 +217,6 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   "Not available (restricted): [the information]" when a table or column description says it
   exists but was withheld (excluded, confidential), "Not available (absent): [the information]"
   otherwise. Never stand another column (an identifier, a code, a label) in for it.
-- Never stand a narrower table in for the entity the question asks about: when the only tables
-  named after it add a qualifier the question does not use (a status, a state, an event) and
-  their header says no "One row per" that entity, the entity is in no table: write
-  "Not available (absent): [the entity]". A table about the same entity under another name
-  (a synonym, another language) is not narrower.
 - Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.

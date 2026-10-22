@@ -38,14 +38,6 @@ def test_information_in_no_column_is_not_answered_with_another_one(prompt):
     assert "in no column" in text and "an identifier, a code, a label" in text
 
 
-@pytest.mark.parametrize("prompt", [RERANK_TABLES_PROMPT, PLANNER_PROMPT])
-def test_a_narrower_table_does_not_stand_in_for_the_entity(prompt):
-    # The only table named after the entity, with a qualifier the question does not use, is another concept
-    text = " ".join(prompt.split())
-    assert "a narrower table" in text and "qualifier the question does not use" in text
-    assert "is not narrower" in text
-
-
 def test_the_refusal_lines_are_the_ones_the_nodes_read():
     from lib.messages import not_available_reason
     from lib.sql_tools import is_refusal
