@@ -3,6 +3,7 @@ Result card — props of the ResultCard custom element (public/elements/ResultCa
 Used by: ui/streaming.py (attached to the final answer message)
 
 The KPI tiles or chart come from ui/charts.py, picked by rules on the result shape and the question.
+The lineage of the Calcul tab comes from lib/query_lineage.py, read by ui/streaming.py.
 """
 
 import sqlparse
@@ -16,6 +17,7 @@ def build_result_card_props(
     sql:       str,
     truncated: bool,
     tables:    list[str],
+    lineage:   dict | None,
     retries:   int,
     db_name:   str,
     question:  str,
@@ -30,6 +32,7 @@ def build_result_card_props(
         "rowCount":  len(rows),
         "truncated": truncated,
         "tables":    tables,
+        "lineage":   lineage,
         "sql":       sqlparse.format(sql, reindent=True, keyword_case="upper"),
         "retries":   retries,
         "dbName":    db_name,

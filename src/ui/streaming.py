@@ -22,16 +22,20 @@ A rejected query shows as it runs: "Requête rejetée par Hive", "Requête SQL c
 import asyncio
 import re
 import time
+from functools import cache
 
 import chainlit as cl
 import sqlparse
 from chainlit.utils import utc_now
 from langchain_core.messages import HumanMessage
+from loguru import logger
 
 from config import cfg
 from lib.column_pruning import get_column_names
 from lib.messages import get_question, not_available_reason
-from lib.sql_tools import get_query_tables
+from lib.query_lineage import build_query_lineage
+from lib.semantics import load_profile, load_semantics
+from lib.sql_tools import contains_expression, get_query_tables
 from resources import metrics_store, schema_store
 from ui.follow_ups import suggest_follow_ups
 from ui.result_card import build_result_card_props
@@ -350,6 +354,7 @@ class TurnRenderer:
             "truncated": output.get("result_truncated", False),
             "sql":       query,
             "tables":    _tables_in_sql(query, input["selected_db"]),
+            "lineage":   _lineage_of(query, input["selected_db"]),
             "question":  question,
         }
         # Suggest follow-up questions while format_answer writes the answer
@@ -422,6 +427,7 @@ class TurnRenderer:
             sql       = self.result["sql"],
             truncated = self.result["truncated"],
             tables    = self.result["tables"],
+            lineage   = self.result["lineage"],
             retries   = self.rejected,
             db_name   = self.db_name or "",
             question  = self.result["question"],
@@ -520,3 +526,71 @@ def _tables_in_sql(sql: str, db_name: str) -> list[str]:
     known = {table.lower(): table for table in schema_store[db_name]}
     names = get_query_tables(sql, cfg.get_db(db_name).dialect)
     return [known[name.lower()] for name in names if name.lower() in known]
+
+
+def _lineage_of(sql: str, db_name: str) -> dict | None:
+    """
+    Lineage of the query (lib/query_lineage.py) for the "Calcul" tab of the result card, its
+    unqualified columns resolved with the indexed schemas, each aggregated output named after the
+    business metric it computes (metric: its name, or None), with what the semantic layer knows of
+    it (context, see _lineage_context). None when it can't be read: the card goes without the tab,
+    never without the result.
+    """
+    dialect = cfg.get_db(db_name).dialect
+    try:
+        lineage = build_query_lineage(sql, dialect, _schema_columns(db_name))
+        if lineage is None:
+            return None
+        for output in (o for step in lineage["steps"] for o in step["outputs"]):
+            output["metric"] = next((name for name, metric in metrics_store[db_name].items()
+                                     if output["aggregated"] and contains_expression(output["expression"], metric.expr, dialect)), None)
+        lineage["context"] = _lineage_context(lineage, db_name)
+        return lineage
+    except Exception as e:   # a query shape the lineage doesn't handle
+        logger.warning(f"[lineage] {type(e).__name__}: {e}")
+        return None
+
+
+@cache
+def _schema_columns(db_name: str) -> dict[str, list[str]]:
+    """{table: [column, ...]} of the indexed schemas, read once like them."""
+    return {table: get_column_names(ddl) for table, ddl in schema_store[db_name].items()}
+
+
+@cache
+def _table_facts(db_name: str) -> dict[str, dict]:
+    """
+    {table (lowercase): {rows, description, columns: {column (lowercase): description}}} from the
+    semantic layer (profile.yaml, tables.yaml), read once like the indexed documents.
+    """
+    semantics, profile = load_semantics(db_name), load_profile(db_name)
+    facts = {}
+    for table in {*semantics, *profile}:
+        described = semantics.get(table) if isinstance(semantics.get(table), dict) else {}
+        measured  = profile.get(table) if isinstance(profile.get(table), dict) else {}
+        facts[table.lower()] = {
+            "rows":        measured.get("rows"),
+            "description": described.get("description"),
+            "columns":     {str(c).lower(): d for c, d in (described.get("columns") or {}).items()},
+        }
+    return facts
+
+
+def _lineage_context(lineage: dict, db_name: str) -> dict:
+    """
+    What the semantic layer knows of what the lineage shows, for the graph and its tooltips:
+      tables   {table: {rows, description, columns: {column: description}}}, the descriptions of
+               the columns the query reads only (never those of a column it doesn't show)
+      metrics  {metric: description} of the metrics its outputs compute
+    """
+    facts, tables = _table_facts(db_name), {}
+    for step in lineage["steps"]:
+        for source in step["sources"]:
+            fact = facts.get(source["name"].lower()) if source["kind"] == "table" else None
+            if not fact:
+                continue
+            entry = tables.setdefault(source["name"], {"rows": fact["rows"], "description": fact["description"], "columns": {}})
+            entry["columns"].update({c: d for c in source["columns"] if (d := fact["columns"].get(c.lower()))})
+    metrics = {o["metric"]: metrics_store[db_name][o["metric"]].description
+               for step in lineage["steps"] for o in step["outputs"] if o.get("metric")}
+    return {"tables": tables, "metrics": metrics}
