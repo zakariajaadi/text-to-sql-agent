@@ -37,3 +37,23 @@ services:
     extra_hosts:
       - "${KDC_HOST}:${KDC_IP}"
       - "${IMPALA_HOST}:${IMPALA_IP}"
+
+  # Studio of the semantic layer (offline/studio): the same image and mounts as the app, on its own port.
+  # It runs the pipeline steps in its container and writes semantic_layer/ like the CLI.
+  #   docker compose -f docker-compose.ubi.yaml up studio                  # studio on http://localhost:8100
+  studio:
+    image: text-to-sql
+    command: ["python", "-m", "uvicorn", "offline.studio.app:app", "--host", "0.0.0.0", "--port", "8100"]
+    ports:
+      - "8100:8100"
+    env_file:
+      - .env
+    volumes:
+      - ${KERBEROS_DIR}:/kerberos:ro
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./semantic_layer:/app/semantic_layer
+      - ./offline:/app/offline
+    extra_hosts:
+      - "${KDC_HOST}:${KDC_IP}"
+      - "${IMPALA_HOST}:${IMPALA_IP}"

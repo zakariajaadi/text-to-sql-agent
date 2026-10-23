@@ -12,7 +12,7 @@ RUN        = PYTHONPATH=src uv run python
 .DEFAULT_GOAL := help
 .PHONY: help \
         hive-up hive-check hive-ping hive-load hive-partitioned \
-        profile semantics relations metrics index schema \
+        profile semantics relations metrics index schema studio \
         app app-docker app-logs app-stop \
         eval eval-dashboard eval-show test lint
 
@@ -67,6 +67,9 @@ schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])
 	@$(RUN) -c "from resources import vector_store; \
 	docs = vector_store.get_store().get(ids=['$(DB)_$(TABLE)'])['documents']; \
 	print(docs[0] if docs else 'Not found: $(DB)_$(TABLE)')"
+
+studio:  ## Run the studio of the semantic layer (run the steps, review their proposals) on http://localhost:8100
+	$(RUN) -m uvicorn offline.studio.app:app --port 8100 --reload --reload-dir offline/studio
 
 ##@ App
 

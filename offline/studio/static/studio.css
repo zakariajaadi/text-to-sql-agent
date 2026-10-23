@@ -1,0 +1,254 @@
+/* Studio of the semantic layer: the tokens, the dot grid and the corner glows of the eval dashboard
+   (offline/eval/eval_lib/dashboard_template.html), so the two pages read as one tool. */
+:root {
+  --bg: #f6f6f4;
+  --surface: #fdfdfc;
+  --ink: #161514;
+  --ink-2: #55524e;
+  --muted: #86827c;
+  --line: #e5e3df;
+  --accent: #e86441;
+  --accent-ink: #b8431f;
+  --accent-soft: rgba(232, 100, 65, 0.10);
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --good-soft: rgba(12, 163, 12, 0.10);
+  --warn: #fab219;
+  --warn-ink: #8a5a00;
+  --warn-soft: rgba(250, 178, 25, 0.16);
+  --bad-ink: #b02a2a;
+  --bad-soft: rgba(208, 59, 59, 0.10);
+  --none: #cfccc6;
+  --key-ink: #3c3489;
+  --key-soft: #eeedfe;
+  --type-ink: #0c447c;
+  --type-soft: #e6f1fb;
+  --personal-ink: #713f12;   /* a pale yellow, like the other pills */
+  --personal-soft: #fef3c7;
+  --chip: #efeeeb;
+  --hover: rgba(22, 21, 20, 0.035);
+  --ring: rgba(22, 21, 20, 0.10);
+  --dot: rgba(22, 21, 20, 0.26);
+  --glow-1: rgba(232, 100, 65, 0.10);
+  --glow-2: rgba(232, 100, 65, 0.07);
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0f0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8b84; --line: #2c2c2a;
+    --accent: #ee7350; --accent-ink: #f59a7a; --accent-soft: rgba(238, 115, 80, 0.14);
+    --good-ink: #3cc43c; --good-soft: rgba(12, 163, 12, 0.16); --warn-ink: #fab219; --warn-soft: rgba(250, 178, 25, 0.14);
+    --bad-ink: #f07a7a; --bad-soft: rgba(224, 85, 85, 0.14); --none: #45443f; --chip: #262624;
+    --key-ink: #cecbf6; --key-soft: rgba(127, 119, 221, 0.22); --type-ink: #b5d4f4; --type-soft: rgba(55, 138, 221, 0.20);
+    --personal-ink: #fde68a; --personal-soft: rgba(250, 204, 21, 0.18);
+    --hover: rgba(255, 255, 255, 0.04); --ring: rgba(255, 255, 255, 0.10); --dot: rgba(240, 239, 236, 0.26);
+    --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f0f0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8b84; --line: #2c2c2a;
+  --accent: #ee7350; --accent-ink: #f59a7a; --accent-soft: rgba(238, 115, 80, 0.14);
+  --good-ink: #3cc43c; --good-soft: rgba(12, 163, 12, 0.16); --warn-ink: #fab219; --warn-soft: rgba(250, 178, 25, 0.14);
+  --bad-ink: #f07a7a; --bad-soft: rgba(224, 85, 85, 0.14); --none: #45443f; --chip: #262624;
+  --key-ink: #cecbf6; --key-soft: rgba(127, 119, 221, 0.22); --type-ink: #b5d4f4; --type-soft: rgba(55, 138, 221, 0.20);
+  --personal-ink: #fde68a; --personal-soft: rgba(250, 204, 21, 0.18);
+  --hover: rgba(255, 255, 255, 0.04); --ring: rgba(255, 255, 255, 0.10); --dot: rgba(240, 239, 236, 0.26);
+  --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0),
+    radial-gradient(ellipse 60% 50% at 100% 0%, var(--glow-1), transparent 70%),
+    radial-gradient(ellipse 50% 45% at 0% 100%, var(--glow-2), transparent 70%);
+  background-size: 32px 32px, 100% 100%, 100% 100%;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+}
+.page { max-width: 1240px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
+.grow { flex: 1; }
+.muted { color: var(--muted); margin: 0; }
+.mono, code, pre { font-family: var(--font-mono); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ── Level 1, the navigation: one thin line, no card ── */
+.topbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.mark { flex: none; }
+.brand-name { font-weight: 600; font-size: 0.92rem; letter-spacing: -0.01em; }
+/* The database and its refresh, side by side in one pill */
+.db-picker { display: inline-flex; align-items: center; background: var(--chip); border: 1px solid var(--line); border-radius: 999px; }
+.db-picker:hover { border-color: var(--muted); }
+#db-select {
+  font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); background: transparent;
+  border: 0; padding: 3px 4px 3px 10px; cursor: pointer;
+}
+.db-picker .icon-btn { width: 24px; height: 24px; border-radius: 999px; margin-right: 2px; }
+.icon-btn {
+  display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: var(--radius);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.icon-btn:hover { background: var(--hover); color: var(--ink); }
+.icon-btn.busy svg { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Buttons, inputs ────────────────────────────────── */
+.btn {
+  font: inherit; font-size: 0.85rem; font-weight: 500; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 14px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--muted); }
+.btn:active { transform: scale(0.98); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.05); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--hover); }
+.btn.small { padding: 3px 10px; font-size: 0.8rem; }
+input[type="search"] {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 6px 12px; width: 220px; max-width: 100%;
+}
+input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; height: 15px; cursor: pointer; }
+
+/* Stepper, compact: a dot and a name per step, joined by a short line; the current step filled */
+.stepper { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.stepper li { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.stepper li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--muted); }
+.stepper li:not(:last-child)::after { content: ""; width: 16px; height: 1px; background: var(--line); margin-left: 4px; }
+.stepper li.on { color: var(--ink); font-weight: 500; }
+.stepper li.on::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ── Level 2, the title of the page: what the step does, and its actions ── */
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; padding: 6px 0 4px; }
+.page-title { flex: 1; min-width: 280px; max-width: 760px; }
+.eyebrow { font-size: 0.75rem; color: var(--muted); margin-bottom: 2px; }
+.page-title h1 { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+.page-title p { margin: 6px 0 0; font-size: 0.92rem; line-height: 1.55; color: var(--ink-2); }
+.page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.banner {
+  padding: 10px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn-ink); font-size: 0.85rem;
+}
+.banner.error { background: var(--bad-soft); color: var(--bad-ink); }
+
+/* ── Search and filters, inside the list they serve ── */
+.list-tools { display: grid; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.list-tools input[type="search"] { width: 100%; padding: 5px 10px; font-size: 0.85rem; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font: inherit; font-size: 0.8rem; color: var(--ink-2); background: transparent; border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px 12px; cursor: pointer;
+}
+.chip.on { background: var(--surface); color: var(--ink); border-color: var(--muted); }
+.chip .count { color: var(--muted); margin-left: 4px; }
+
+/* ── Panels: two tables that read alike (one line per item, numbers right-aligned in mono, a pill for the meaning) ── */
+.main { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.row, .line { display: grid; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.row:last-child, .line:last-child { border-bottom: 0; }
+.head { font-size: 0.75rem; color: var(--muted); padding-block: 9px; }
+.cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.num { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-2); text-align: right; }
+
+.row { grid-template-columns: 16px minmax(0, 1fr) auto; cursor: pointer; }
+.row.head { cursor: default; }
+.row:not(.head):hover { background: var(--hover); }
+.row.current { background: var(--accent-soft); }
+.row.current .cell { font-weight: 500; }
+.empty, .placeholder { padding: 28px; text-align: center; color: var(--muted); margin: 0; }
+
+/* Pills: statuses in the list, how the agent reads a column in the detail */
+.pill { display: inline-block; font-size: 0.72rem; font-weight: 500; border-radius: 999px; padding: 1px 9px; white-space: nowrap; }
+.pill.todo { background: var(--chip); color: var(--muted); }
+.pill.decide { background: var(--warn-soft); color: var(--warn-ink); }
+.pill.done { background: var(--good-soft); color: var(--good-ink); }
+.pill.running { background: var(--accent-soft); color: var(--accent-ink); animation: pulse 1.1s ease-in-out infinite; }
+.pill.key { background: var(--key-soft); color: var(--key-ink); }
+.pill.type { background: var(--type-soft); color: var(--type-ink); }
+.pill.hide { background: var(--bad-soft); color: var(--bad-ink); }
+.pill.personal { background: var(--personal-soft); color: var(--personal-ink); }
+button.pill { font-family: inherit; line-height: inherit; border: 0; cursor: pointer; }
+button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
+
+/* Personal data: one rule for the whole database, on top of the list */
+.personal-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px;
+  background: var(--personal-soft); color: var(--personal-ink); font-size: 0.8rem; border-bottom: 1px solid var(--line);
+}
+.personal-bar span { flex: 1; min-width: 0; }
+.personal-bar b { font-weight: 600; }
+.personal-bar .btn.ghost { color: var(--personal-ink); }
+.pill.text { background: var(--chip); color: var(--ink-2); }
+.pill.refused { background: transparent; color: var(--muted); text-decoration: line-through; box-shadow: inset 0 0 0 1px var(--line); }
+/* Detected but not applied (a table reviewed before the profile found it): the outline only */
+.pill.pending { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.pills { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ── Detail of a table ──────────────────────────────── */
+.detail-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 14px 14px 10px; }
+.detail-head h2 { font-size: 1.05rem; font-weight: 600; margin: 0; word-break: break-all; }
+.note { margin: 0 14px 10px; font-size: 0.78rem; color: var(--muted); }
+.note.error { color: var(--bad-ink); }
+.muted-text { color: var(--muted); font-size: 0.8rem; }
+
+/* Figures of the profile: one line next to the name */
+.figures { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); }
+
+/* Columns: declared type against what the profile found */
+.columns { border-top: 1px solid var(--line); }
+.line { grid-template-columns: minmax(0, 1.4fr) minmax(70px, 0.6fr) minmax(0, 1fr) 104px 76px; font-size: 0.85rem; }
+.line .mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+.line.hidden-col > .cell:first-child { color: var(--muted); }
+.fill { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+.bar { width: 36px; height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; flex: none; }
+.bar i { display: block; height: 100%; background: var(--good); }
+.bar i.low { background: var(--warn); }
+
+/* ── Job ────────────────────────────────────────────── */
+.job { padding: 12px 16px; }
+.job-head { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; flex-wrap: wrap; }
+.halo { width: 10px; height: 10px; border-radius: 50%; background: var(--good); flex: none; }
+.halo.running { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+.halo.failed { background: var(--bad-ink); }
+.log {
+  margin: 10px 0 0; max-height: 160px; overflow: auto; font-size: 0.75rem; line-height: 1.55; color: var(--ink-2);
+  background: var(--chip); border-radius: var(--radius); padding: 10px 12px; white-space: pre-wrap; word-break: break-word;
+}
+.job-head .slow { color: var(--warn-ink); }
+.log .t { color: var(--muted); }
+.log .WARNING { color: var(--warn-ink); }
+.log .ERROR { color: var(--bad-ink); }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) { .halo.running, .pill.running { animation: none; } }
+
+.footer { font-size: 0.78rem; color: var(--muted); }
+
+/* ── Narrow screens: the detail under the list, fewer columns ── */
+@media (max-width: 960px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .line { grid-template-columns: minmax(0, 1fr) minmax(0, auto) 88px; gap: 8px; }
+  .line > :nth-child(2), .line > :nth-child(5) { display: none; }
+  /* the name of the current step only, the others as dots: one line */
+  .stepper li:not(.on) { font-size: 0; gap: 0; }
+  .stepper li:not(:last-child)::after { width: 10px; margin-left: 6px; }
+  .stepper li.on { font-size: 0.78rem; }
+  .page-title h1 { font-size: 1.35rem; }
+  .page-actions, .page-actions .btn { flex: 1; }
+}

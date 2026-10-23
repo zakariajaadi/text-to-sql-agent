@@ -12,8 +12,8 @@ from langchain_redis import RedisSemanticCache
 from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
-from config import DatabaseConfig, LLMConfig, cfg
-from lib.db_errors import is_unreachable
+from config import LLMConfig, cfg
+from lib.database import build_database
 from lib.metrics import Metric, load_metrics
 from lib.semantics import load_fk_relations
 from lib.vector_store import VectorStoreManager
@@ -27,43 +27,6 @@ def build_chat_model(llm_cfg: LLMConfig):
         llm_cfg.model,
         temperature=llm_cfg.temperature
     )
-
-
-def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
-    """
-    Build a langchain SQLAlchemy wrapper from the URI.
-    With include_tables, the agent, the indexer and the generators only see those tables
-    (an unknown name stops the startup). sample_rows: rows under each DDL of get_table_info.
-    """
-    try:
-        db = SQLDatabase.from_uri(
-            db_cfg.uri,
-            engine_args=db_cfg.engine_args() or None,
-            include_tables=list(db_cfg.include_tables) or None,
-            sample_rows_in_table_info=db_cfg.sample_rows,
-            lazy_table_reflection=True,  # don't reflect the whole metastore at startup
-        )
-    except Exception as e:
-        if is_unreachable(e):
-            raise RuntimeError(
-                f"The {db_cfg.dialect} database {db_cfg.name} is unreachable at startup ({type(e).__name__}: "
-                f"{str(e)[:200]}). Check the network or VPN (in Docker: restart Docker Desktop), then start again."
-            ) from e
-        raise
-    if db_cfg.dialect == "impala":
-        quote_every_identifier(db._engine.dialect)
-    return db
-
-
-def quote_every_identifier(dialect) -> None:
-    """
-    Backtick every identifier SQLAlchemy writes for this dialect (sample rows, categorical values).
-    impyla's reserved word list stops at Impala 2: a column named like an Impala 4 reserved word
-    (position, ...) breaks the query unquoted. The agent's own queries are quoted by normalize_sql.
-    """
-    preparer = dialect.identifier_preparer
-    preparer._requires_quotes = lambda value: True
-    preparer._strings.clear()   # identifiers already formatted, cached unquoted
 
 
 def build_schema_store() -> dict[str, dict[str, str]]:

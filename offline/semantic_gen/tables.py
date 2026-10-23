@@ -14,44 +14,20 @@ Pipeline order: semantics → relations → metrics → (review) → index   (se
 
 from concurrent.futures import ThreadPoolExecutor
 
-import yaml
 from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 
 from lib.column_pruning import get_column_names, prune_ddl
 from config import cfg
 from lib.semantics import excluded_columns, load_profile, load_semantics, manual_semantics, tables_path
-from offline.semantic_gen.profiling import row_facts
+from offline.semantic_gen.profiling import apply_profile, row_facts
 from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
 from offline.semantic_gen.schemas import TableSemantics
-from offline.semantic_gen.utils import FlowListDumper, table_columns
+from offline.semantic_gen.utils import dump_table_semantics, table_columns
 from resources import db_registry, fast_model
 
-# ------------------------------------------------------------
-# Constants
-# ------------------------------------------------------------
-
-SEMANTICS_HEADER = """\
-# Semantic layer, generated (make semantics) and reviewed manually.
-# The generator only ADDS missing content, it never overwrites reviewed content.
-#   description, columns : business meaning of the table and of each column
-#   categorical_columns  : columns holding a closed set of labels (country, status...),
-#                          whose values are read from the database at index time.
-#                          Remove a column from the list to reject it: it won't come back
-#   read_mode, key_columns, partition_column, version_column : Hive table layout
-#   formats              : (manual) columns whose values are stored as text,
-#                          {column: "date <pattern>" (e.g. date dd/MM/yyyy) or "decimal"}
-#   exclude_columns      : (manual) columns the agent never sees (empty, technical, personal data):
-#                          out of the documents, the sample rows and the LLM prompts
-#   data_as_of           : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
-
-"""
-
-# Key order of a table block in the YAML (unknown keys last)
-SEMANTICS_KEY_ORDER = [
-    "description", "data_as_of", "read_mode", "key_columns", "partition_column", "version_column",
-    "categorical_columns", "formats", "exclude_columns", "columns",
-]
+# Former name, imported by the patch scripts of semantic_layer/<db>/
+_dump_table_semantics = dump_table_semantics
 
 # ------------------------------------------------------------
 # Chain
@@ -92,18 +68,11 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
     profile    = load_profile(db_name)
     personal   = cfg.get_db(db_name).exclude_personal_data
 
-    # Formats and exclusions measured by `make profile`, written for a table that has none yet
-    # (a reviewed list is never touched): excluded columns are then neither sent nor described.
-    # Empty columns always; personal data when the database says so (exclude_personal_data)
-    for table, facts in profile.items():
-        if table not in db_columns:
-            continue
-        if facts.get("formats") and "formats" not in existing.get(table, {}):
-            existing.setdefault(table, {})["formats"] = dict(facts["formats"])
-        exclude = [c for c, reason in (facts.get("exclude") or {}).items() if reason == "empty" or personal]
-        if exclude and "exclude_columns" not in existing.get(table, {}):
-            existing.setdefault(table, {})["exclude_columns"] = exclude
-            logger.info(f"[{db_name}] {table}: excluded {', '.join(exclude)} (profile) — review them")
+    # Formats and exclusions measured by `make profile`, for a table that has none yet (`make profile`
+    # writes them already; again here for a profile made before it did): excluded columns are then
+    # neither sent nor described
+    for change in apply_profile(existing, profile, personal, [t for t in profile if t in db_columns]):
+        logger.info(f"[{db_name}] Applied from the profile — {change}")
     # Excluded columns (exclude_columns, set beforehand) are neither sent to the LLM nor described
     columns    = {
         table: [c for c in table_cols if c not in excluded_columns(existing.get(table))]
@@ -168,22 +137,6 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
 
     path = tables_path(db_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_dump_table_semantics(existing))
+    path.write_text(dump_table_semantics(existing))
 
     logger.info(f"[{db_name}] {len(todo)} table(s) described, {added} column description(s) added — review them.")
-
-
-# ------------------------------------------------------------
-# helpers
-# ------------------------------------------------------------
-
-def _dump_table_semantics(semantics: dict) -> str:
-    """Dump one YAML block per table, separated by a blank line for readability."""
-    def ordered(entry: dict) -> dict:
-        rank = {key: i for i, key in enumerate(SEMANTICS_KEY_ORDER)}
-        return dict(sorted(entry.items(), key=lambda item: rank.get(item[0], len(rank))))
-
-    return SEMANTICS_HEADER + "\n".join(
-        yaml.dump({table: ordered(entry)}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True, width=1000)
-        for table, entry in semantics.items()
-    )

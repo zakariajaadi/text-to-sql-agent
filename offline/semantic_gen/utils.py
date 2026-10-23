@@ -1,7 +1,7 @@
 # offline/semantic_gen/utils.py
 
 """
-Helpers shared by the generators (tables.py, relationships.py, metrics.py):
+Helpers shared by the generators (tables.py, relationships.py, metrics.py) and offline/studio:
 reading the database structure, rendering schemas for the LLM, dumping reviewed YAML files.
 """
 
@@ -52,3 +52,44 @@ class FlowListDumper(yaml.SafeDumper):
 FlowListDumper.add_representer(
     list, lambda dumper, data: dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
 )
+
+
+# ------------------------------------------------------------
+# tables.yaml (written by tables.py and offline/studio)
+# ------------------------------------------------------------
+
+SEMANTICS_HEADER = """\
+# Semantic layer, generated (make semantics) and reviewed manually.
+# The generator only ADDS missing content, it never overwrites reviewed content.
+#   description, columns : business meaning of the table and of each column
+#   categorical_columns  : columns holding a closed set of labels (country, status...),
+#                          whose values are read from the database at index time.
+#                          Remove a column from the list to reject it: it won't come back
+#   read_mode, key_columns, partition_column, version_column : Hive table layout
+#   formats              : (manual) columns whose values are stored as text,
+#                          {column: "date <pattern>" (e.g. date dd/MM/yyyy) or "decimal"}
+#   exclude_columns      : (manual) columns the agent never sees (empty, technical, personal data):
+#                          out of the documents, the sample rows and the LLM prompts
+#   keep_columns         : (manual) columns the profile proposed to exclude, kept visible on purpose
+#   keep_as_text         : (manual) columns the profile reads as dates or numbers, kept as text on purpose
+#   data_as_of          : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
+
+"""
+
+# Key order of a table block in the YAML (unknown keys last)
+SEMANTICS_KEY_ORDER = [
+    "description", "data_as_of", "read_mode", "key_columns", "partition_column", "version_column",
+    "categorical_columns", "formats", "keep_as_text", "exclude_columns", "keep_columns", "columns",
+]
+
+
+def dump_table_semantics(semantics: dict) -> str:
+    """Dump one YAML block per table, separated by a blank line for readability."""
+    def ordered(entry: dict) -> dict:
+        rank = {key: i for i, key in enumerate(SEMANTICS_KEY_ORDER)}
+        return dict(sorted(entry.items(), key=lambda item: rank.get(item[0], len(rank))))
+
+    return SEMANTICS_HEADER + "\n".join(
+        yaml.dump({table: ordered(entry)}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True, width=1000)
+        for table, entry in semantics.items()
+    )

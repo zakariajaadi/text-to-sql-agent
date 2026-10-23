@@ -13,9 +13,12 @@ from offline.semantic_gen import profiling
 from offline.semantic_gen.profiling import (
     KEY_NAME,
     PERSONAL_NAME,
+    apply_profile,
+    day_month_order,
     describe_shapes,
     key_overlap_sql,
     key_relations,
+    month_first,
     personal_values,
     row_facts,
     text_format,
@@ -63,6 +66,49 @@ from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
 ])
 def test_text_format(shapes, column, expected):
     assert text_format(shapes, column) == expected
+
+
+@pytest.mark.parametrize("first_over_12, second_over_12, expected", [
+    (40, 0, "day"),          # 25/03/2024: the day first
+    (0, 40, "month"),        # 03/25/2024: a US date
+    (0, 0, "ambiguous"),     # no number over 12: dd/MM kept, flagged
+    (40, 3, "mixed"),        # both orders: no single format
+])
+def test_day_month_order(first_over_12, second_over_12, expected):
+    assert day_month_order(first_over_12, second_over_12) == expected
+
+
+def test_month_first():
+    assert month_first("date dd/MM/yyyy HH:mm:ss") == "date MM/dd/yyyy HH:mm:ss"
+    assert month_first("date dd-MM-yyyy") == "date MM-dd-yyyy"
+
+
+# =============================================================================
+# What the profile detects goes into tables.yaml, for a table that has none yet
+# =============================================================================
+
+DETECTED = {
+    "dossier": {"rows": 10, "formats": {"date_deblocage": "date dd/MM/yyyy", "extension": "decimal"},
+                "exclude": {"commentaire": "empty", "nom": "personal data"}},
+    "revu":    {"rows": 10, "formats": {"montant": "decimal"}, "exclude": {"vide": "empty"}},
+}
+
+
+def test_apply_profile_to_a_table_that_has_none_yet():
+    semantics = {"dossier": {"description": "Dossiers", "keep_as_text": ["extension"]},
+                 "revu":    {"formats": {}, "exclude_columns": ["autre"]}}
+    changes = apply_profile(semantics, DETECTED, personal=False)
+    # the exceptions made in the studio are kept, personal data only when the database says so
+    assert semantics["dossier"] == {"description": "Dossiers", "keep_as_text": ["extension"],
+                                    "formats": {"date_deblocage": "date dd/MM/yyyy"}, "exclude_columns": ["commentaire"]}
+    # a reviewed table is left as it is
+    assert semantics["revu"] == {"formats": {}, "exclude_columns": ["autre"]}
+    assert changes == ["dossier: formats date_deblocage; excluded commentaire"]
+
+    semantics = {}
+    apply_profile(semantics, DETECTED, personal=True, tables=["dossier"])
+    assert semantics == {"dossier": {"formats": {"date_deblocage": "date dd/MM/yyyy", "extension": "decimal"},
+                                     "exclude_columns": ["commentaire", "nom"]}}
 
 
 def test_describe_shapes_counts_null_empty_and_blank_as_not_filled():
@@ -148,8 +194,8 @@ def bank(tmp_path, monkeypatch):
     monkeypatch.setattr(lib.semantics, "SEMANTIC_LAYER_DIR", tmp_path)
     conn = sqlite3.connect(tmp_path / "bank.sqlite")
     conn.executescript("""
-        CREATE TABLE client (id_client INTEGER, age INTEGER);
-        INSERT INTO client VALUES (1, 30), (2, 40);
+        CREATE TABLE client (id_client INTEGER, age INTEGER, date_cloture DATE);
+        INSERT INTO client VALUES (1, 30, NULL), (2, NULL, NULL);
         CREATE TABLE compte (id_compte INTEGER, id_client INTEGER);
         INSERT INTO compte VALUES (10, 1), (11, 1), (12, 2);
     """)
@@ -171,6 +217,11 @@ def test_profile_some_tables_keeps_the_others(bank):
     assert profile["client"]["rows"] == 2
     assert profile["client"]["keys"]["id_client"] == {"non_null": 2, "distinct": 2}
     assert profile["compte"] == {"rows": 999}
+    # the other columns: their filled share, a never filled one proposed for exclusion
+    assert profile["client"]["filled"] == {"age": 0.5, "date_cloture": 0.0}
+    assert profile["client"]["exclude"] == {"date_cloture": "empty"}
+    # and applied to tables.yaml at once: the data decides, no review
+    assert lib.semantics.load_semantics("bank") == {"client": {"exclude_columns": ["date_cloture"]}}
 
 
 def test_profile_missing_tables_only(bank):

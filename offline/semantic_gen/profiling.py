@@ -9,17 +9,20 @@ Read by the generators so the semantic layer states facts instead of guesses:
       relations found without an LLM (a key unique in one table, present in others).
     - text columns: shapes of their values (digits → 9, other letters → a) on a sample,
       giving the `formats` of dates and numbers stored as text, and the empty columns.
+    - the other columns (numbers, dates): their filled share, counted in the scan of the row
+      facts, giving the empty ones.
     - personal data: columns whose name says so (names, ids, contacts, free text, authors),
       or whose values look like logins or emails.
 
-Formats and exclusions are proposals: the semantics generator writes them into tables.yaml
-only for a table that has none yet, for review. Each run replaces the entries of the tables it
-measures (every table, or the ones asked for) and keeps the others.
+Formats and empty columns are data-driven: each table measured gets them in tables.yaml at once,
+when it has none yet (apply_profile), the studio making the exceptions. Each run replaces the
+entries of the tables it measures (every table, or the ones asked for) and keeps the others.
 
 Pipeline order: profile → semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
 
 import re
+from pathlib import Path
 
 import yaml
 from langchain_community.utilities import SQLDatabase
@@ -27,13 +30,15 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
 
-from lib.semantics import load_profile, profile_path
+from lib.semantics import load_profile, load_semantics, profile_path, tables_path
+from offline.semantic_gen.utils import dump_table_semantics
 
 PROFILE_HEADER = """\
 # Data profile, measured by `make profile` (no LLM): the tables measured replace their entry, never edited.
 # Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
 #   rows, keys          : row count, and per identifier-like column its non-null and distinct values
 #   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   filled              : filled share of the other columns (numbers, dates...), on every row
 #   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
 
 """
@@ -87,13 +92,14 @@ WHOLE_NUMBER = re.compile(r"^[+-]?9+$")
 # ------------------------------------------------------------
 
 def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = None,
-                     missing: bool = False) -> dict:
+                     missing: bool = False, personal: bool = False) -> dict:
     """
     Profile the usable tables of the database, one table after the other (a Hive or Impala job
     at a time), and merge them into semantic_layer/<db>/profile.yaml: every table, only `tables`,
     and with `missing` only the ones the profile lacks (see tables_to_profile). The entries of the
     other tables are kept, those of tables no longer usable dropped. A table whose queries fail
     keeps its previous entry, if any, with a warning: the profile is an enrichment, never required.
+    What it detects goes into tables.yaml at once (apply_profile; personal: exclude_personal_data).
     """
     usable   = db.get_usable_table_names()
     existing = load_profile(db_name)
@@ -105,6 +111,8 @@ def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = N
     inspector = sa_inspect(db._engine)
     quote     = db._engine.dialect.identifier_preparer.quote
     measured  = {}
+    path      = profile_path(db_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
     for table in todo:
         columns = inspector.get_columns(table)
         logger.info(f"[{db_name}] Profiling: {table}")
@@ -112,15 +120,71 @@ def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = N
             measured[table] = profile_table(db, table, columns, quote)
         except Exception as e:
             logger.warning(f"[{db_name}] Not profiled: {table} — {str(e).splitlines()[0][:200]}")
+            continue
+        # Written after each table: a run stopped or failing on a later table keeps the ones measured
+        _write_profile(path, merge_profiles(usable, existing, measured))
+        _apply_to_tables_yaml(db_name, measured, [table], personal)
 
     profile = merge_profiles(usable, existing, measured)
     if dropped := sorted(set(existing) - set(profile)):
         logger.info(f"[{db_name}] Dropped from the profile, no longer usable: {', '.join(dropped)}")
-    path = profile_path(db_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(PROFILE_HEADER + yaml.safe_dump(profile, sort_keys=False, allow_unicode=True, width=1000))
+    _write_profile(path, profile)
     logger.info(f"[{db_name}] {len(measured)} table(s) profiled, {len(profile)} in the profile → {path}")
     return profile
+
+
+def apply_profile(semantics: dict, profile: dict, personal: bool, tables=None) -> list[str]:
+    """
+    Write what the profile detects into the tables.yaml blocks of `semantics` (changed in place), for
+    the `tables` given (default: every profiled one): no review needed, the data decides.
+      - formats: the dates and numbers stored as text, for a table that has no `formats` key yet;
+        a column in `keep_as_text` (an exception made in the studio) is left as text
+      - exclude_columns: the empty columns, and the personal data when the database says so
+        (exclude_personal_data), for a table that has no `exclude_columns` key yet; a column in
+        `keep_columns` stays visible
+    A reviewed table (the key exists) is left as it is: offline/studio shows what is detected and not
+    applied. Returns one line per table changed, for the log.
+    """
+    changes = []
+    for table in tables if tables is not None else list(profile):
+        facts = profile.get(table) or {}
+        entry = semantics.get(table) or {}
+        done  = []
+        kept_text, kept = set(entry.get("keep_as_text") or []), set(entry.get("keep_columns") or [])
+        formats = {c: f for c, f in (facts.get("formats") or {}).items() if c not in kept_text}
+        if formats and "formats" not in entry:
+            entry["formats"] = formats
+            done.append(f"formats {', '.join(formats)}")
+        exclude = [c for c, reason in (facts.get("exclude") or {}).items()
+                   if (reason == "empty" or personal) and c not in kept]
+        if exclude and "exclude_columns" not in entry:
+            entry["exclude_columns"] = exclude
+            done.append(f"excluded {', '.join(exclude)}")
+        if done:
+            semantics[table] = entry
+            changes.append(f"{table}: {'; '.join(done)}")
+    return changes
+
+
+def _apply_to_tables_yaml(db_name: str, profile: dict, tables: list[str], personal: bool) -> None:
+    """apply_profile on semantic_layer/<db>/tables.yaml, written at once when something changes."""
+    semantics = load_semantics(db_name)
+    changes   = apply_profile(semantics, profile, personal, tables)
+    for change in changes:
+        logger.info(f"[{db_name}] Applied from the profile to tables.yaml — {change}")
+    if changes:
+        path = tables_path(db_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".yaml.tmp")
+        temporary.write_text(dump_table_semantics(semantics))
+        temporary.replace(path)
+
+
+def _write_profile(path: Path, profile: dict) -> None:
+    """Write profile.yaml at once (a temporary file renamed): the studio reads it while a run goes on."""
+    temporary = path.with_suffix(".yaml.tmp")
+    temporary.write_text(PROFILE_HEADER + yaml.safe_dump(profile, sort_keys=False, allow_unicode=True, width=1000))
+    temporary.replace(path)
 
 
 def tables_to_profile(usable: list[str], existing: dict, tables: list[str] | None, missing: bool) -> list[str]:
@@ -140,16 +204,23 @@ def merge_profiles(usable: list[str], existing: dict, measured: dict) -> dict:
 
 
 def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> dict:
-    """Row facts, text column shapes and the proposals of one table."""
-    names = [c["name"] for c in columns]
-    texts = [c["name"] for c in columns if _is_text(c["type"])]
-    keys  = [n for n in names if KEY_NAME.search(n.lower())][:MAX_KEYS]
+    """Row facts, text column shapes, filled share of the other columns and the proposals of one table."""
+    names  = [c["name"] for c in columns]
+    texts  = [c["name"] for c in columns if _is_text(c["type"])]
+    keys   = [n for n in names if KEY_NAME.search(n.lower())][:MAX_KEYS]
+    others = [n for n in names if n not in texts and n not in keys]
 
-    rows, key_counts = _count_rows(db, table, keys, quote)
+    rows, key_counts, other_counts = _count_rows(db, table, keys, quote, others)
     shapes = {column: _text_shapes(db, table, column, quote) for column in texts}
 
     entry = {"rows": rows, "keys": key_counts, "text_columns": {}}
+    if other_counts:
+        entry["filled"] = {column: round(n / rows, 3) if rows else 0.0 for column, n in other_counts.items()}
     formats, exclude = {}, {}
+    # Typed columns (dates, numbers) never filled: proposed for exclusion like an empty text column
+    for column, filled in (entry.get("filled") or {}).items():
+        if rows and filled < EMPTY_FILL:
+            exclude[column] = "empty"
     for column, column_shapes in shapes.items():
         facts = describe_shapes(column_shapes)
         entry["text_columns"][column] = facts
@@ -158,6 +229,15 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
         elif personal_values(column_shapes):
             exclude[column] = "personal data"
         elif fmt := text_format(column_shapes, column):
+            # 99/99/9999 says nothing of the order: the values tell whether the day or the month comes first
+            if fmt.startswith("date dd"):
+                order = day_month_order(*_day_month_counts(db, table, column, quote))
+                if order == "mixed":
+                    continue
+                if order == "month":
+                    fmt = month_first(fmt)
+                elif order == "ambiguous":
+                    entry.setdefault("ambiguous_dates", []).append(column)
             formats[column] = fmt
     for column in names:
         if column not in exclude and PERSONAL_NAME.search(column.lower()):
@@ -173,17 +253,23 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
 # Queries
 # ------------------------------------------------------------
 
-def _count_rows(db: SQLDatabase, table: str, keys: list[str], quote) -> tuple[int, dict]:
-    """Row count, and the non-null and distinct values of each key column (one full scan)."""
+def _count_rows(db: SQLDatabase, table: str, keys: list[str], quote,
+                others: list[str] = ()) -> tuple[int, dict, dict]:
+    """
+    Row count, the non-null and distinct values of each key column, and the non-null values of
+    the `others` columns (one full scan: a COUNT per column adds no pass over the table).
+    """
     parts = ["COUNT(*)"]
     for key in keys:
         parts += [f"COUNT({quote(key)})", f"COUNT(DISTINCT {quote(key)})"]
+    parts += [f"COUNT({quote(column)})" for column in others]
     with db._engine.connect() as conn:
         values = conn.execute(text(f"SELECT {', '.join(parts)} FROM {quote(table)}")).fetchone()
+    first_other = 1 + 2 * len(keys)
     return int(values[0]), {
         key: {"non_null": int(values[1 + 2 * i]), "distinct": int(values[2 + 2 * i])}
         for i, key in enumerate(keys)
-    }
+    }, {column: int(values[first_other + i]) for i, column in enumerate(others)}
 
 
 def key_overlap(db: SQLDatabase, source: str, target: str, sample: int = 10_000) -> float | None:
@@ -218,6 +304,23 @@ def _key_sql(column: str) -> str:
     """
     value = f"TRIM(CAST({column} AS STRING))"
     return f"CASE WHEN {value} RLIKE '^[0-9]{{1,18}}$' THEN CAST(CAST({value} AS BIGINT) AS STRING) ELSE {value} END"
+
+
+def _day_month_counts(db: SQLDatabase, table: str, column: str, quote) -> tuple[int, int]:
+    """
+    On the sample, the values of a NN/NN/NNNN column (or NN-NN-NNNN) whose first number is over 12,
+    and those whose second one is: a count each, no value read.
+    """
+    value = f"TRIM({quote(column)})"
+    query = (
+        "SELECT SUM(CASE WHEN CAST(SUBSTR(v, 1, 2) AS INT) > 12 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN CAST(SUBSTR(v, 4, 2) AS INT) > 12 THEN 1 ELSE 0 END) "
+        f"FROM (SELECT {value} AS v FROM {quote(table)} LIMIT {SAMPLE_ROWS}) s "
+        "WHERE v RLIKE '^[0-9]{2}[/-][0-9]{2}[/-][0-9]{4}'"
+    )
+    with db._engine.connect() as conn:
+        first, second = conn.execute(text(query)).fetchone()
+    return int(first or 0), int(second or 0)
 
 
 def _shape_sql(column: str) -> str:
@@ -295,6 +398,22 @@ def text_format(shapes: dict, column: str) -> str | None:
         if all(WHOLE_NUMBER.match(s) for s in numbers) and len({len(s.lstrip("+-")) for s in numbers}) == 1:
             return None
     return kind
+
+
+def day_month_order(first_over_12: int, second_over_12: int) -> str:
+    """
+    Which number of a NN/NN/NNNN date is the day: "day" (first), "month" (second, a US date),
+    "ambiguous" (no number over 12: dd/MM is kept, the convention of the data seen so far),
+    "mixed" (both orders in one column: no single format).
+    """
+    if first_over_12 and second_over_12:
+        return "mixed"
+    return "day" if first_over_12 else "month" if second_over_12 else "ambiguous"
+
+
+def month_first(date_format: str) -> str:
+    """'date dd/MM/yyyy HH:mm:ss' → 'date MM/dd/yyyy HH:mm:ss' (and dd-MM → MM-dd)."""
+    return date_format.replace("dd/MM", "MM/dd").replace("dd-MM", "MM-dd")
 
 
 def personal_values(shapes: dict) -> bool:

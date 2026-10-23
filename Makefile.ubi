@@ -17,7 +17,7 @@ RUN_T    = $(COMPOSE) run --rm -T app
 .DEFAULT_GOAL := help
 .PHONY: help \
         update build check doctor shell \
-        profile semantics relations metrics index schema \
+        profile semantics relations metrics index schema studio \
         app app-stop \
         eval eval-dashboard eval-show
 
@@ -85,6 +85,9 @@ schema:  ## Show the indexed document of a table (TABLE=client [DB=awb_silver])
 	@$(RUN_T) python -c "from resources import vector_store; \
 	docs = vector_store.get_store().get(ids=['$(DB)_$(TABLE)'])['documents']; \
 	print(docs[0] if docs else 'Not found: $(DB)_$(TABLE)')"
+
+studio:  ## Run the studio of the semantic layer on http://localhost:8100 (run the steps, review their proposals; Ctrl+C to stop)
+	$(COMPOSE) up studio
 
 ##@ App
 
