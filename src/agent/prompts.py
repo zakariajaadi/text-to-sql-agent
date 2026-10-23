@@ -186,10 +186,14 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 
 ## RULES
 - Take join conditions from the "-- Joins:" lines in the table headers. Never invent a join.
+- Join a table only to read or filter one of its columns. An identifier a table already holds
+  is counted or grouped in that table: never join the table it refers to just to count it (the
+  join adds nothing, and drops the rows whose identifier that table lacks).
 - If the question requires averaging, counting, or summing an already-aggregated value,
   you MUST specify a two-level aggregation strategy with an explicit intermediate step.
-- Counting entities (customers, accounts, people...) is COUNT(DISTINCT their id), unless the
-  table header says "One row per" that entity: a table can hold several rows per entity.
+- Counting entities (customers, accounts, people...) is always COUNT(DISTINCT their id), even
+  when the table header says "One row per" that entity: a table can hold several rows per
+  entity, or a few duplicates.
 - If a selected table declares a read mode (LAST, ALL, LIVE), list its read-mode filter
   explicitly in Filters (latest partition for LAST, latest version per key for LIVE).
 - If a selected table states "-- Data as of: D", its data stops at D: compute a relative
@@ -271,20 +275,22 @@ You ONLY write SQL — you never execute it.
    - Otherwise, or when the "Matching values:" list ends with "(+N more)", use
      LOWER(column) LIKE LOWER('%value%').
 6. Always include ORDER BY for rankings, "top N" questions, and whenever LIMIT is applied.
-7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE.
+7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE. Join a table only to
+   read or filter one of its columns: never join the table an identifier refers to just to
+   count that identifier (the join drops the rows whose identifier that table lacks).
 8. Always qualify column names with table aliases to avoid ambiguity.
 9. Use LEFT JOIN when the question implies "all items, even those without matches."
 10. For aggregations, every non-aggregated column in SELECT must appear in GROUP BY.
 11. Aliases are the column headers the user reads: write them in the language of the
     question, in snake_case, without accents. Give one to every selected column and
     expression: a business name, never the raw column name.
-12. To count entities (customers, accounts, people, files...), count their identifier:
-    COUNT(DISTINCT t.entity_id). A table can hold several rows per entity (one per product,
-    per event, per manager): COUNT(*) or COUNT(t.entity_id) only when the table header says
-    "One row per" that entity.
-    - Question in English: e.firstname AS first_name, COUNT(*) AS flight_count,
+12. To count entities (customers, accounts, people, files...), always count their distinct
+    identifier: COUNT(DISTINCT t.entity_id), even when the table header says "One row per"
+    that entity. A table can hold several rows per entity (one per product, per event, per
+    manager) or a few duplicates: COUNT(*) counts rows, never entities.
+    - Question in English: e.firstname AS first_name, COUNT(DISTINCT f.flight_id) AS flight_count,
       SUM(b.seat_price * b.passenger_count) AS total_revenue
-    - Question in French: e.firstname AS prenom, COUNT(*) AS nb_vols,
+    - Question in French: e.firstname AS prenom, COUNT(DISTINCT f.flight_id) AS nb_vols,
       SUM(b.seat_price * b.passenger_count) AS chiffre_affaires_total
 13. Filter only on what the question or the plan asks for: never add a filter of your own, on the
     product or offer a table is limited to, or to clean the data (non-null, non-empty, non-zero values).

@@ -45,6 +45,20 @@ def test_an_empty_table_is_not_missing_information(prompt):
     assert "A table with no rows" in text and "a count over it is 0" in text
 
 
+@pytest.mark.parametrize("prompt", [PLANNER_PROMPT, SQL_CODER_PROMPT])
+def test_entities_are_always_counted_distinct(prompt):
+    # No exception for a "One row per" header: a description can be wrong by a few duplicates
+    text = " ".join(prompt.split())
+    assert "always" in text and 'even when the table header says "One row per"' in text
+    assert "unless the table header says" not in text and "only when the table header says" not in text
+
+
+@pytest.mark.parametrize("prompt", [PLANNER_PROMPT, SQL_CODER_PROMPT])
+def test_no_join_just_to_count_an_identifier(prompt):
+    text = " ".join(prompt.split())
+    assert "Join a table only to read or filter one of its columns" in text
+
+
 def test_the_refusal_lines_are_the_ones_the_nodes_read():
     from lib.messages import not_available_reason
     from lib.sql_tools import is_refusal

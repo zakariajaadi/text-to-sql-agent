@@ -456,7 +456,7 @@ const STATUSES = [
   { key: "partial", label: "Bon résultat, écriture à affiner", hint: "Les lignes sont justes, le juge LLM note 3 sur 5 ou moins", color: "var(--warn)" },
   { key: "fail", label: "Écart avec la référence", hint: "Lignes différentes de la référence, ou refus d'une question à laquelle l'agent devait répondre", color: "var(--bad)" },
   { key: "refused", label: "Refus justifié", hint: "Question sans rapport avec la base, l'agent refuse au lieu d'inventer", color: "var(--s1)" },
-  { key: "other", label: "Non comparé", hint: "Pas de requête de référence exécutable pour cette question", color: "var(--neutral)" },
+  { key: "other", label: "Non comparé", hint: "Plusieurs présentations également justes (ou pas de référence exécutable) : seul le juge LLM note la question", color: "var(--neutral)" },
   { key: "error", label: "Erreur technique", hint: "Base injoignable ou plantage pendant le run, même après une relance : exclue de tous les calculs", color: "var(--axis)" },
 ];
 const STATUS = Object.fromEntries(STATUSES.map(s => [s.key, s]));
@@ -482,6 +482,7 @@ function statusOf(r) {
   const judge = r.judge?.overall?.score ?? 0;
   if (r.error) return "error";  // database unreachable or agent crash: says nothing of the answer
   if (r.category === "out_of_scope") return judge >= 5 ? "refused" : "fail";
+  if (r.compare === "judge") return r.generated_sql ? "other" : "fail";  // rows not compared, judge only
   if (r.exec_exact === 1) return judge >= 4 ? "ok" : "partial";
   if (r.exec_exact === 0 || !r.generated_sql) return "fail";  // a refused in-scope question is a miss
   return "other";
@@ -489,6 +490,8 @@ function statusOf(r) {
 // Questions with an expected answer: the denominator of every "bon résultat" rate (a refusal counts as a miss).
 // A technical error is in no denominator.
 const answerable = r => r.category !== "out_of_scope" && !r.error;
+// Questions whose rows are compared with the reference: not the ones the dataset leaves to the judge
+const compared = r => answerable(r) && r.compare !== "judge";
 
 // Every result carries its database and its status, the page filters on those
 const RUNS = DATA.runs.map((run, i) => ({ ...run, color: SERIES[i % SERIES.length] }));
@@ -590,8 +593,9 @@ function renderTables() {
 // ── Verdict ─────────────────────────────────────────────────────────────────
 function renderVerdict() {
   const rs = activeResults();
-  const scored = rs.filter(answerable);
+  const scored = rs.filter(compared);
   const exact = scored.filter(r => r.exec_exact === 1).length;
+  const judgedOnly = rs.filter(r => answerable(r) && r.compare === "judge").length;
   const rate = scored.length ? exact / scored.length : 0;
   const inScope = rs.filter(r => answerable(r) && (r.judge?.overall?.score ?? 0) > 0);
   const oos = rs.filter(r => r.category === "out_of_scope" && !r.error);
@@ -602,7 +606,8 @@ function renderVerdict() {
 
   $("hero-fig").innerHTML = `${(rate * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}<small>%</small>`;
   $("hero-text").textContent = "des questions obtiennent une requête qui renvoie exactement les mêmes lignes que la référence.";
-  $("hero-detail").textContent = `${exact} sur ${scored.length} questions qui attendent une réponse.` +
+  $("hero-detail").textContent = `${exact} sur ${scored.length} questions comparées à la référence.` +
+    (judgedOnly ? ` ${judgedOnly} autre${judgedOnly > 1 ? "s" : ""}, aux présentations multiples, ${judgedOnly > 1 ? "sont notées" : "est notée"} par le juge LLM seul.` : "") +
     (oos.length ? ` ${oos.length > 1 ? `Les ${oos.length} autres, hors périmètre, doivent` : "La dernière, hors périmètre, doit"} être refusée${oos.length > 1 ? "s" : ""}.` : "") +
     (errors ? ` ${errors} erreur${errors > 1 ? "s" : ""} technique${errors > 1 ? "s" : ""} (base injoignable), exclue${errors > 1 ? "s" : ""} du calcul.` : "");
   const counts = Object.fromEntries(STATUSES.map(s => [s.key, rs.filter(r => r.status === s.key).length]));
@@ -668,7 +673,7 @@ function renderDifficulty() {
   legend($("diff-legend"), runs);
   $("diff-bars").innerHTML = DIFFS.map(d => {
     const rows = runs.map(run => {
-      const rs = ALL.filter(r => r.db === run.meta.db && r.difficulty === d.key && answerable(r));
+      const rs = ALL.filter(r => r.db === run.meta.db && r.difficulty === d.key && compared(r));
       if (!rs.length) return "";
       const ok = rs.filter(r => r.exec_exact === 1).length, rate = ok / rs.length;
       return barRow(rate, 1, run.color, `<b>${pct(rate)}</b> · ${ok}/${rs.length}`,
@@ -701,7 +706,7 @@ function renderSkills() {
   const cats = [...new Set(rs.map(r => r.category))];
   const rows = cats.map(c => {
     const items = rs.filter(r => r.category === c);
-    const scored = items.filter(answerable);
+    const scored = items.filter(compared);
     const ok = scored.filter(r => r.exec_exact === 1).length;
     const judged = items.filter(r => (r.judge?.overall?.score ?? 0) > 0);
     return { c, items, scored, ok, judge: mean(judged.map(r => r.judge.overall.score)) };
@@ -783,7 +788,8 @@ function tablesHtml(r) {
 
 function questionHtml(r) {
   const s = STATUS[r.status], judge = r.judge?.overall?.score ?? 0;
-  const exec = r.error ? "erreur technique" : r.exec_exact === 1 ? "lignes identiques" : r.exec_exact === 0 ? "lignes différentes"
+  const exec = r.error ? "erreur technique" : r.compare === "judge" && r.generated_sql ? "jugée par le juge LLM seul"
+    : r.exec_exact === 1 ? "lignes identiques" : r.exec_exact === 0 ? "lignes différentes"
     : !r.generated_sql ? (answerable(r) ? "refusée à tort" : "refusée") : "non comparé";
   const gold = r.accepted_queries?.length
     ? r.accepted_queries.map(q => `<pre class="sql">${sqlHtml(q)}</pre>`).join("")

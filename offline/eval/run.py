@@ -61,6 +61,14 @@ def results_path(db: str) -> Path:
     return EVAL_DIR / "results" / f"{db.lower()}.json"
 
 
+def judged_only(q: dict) -> bool:
+    """
+    A dataset question with `compare: judge`: several presentations are equally right (labels of
+    age bands, an "unknown" group or not), so its rows are not compared, only the judge scores it.
+    """
+    return q.get("compare") == "judge"
+
+
 # Technical errors are run again once at the end of the run, after this pause (a cluster or VPN hiccup)
 RETRY_ERRORS_AFTER_S = 30
 
@@ -226,8 +234,8 @@ class EvaluationRunner:
             q["expected_tables"], agent_res["selected_tables"]
         )
 
-        # 3. Execution accuracy
-        exec_score = execution_accuracy(
+        # 3. Execution accuracy (not for a question several presentations answer: compare: judge)
+        exec_score = None if judged_only(q) else execution_accuracy(
             self.db_conn,
             q.get("accepted_queries", []),
             agent_res["generated_sql"]
@@ -251,6 +259,7 @@ class EvaluationRunner:
             **table_metrics,
             "exec_exact": exec_score["exact"] if exec_score else None,
             "judge": judge_res,
+            **({"compare": "judge"} if judged_only(q) else {}),
         }
 
     def _run_agent(self, question: str, tags: list[str] = None) -> dict:
@@ -349,6 +358,10 @@ def rescore(db: str, benchmark: str | Path | None = None, path: str | Path | Non
         q = gold.get(r["question"])
         if r.get("error") or not q or not r.get("generated_sql"):
             continue
+        if judged_only(q):
+            r["exec_exact"], r["compare"] = None, "judge"
+            continue
+        r.pop("compare", None)
         try:
             score = execution_accuracy(db_conn, q.get("accepted_queries", []), r["generated_sql"])
         except DatabaseUnreachable as e:

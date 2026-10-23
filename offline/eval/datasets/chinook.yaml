@@ -10,6 +10,8 @@
 #   - accepted_queries: One or more valid SQL answers
 #   - expected_row_count: (optional) Expected number of rows in the result
 #   - notes: (optional) Why this question is tricky
+#   - compare: (optional) judge — several presentations are equally right (band labels, an
+#     "unknown" group or not): the rows are not compared, only the LLM judge scores it
 #
 # Guidelines for adding questions:
 #   - Cover all tables in the schema

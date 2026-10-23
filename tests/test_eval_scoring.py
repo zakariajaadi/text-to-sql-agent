@@ -53,6 +53,12 @@ def test_a_partial_run_replaces_only_its_questions():
     ]
 
 
+def test_a_judge_only_question_is_not_compared():
+    from offline.eval.run import judged_only
+    assert judged_only({"question": "q", "compare": "judge"})
+    assert not judged_only({"question": "q"})
+
+
 def _result(score, exec_exact, error=None):
     r = {"question": "q", "difficulty": "simple", "category": "count", "latency_s": 0 if error else 5.0,
          "table_recall": 0 if error else 1.0, "exec_exact": exec_exact, "judge": uniform_score(score, "")}

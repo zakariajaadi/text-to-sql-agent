@@ -122,6 +122,8 @@ def load_run(results_file: Path) -> dict:
             "accepted_queries": q.get("accepted_queries", []),
             "expected_tables": q.get("expected_tables", []),
             "notes": (q.get("notes") or "").strip() or None,
+            # compare: judge set in the dataset after the run counts too (rows not compared)
+            **({"compare": "judge"} if q.get("compare") == "judge" or r.get("compare") == "judge" else {}),
         })
 
     return {"meta": meta, "summary": data["summary"], "results": results}
