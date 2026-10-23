@@ -12,8 +12,16 @@ from itertools import permutations
 from langchain_community.utilities import SQLDatabase
 from loguru import logger
 
+from lib.db_errors import is_unreachable
+
 # A number written as text: 2021, -3, 12.5
 NUMBER_TEXT = re.compile(r"^[+-]?\d+(\.\d+)?$")
+# A LIMIT the agent wrote (the question asked for a top N or a single answer)
+LIMIT_CLAUSE = re.compile(r"\blimit\s+\d+", re.IGNORECASE)
+
+
+class DatabaseUnreachable(Exception):
+    """The database could not be reached while scoring: a technical error, not a wrong answer."""
 
 
 def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
@@ -28,6 +36,7 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
     Returns:
         {"exact": 0.0|1.0} — score for the best-matching gold query
         None — generated_sql is None (OOS refusal or agent error)
+    Raises DatabaseUnreachable when either query can't reach the database (network, cluster down).
     """
     if not generated_sql:
         return None
@@ -44,6 +53,9 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
 
     # An ordered result can be compared on its first rows (full ranking vs expected top N)
     is_ordered = "order by" in generated_sql.lower()
+    # A query the agent limited may return part of the gold rows (one of several tied answers)
+    code = "\n".join(line for line in generated_sql.splitlines() if not line.lstrip().startswith("--"))
+    is_limited = bool(LIMIT_CLAUSE.search(code))
 
     best_exact = 0.0
 
@@ -54,7 +66,7 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
             logger.error(f"[execution] Gold query failed: {gold_sql}")
             continue
 
-        exact = _exact_execution_score(gold_rows, gen_rows, is_ordered)
+        exact = _exact_execution_score(gold_rows, gen_rows, is_ordered, is_limited)
         if exact > best_exact:
             best_exact = exact
 
@@ -68,8 +80,9 @@ def execution_accuracy(db: SQLDatabase, accepted_queries: list[str],
 
 def _execute_query(db: SQLDatabase, sql: str) -> list[tuple] | None:
     """
-    Execute a SQL query and return rows as a list of tuples.
+    Execute a SQL query and return rows as a list of tuples (all of them: no row cap here).
     Returns None on execution error (syntax, missing table, etc.).
+    Raises DatabaseUnreachable when the database can't be reached: that says nothing of the query.
     """
     try:
         from sqlalchemy import text
@@ -77,18 +90,25 @@ def _execute_query(db: SQLDatabase, sql: str) -> list[tuple] | None:
             rows = conn.execute(text(sql)).fetchall()
             return [tuple(row) for row in rows]
     except Exception as e:
+        if is_unreachable(e):
+            raise DatabaseUnreachable(f"{type(e).__name__}: {str(e)[:200]}") from e
         logger.debug(f"[execution] Query failed: {e}")
         return None
 
-    
-def _exact_execution_score(gold_rows: list, gen_rows: list, is_ordered: bool = False) -> float:
+
+def _exact_execution_score(gold_rows: list, gen_rows: list, is_ordered: bool = False,
+                           is_limited: bool = False) -> float:
     """
-    Binary execution score — 1.0 if generated rows are a valid subset of gold, 0.0 otherwise.
-    Checks that every row returned by the agent exists in the gold result set.
+    Binary execution score — 1.0 if the generated rows are the gold rows, 0.0 otherwise.
+    Both ways: every row returned by the agent exists in gold, and every gold row was returned
+    (an unrequested filter returning part of the gold rows fails). Rows compare as sets.
 
     Extra generated columns are allowed (an id or an email next to the expected name):
     the score holds if some choice of generated columns, one per gold column and in any
-    order, gives rows that all exist in gold.
+    order, gives the gold rows.
+
+    A query the agent limited (is_limited: a LIMIT for a top N or a single answer) only needs
+    its rows to exist in gold: one of several tied answers is right.
 
     An ordered result with more rows than gold (a full ranking when gold expects a top N)
     is compared on its first len(gold_rows) rows: a well-ordered ranking starts with the
@@ -107,9 +127,9 @@ def _exact_execution_score(gold_rows: list, gen_rows: list, is_ordered: bool = F
     gold = set([_normalize_row(tuple(r)) for r in gold_rows])
     gen = [_normalize_row(tuple(r)) for r in gen_rows]
 
-    # Every generated row must exist in gold (avoid LIMIT clause overhead)
     for columns in permutations(range(len(gen[0])), len(gold_rows[0])):
-        if all(tuple(r[i] for i in columns) in gold for r in gen):
+        projected = {tuple(r[i] for i in columns) for r in gen}
+        if projected <= gold and (is_limited or projected == gold):
             return 1.0
     return 0.0
 

@@ -43,15 +43,23 @@ def compute_summary(results: list[dict]) -> dict:
     3. Execution accuracy (excludes OOS/errors where score is None)
     4. Score distribution (how many 5s, 4s, etc.)
     5. Breakdown by difficulty level
+    A technical error (result "error": database unreachable, agent crash) counts in no score.
     """
     if not results:
         return {}
 
+    total = len(results)
+    errors = sum(1 for r in results if r.get("error"))
+    results = [r for r in results if not r.get("error")]
+    if not results:
+        return {"total_questions": total, "technical_errors": errors}
+
     valid = [r for r in results if r["judge"]["overall"]["score"] > 0]
 
     summary = {
-        "total_questions": len(results),
+        "total_questions": total,
         "evaluated": len(valid),
+        "technical_errors": errors,
         "avg_latency_s": round(
             sum(r["latency_s"] for r in results) / len(results), 2
         ),
@@ -103,6 +111,11 @@ def print_summary(summary: dict):
     """Print aggregate metrics to stdout."""
     print(f"\n{'=' * 50}")
     print(f"  Questions:         {summary['total_questions']}")
+    if summary.get("technical_errors"):
+        print(f"  Technical errors:  {summary['technical_errors']} (left out of every score)")
+    if "avg_overall" not in summary:
+        print(f"{'=' * 50}")
+        return
     print(f"  Avg latency:       {summary['avg_latency_s']}s")
     print(f"  Avg table recall:  {summary['avg_table_recall']}")
     print(f"  Avg overall score: {summary['avg_overall']}/5")

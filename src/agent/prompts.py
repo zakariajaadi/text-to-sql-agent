@@ -94,7 +94,8 @@ Given a user question and a list of candidate table schemas:
    question asks for is in no column of the candidate schemas: a table about the right entity is
    not enough, and another column (an identifier, a code, a label) never stands in for it.
    Then set unavailable to "restricted" when a table or column description says that information
-   exists but was withheld (excluded, confidential), to "absent" otherwise.
+   exists but was withheld (excluded, confidential), to "absent" otherwise. A table with no rows
+   is still in scope: a count over it is 0, and an empty table is never "absent".
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
    in any language. Their tables are added automatically. Leave it empty if none applies.
    A metric applies only when the question asks for the quantity it measures. Naming the
@@ -217,6 +218,8 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   "Not available (restricted): [the information]" when a table or column description says it
   exists but was withheld (excluded, confidential), "Not available (absent): [the information]"
   otherwise. Never stand another column (an identifier, a code, a label) in for it.
+  A table with no rows still holds its columns: a count over it is 0 and a list is empty, both
+  answers. A description saying a table is empty is never a reason for "Not available".
 - Limit only what the question limits: a number ("top 3 airports" → 3) or a single answer
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
@@ -314,7 +317,8 @@ business words, never a table or column name:
 when a table or column description says it exists but was withheld (excluded, confidential), or
 -- Not available (absent): [the information]
 otherwise. Never answer with another column in its place (an identifier, a code, a label), and
-never SELECT a text message.
+never SELECT a text message. A table with no rows still holds its columns: query it, a count
+over it is 0. Never answer "Not available" because a description says the table is empty.
 
 ## ERROR RECOVERY
 If you receive feedback from a failed previous attempt:

@@ -6,6 +6,7 @@
 #   python -m offline.eval.run --db Northwind                   # datasets/northwind.yaml → results/northwind.json
 #   python -m offline.eval.run --difficulty hard                # filter by difficulty
 #   python -m offline.eval.run --limit 5                        # run first N only
+#   python -m offline.eval.run --db Northwind --rescore         # compare the saved queries again, no LLM
 #
 # Usage (importable):
 #   from offline.eval.run import EvaluationRunner
@@ -16,6 +17,7 @@
 #   print_summary(runner.summary)
 
 import argparse
+import json
 import os
 import subprocess
 import time
@@ -29,6 +31,7 @@ from loguru import logger
 from agent.graph import build_graph
 from config import cfg
 from offline.eval.eval_lib import (
+    DatabaseUnreachable,
     compute_summary,
     compute_table_metrics,
     execution_accuracy,
@@ -55,6 +58,29 @@ def dataset_path(db: str) -> Path:
 def results_path(db: str) -> Path:
     """Tracked by git: after a run, `git diff` shows the change against the last committed results."""
     return EVAL_DIR / "results" / f"{db.lower()}.json"
+
+
+# Technical errors are run again once at the end of the run, after this pause (a cluster or VPN hiccup)
+RETRY_ERRORS_AFTER_S = 30
+
+
+def error_result(q: dict, error: str, detail: str) -> dict:
+    """
+    Result of a question the run could not score (error: "unreachable" or "exception").
+    It counts in no score: compute_summary leaves it out and reports how many there were.
+    """
+    return {
+        "question": q["question"],
+        "difficulty": q["difficulty"],
+        "category": q["category"],
+        "generated_sql": None,
+        "selected_tables": [],
+        "latency_s": 0,
+        "table_recall": 0, "table_precision": 0, "table_hallucination": 0,
+        "exec_exact": None,
+        "judge": uniform_score(0, f"Technical error: {detail}"),
+        "error": error,
+    }
 
 
 # ── EvaluationRunner ──────────────────────────────────────────────────────────
@@ -140,32 +166,38 @@ class EvaluationRunner:
 
             logger.info(f"[{i+1}/{len(questions)}] {q['question']}")
 
-            try:
-                result = self._evaluate_one(q)
-                # Retry once if agent failed to generate SQL
-                if result["generated_sql"] is None and q["category"] != "out_of_scope":
-                    logger.warning(f"Retrying: {q['question']}")
-                    time.sleep(5)
-                    result = self._evaluate_one(q)
-            except Exception as e:
-                logger.error(f"Agent failed: {q['question']} — {e}")
-                result = {
-                    "question": q["question"],
-                    "difficulty": q["difficulty"],
-                    "category": q["category"],
-                    "generated_sql": None,
-                    "selected_tables": [],
-                    "latency_s": 0,
-                    "table_recall": 0, "table_precision": 0, "table_hallucination": 0,
-                    "exec_exact": None,
-                    "judge": uniform_score(0, f"Agent error: {e}"),
-                }
+            self.results.append(self._evaluate_safely(q))
 
-            self.results.append(result)
+        # 3. Technical errors (database unreachable, agent crash) say nothing of the answer:
+        #    each one is run again once at the end, then left out of the scores if it fails again
+        failed = [i for i, r in enumerate(self.results) if r.get("error")]
+        if failed:
+            logger.warning(f"{len(failed)} technical error(s), running them again in {RETRY_ERRORS_AFTER_S}s")
+            time.sleep(RETRY_ERRORS_AFTER_S)
+            for i in failed:
+                logger.info(f"[retry] {questions[i]['question']}")
+                self.results[i] = self._evaluate_safely(questions[i])
 
-        # 3. Aggregate
+        # 4. Aggregate
         self.summary = compute_summary(self.results)
         return self.results
+
+    def _evaluate_safely(self, q: dict) -> dict:
+        """_evaluate_one, retried once without SQL; a technical error gives a result marked "error"."""
+        try:
+            result = self._evaluate_one(q)
+            # Retry once if agent failed to generate SQL
+            if result["generated_sql"] is None and q["category"] != "out_of_scope":
+                logger.warning(f"Retrying: {q['question']}")
+                time.sleep(5)
+                result = self._evaluate_one(q)
+            return result
+        except DatabaseUnreachable as e:
+            logger.error(f"Database unreachable: {q['question']} — {e}")
+            return error_result(q, "unreachable", str(e))
+        except Exception as e:
+            logger.error(f"Agent failed: {q['question']} — {e}")
+            return error_result(q, "exception", f"{type(e).__name__}: {e}")
 
     def _evaluate_one(self, q: dict) -> dict:
         """
@@ -175,11 +207,13 @@ class EvaluationRunner:
         3. Execution accuracy — compare result sets against gold queries
         4. LLM judge → 6-dimension scores
         """
-        # 1. Run agent
+        # 1. Run agent (a database it could not reach is a technical error, not its answer)
         agent_res = self._run_agent(
             q["question"],
             tags=["eval", f"difficulty:{q['difficulty']}"]
         )
+        if agent_res["unreachable"]:
+            raise DatabaseUnreachable("the agent could not run its query")
 
         # 2. Table metrics
         table_metrics = compute_table_metrics(
@@ -239,6 +273,7 @@ class EvaluationRunner:
             "generated_sql": result.get("generated_query") or None,
             "selected_tables": result.get("llm_selected_tables", []),
             "latency_s": round(time.perf_counter() - start, 2),
+            "unreachable": result.get("validation_check") == "unreachable",
         }
 
     def _judge_query(self, question: str, ground_truth: list[str],
@@ -278,6 +313,44 @@ class EvaluationRunner:
         return response.model_dump()
 
 
+# ── Rescore ───────────────────────────────────────────────────────────────────
+
+def rescore(db: str, benchmark: str | Path | None = None, path: str | Path | None = None) -> dict:
+    """
+    Score the SQL of a saved run again against the database, without calling any LLM:
+    after a change of the comparison (execution.py), the agent's queries and the judge's notes stay.
+    1. Read the saved results and the accepted queries of the dataset
+    2. exec_exact again for each query (a database unreachable keeps the previous score)
+    3. Summary again, saved in place
+    """
+    # 1. Inputs
+    path = Path(path or results_path(db))
+    data = json.loads(path.read_text())
+    gold = {q["question"]: q for q in load_questions(benchmark or dataset_path(db))}
+    db_conn = db_registry[db]
+
+    # 2. Execution accuracy
+    for r in data["results"]:
+        q = gold.get(r["question"])
+        if r.get("error") or not q or not r.get("generated_sql"):
+            continue
+        try:
+            score = execution_accuracy(db_conn, q.get("accepted_queries", []), r["generated_sql"])
+        except DatabaseUnreachable as e:
+            logger.error(f"Database unreachable, score kept: {r['question']} — {e}")
+            continue
+        exact = score["exact"] if score else None
+        if exact != r.get("exec_exact"):
+            logger.info(f"exec {r.get('exec_exact')} → {exact}: {r['question']}")
+        r["exec_exact"] = exact
+
+    # 3. Summary
+    summary = compute_summary(data["results"])
+    meta = {**data.get("meta", {}), "rescored_at": datetime.now().isoformat(timespec="minutes")}
+    save_results(data["results"], summary, path, meta=meta)
+    return summary
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -287,7 +360,13 @@ def main():
     parser.add_argument("--difficulty", choices=["simple", "medium", "hard"])
     parser.add_argument("--limit", type=int)
     parser.add_argument("--output", help="Results file (default: results/<db>.json)")
+    parser.add_argument("--rescore", action="store_true",
+                        help="Compare the saved queries with the gold again, no LLM call (after a change of the comparison)")
     args = parser.parse_args()
+
+    if args.rescore:
+        print_summary(rescore(args.db, args.benchmark, args.output))
+        return
 
     # 1. Run evaluation
     runner = EvaluationRunner(db=args.db)

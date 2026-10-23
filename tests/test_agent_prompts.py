@@ -38,6 +38,13 @@ def test_information_in_no_column_is_not_answered_with_another_one(prompt):
     assert "in no column" in text and "an identifier, a code, a label" in text
 
 
+@pytest.mark.parametrize("prompt", [RERANK_TABLES_PROMPT, PLANNER_PROMPT, SQL_CODER_PROMPT])
+def test_an_empty_table_is_not_missing_information(prompt):
+    # A count over a table described as empty is 0, not "Not available (absent)"
+    text = " ".join(prompt.split())
+    assert "A table with no rows" in text and "a count over it is 0" in text
+
+
 def test_the_refusal_lines_are_the_ones_the_nodes_read():
     from lib.messages import not_available_reason
     from lib.sql_tools import is_refusal
