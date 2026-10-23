@@ -37,7 +37,7 @@ PROFILE_HEADER = """\
 # Data profile, measured by `make profile` (no LLM): the tables measured replace their entry, never edited.
 # Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
 #   rows, keys          : row count, and per identifier-like column its non-null and distinct values
-#   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   text_columns        : filled share, main value shapes (digits → 9, letters → a) and distinct values, on a sample
 #   filled              : filled share of the other columns (numbers, dates...), on every row
 #   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
 
@@ -46,6 +46,7 @@ PROFILE_HEADER = """\
 SAMPLE_ROWS       = 100_000   # rows read to compute the shapes of the text columns
 MAX_KEYS          = 8         # identifier-like columns counted per table
 MAX_SHAPES        = 6         # shapes kept per column in the profile
+DISTINCT_BATCH    = 10        # text columns whose distinct values one query counts (a small Hive runs out of memory)
 EMPTY_FILL        = 0.01      # a column filled below this share is proposed for exclusion
 FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share of the filled values
 
@@ -211,7 +212,8 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
     others = [n for n in names if n not in texts and n not in keys]
 
     rows, key_counts, other_counts = _count_rows(db, table, keys, quote, others)
-    shapes = {column: _text_shapes(db, table, column, quote) for column in texts}
+    shapes   = {column: _text_shapes(db, table, column, quote) for column in texts}
+    distinct = _distinct_counts(db, table, texts, quote)
 
     entry = {"rows": rows, "keys": key_counts, "text_columns": {}}
     if other_counts:
@@ -223,7 +225,7 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
             exclude[column] = "empty"
     for column, column_shapes in shapes.items():
         facts = describe_shapes(column_shapes)
-        entry["text_columns"][column] = facts
+        entry["text_columns"][column] = {**facts, "distinct": distinct[column]}
         if facts["filled"] < EMPTY_FILL:
             exclude[column] = "empty"
         elif personal_values(column_shapes):
@@ -326,6 +328,22 @@ def _day_month_counts(db: SQLDatabase, table: str, column: str, quote) -> tuple[
 def _shape_sql(column: str) -> str:
     """SQL of the shape of a value: digits → 9, every run of other letters → a (separators kept)."""
     return f"REGEXP_REPLACE(REGEXP_REPLACE({column}, '[0-9]', '9'), '[^9/.:,+@ -]+', 'a')"
+
+
+def _distinct_counts(db: SQLDatabase, table: str, columns: list[str], quote) -> dict[str, int]:
+    """
+    Distinct values of each text column on the sample: how many labels a column holds, shown by the studio
+    next to its categorical switch (never a threshold: a reference table has many on purpose).
+    DISTINCT_BATCH columns per query, the sample read once each.
+    """
+    counts = {}
+    for start in range(0, len(columns), DISTINCT_BATCH):
+        batch = columns[start:start + DISTINCT_BATCH]
+        query = (f"SELECT {', '.join(f'COUNT(DISTINCT {quote(c)})' for c in batch)} "
+                 f"FROM (SELECT {', '.join(quote(c) for c in batch)} FROM {quote(table)} LIMIT {SAMPLE_ROWS}) s")
+        with db._engine.connect() as conn:
+            counts.update(zip(batch, (int(n) for n in conn.execute(text(query)).fetchone())))
+    return counts
 
 
 def _text_shapes(db: SQLDatabase, table: str, column: str, quote) -> dict:

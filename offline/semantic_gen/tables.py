@@ -43,7 +43,7 @@ semantics_chain = (
 # Generator
 # ------------------------------------------------------------
 
-def generate_table_semantics(db_name: str, fresh: bool = False):
+def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str] | None = None):
     """
     Generates a semantic layer via LLM into semantic_layer/<db>/tables.yaml: missing table
     and column descriptions, and which columns are categorical, written in the database's
@@ -58,13 +58,17 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
     list only gains columns that are new to the table.
     fresh: drop the generated content first (descriptions, categorical columns) and generate
     it again, keeping the manual keys (formats, exclude_columns, data_as_of, read mode...).
+    tables: only these tables (the others left as they are); ValueError on an unknown one.
     """
     db         = db_registry[db_name]
     existing   = load_semantics(db_name)
-    if fresh:
-        existing = {table: manual_semantics(entry) for table, entry in existing.items()}
-    language   = cfg.get_db(db_name).semantic_language
     db_columns = table_columns(db)
+    if tables and (unknown := sorted(set(tables) - set(db_columns))):
+        raise ValueError(f"Unknown or excluded table(s): {', '.join(unknown)}")
+    if fresh:
+        existing = {table: manual_semantics(entry) if not tables or table in tables else entry
+                    for table, entry in existing.items()}
+    language   = cfg.get_db(db_name).semantic_language
     profile    = load_profile(db_name)
     personal   = cfg.get_db(db_name).exclude_personal_data
 
@@ -83,9 +87,11 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
     # 1. Only tables with something missing go to the LLM
     todo = [
         t for t in columns
-        if t not in existing
-        or "categorical_columns" not in existing[t]
-        or set(columns[t]) - set(existing[t].get("columns") or {})
+        if (not tables or t in tables) and (
+            t not in existing
+            or "categorical_columns" not in existing[t]
+            or set(columns[t]) - set(existing[t].get("columns") or {})
+        )
     ]
 
     def generate(table: str) -> tuple[str, TableSemantics]:
@@ -135,8 +141,11 @@ def generate_table_semantics(db_name: str, fresh: bool = False):
             if column not in db_columns.get(table, []):
                 logger.warning(f"[{db_name}] Stale description: {table}.{column} no longer exists")
 
+    # Written at once (a temporary file renamed): offline/studio reads it while a run goes on
     path = tables_path(db_name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_table_semantics(existing))
+    temporary = path.with_suffix(".yaml.tmp")
+    temporary.write_text(dump_table_semantics(existing))
+    temporary.replace(path)
 
     logger.info(f"[{db_name}] {len(todo)} table(s) described, {added} column description(s) added — review them.")

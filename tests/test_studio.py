@@ -1,5 +1,6 @@
 """Studio of the semantic layer (offline/studio): what the profile detects, table statuses, jobs, routes."""
 
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
@@ -8,12 +9,14 @@ from fastapi.testclient import TestClient
 
 import lib.semantics
 from offline.studio import app as studio_app
-from offline.studio.jobs import Job, profile_command
+from offline.studio.jobs import Job, profile_command, semantics_command
 from offline.studio.state import (
+    edit_semantics,
     hide_personal,
     metric_tables,
     personal_columns,
     proposals,
+    semantics_detail,
     set_excluded,
     set_format,
     table_detail,
@@ -115,16 +118,19 @@ def test_metric_tables_reads_expressions_and_time_dimensions():
 
 def test_table_rows():
     profile   = {"dossier": FACTS, "client": {"rows": 5}}
-    semantics = {"client": {"description": "Clients"}}
-    rows = table_rows(["dossier", "client", "agence"], {"dossier": 12}, profile, semantics,
-                      relations=[("dossier.id_client", "client.id_client")],
+    semantics = {"client": {"description": "Clients"},
+                 "agence": {"description": "Agences", "columns": {"code": "Code."}, "exclude_columns": ["fax"]}}
+    rows = table_rows(["dossier", "client", "agence"], {"dossier": ["a", "b"], "agence": ["code", "ville", "fax"]},
+                      profile, semantics, relations=[("dossier.id_client", "client.id_client")],
                       metrics={"n": {"expr": "COUNT(DISTINCT client.id_client)"}}, personal=False)
-    assert [(r["name"], r["rows"], r["columns"]) for r in rows] == [("dossier", 100, 12), ("client", 5, None),
-                                                                     ("agence", None, None)]
+    assert [(r["name"], r["rows"], r["columns"]) for r in rows] == [("dossier", 100, 2), ("client", 5, None),
+                                                                     ("agence", None, 3)]
     # profiled is done: what the profile detects needs no review
     assert rows[0]["status"] == {"profile": "done", "semantics": "none", "relations": "done", "metrics": "none"}
     assert rows[1]["status"] == {"profile": "done", "semantics": "done", "relations": "done", "metrics": "done"}
     assert rows[2]["status"]["profile"] == "none"
+    # described, but a column added since has no description (an excluded one needs none)
+    assert (rows[2]["status"]["semantics"], rows[2]["undescribed"]) == ("partial", 1)
 
 
 DB_COLUMNS = [{"name": "id_dossier", "type": "BIGINT"}, {"name": "date_deblocage", "type": "STRING"},
@@ -186,6 +192,18 @@ def test_format_share_and_unique_key():
 def test_profile_command():
     assert profile_command("awb", ["a", "b"], False)[1:] == ["-m", "offline.cli", "profile", "--db", "awb", "--tables", "a,b"]
     assert profile_command("awb", None, True)[-1] == "--missing"
+
+
+def test_semantics_command():
+    assert semantics_command("awb", None, False)[1:] == ["-m", "offline.cli", "semantics", "--db", "awb"]
+    assert semantics_command("awb", ["a"], True)[-3:] == ["--tables", "a", "--fresh"]
+
+
+def test_job_counts_the_tables_sent_to_the_llm():
+    job = Job(id=1, db="awb", step="semantics", tables=None, command=[])
+    for table in ("a", "b"):
+        job.add_line(f"2026-10-23 10:00:01 | INFO     | offline.semantic_gen.tables:generate:96 - [awb] Describing: {table}")
+    assert job.to_dict()["started_tables"] == ["a", "b"]
 
 
 def test_job_follows_the_progress_of_the_cli():
@@ -268,3 +286,66 @@ def test_personal_data_hidden_everywhere_then_one_kept_visible(client, tmp_path)
 
     detail = change(client, "nom_client", "show", home["version"]).json()
     assert next(c for c in detail["column_facts"] if c["column"] == "nom_client")["personal"] == "kept"
+
+
+# =============================================================================
+# Semantics: the descriptions read and corrected in the studio
+# =============================================================================
+
+ENTRY = {
+    "description": "Dossiers de crédit.", "data_as_of": date(2026, 6, 16),
+    "categorical_columns": ["statut"], "exclude_columns": ["commentaire"],
+    "columns": {"id_dossier": "Numéro du dossier.", "statut": "État du dossier."},
+}
+SEM_COLUMNS = [{"name": "id_dossier", "type": "BIGINT"}, {"name": "statut", "type": "STRING"},
+               {"name": "agence", "type": "STRING"}, {"name": "commentaire", "type": "STRING"}]
+SEM_FACTS = {"rows": 100, "keys": {"id_dossier": {"non_null": 100, "distinct": 100}},
+             "text_columns": {"statut": {"filled": 1.0, "distinct": 3}, "agence": {"filled": 1.0, "distinct": 412}}}
+
+
+def test_semantics_detail():
+    detail = semantics_detail("dossier", ENTRY, SEM_FACTS, SEM_COLUMNS)
+    lines = {c["column"]: c for c in detail["columns"]}
+    assert (detail["description"], detail["data_as_of"]) == ("Dossiers de crédit.", "2026-06-16")
+    # distinct values of the whole table for a key, of the sample for a text column: shown, never a threshold
+    assert (lines["id_dossier"]["distinct"], lines["id_dossier"]["sampled"]) == (100, False)
+    assert (lines["agence"]["distinct"], lines["agence"]["sampled"], lines["agence"]["categorical"]) == (412, True, False)
+    assert lines["statut"]["categorical"] and lines["commentaire"]["excluded"]
+    # the excluded column is not counted: the agent does not see it
+    assert detail["counts"] == {"columns": 4, "described": 2, "visible": 3, "categorical": 1}
+
+
+def test_edit_semantics():
+    order = [c["name"] for c in SEM_COLUMNS]
+    entry = edit_semantics(ENTRY, "column", "  Agence du dossier. ", "agence")
+    assert entry["columns"]["agence"] == "Agence du dossier."
+    assert "agence" not in edit_semantics(entry, "column", "", "agence")["columns"]   # make semantics writes it again
+    # categorical columns kept in the order of the table
+    assert edit_semantics(ENTRY, "categorical", True, "id_dossier", order)["categorical_columns"] == ["id_dossier", "statut"]
+    assert edit_semantics(ENTRY, "categorical", False, "statut", order)["categorical_columns"] == []
+    assert edit_semantics(ENTRY, "data_as_of", "2026-07-01")["data_as_of"] == date(2026, 7, 1)
+    assert "data_as_of" not in edit_semantics(ENTRY, "data_as_of", "")
+    with pytest.raises(ValueError):
+        edit_semantics(ENTRY, "data_as_of", "16/06/2026")
+    assert ENTRY["columns"] == {"id_dossier": "Numéro du dossier.", "statut": "État du dossier."}   # never changed in place
+
+
+def test_a_description_edited_from_the_page(client, tmp_path):
+    detail = client.get("/api/db/awb/tables/dossier/semantics").json()
+    assert detail["described"] and detail["description"] == "Dossiers"
+
+    edit = lambda field, value, column=None: client.post(  # noqa: E731
+        "/api/db/awb/tables/dossier/semantics",
+        json={"field": field, "value": value, "column": column, "version": detail["version"]})
+    detail = edit("column", "Date de déblocage du prêt.", "date_deblocage").json()
+    detail = edit("categorical", True, "date_deblocage").json()
+    written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())
+    assert written["dossier"]["columns"] == {"date_deblocage": "Date de déblocage du prêt."}
+    assert written["dossier"]["categorical_columns"] == ["date_deblocage"]
+    assert edit("data_as_of", "demain").status_code == 400
+    assert edit("column", "x", "inconnue").status_code == 400
+
+
+def test_describe_again_needs_tables(client):
+    assert client.post("/api/db/awb/semantics", json={"fresh": True}).status_code == 400
+    assert client.post("/api/db/awb/semantics", json={"tables": ["inconnue"]}).status_code == 400

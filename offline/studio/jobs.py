@@ -25,7 +25,8 @@ STOP_GRACE = 30     # seconds a stopped job has to cancel its query (offline/que
 ANSI     = re.compile(r"\x1b\[[0-9;]*m")
 # A loguru line of config.py: "2026-10-23 10:12:03 | INFO     | module:function:12 - message"
 LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\d (?P<time>\d\d:\d\d:\d\d) \| (?P<level>\w+)\s*\| [^ ]+ - (?P<message>.*)$")
-STARTED  = re.compile(r"\] Profiling: (?P<table>\S+)$")
+# A table started: profiled one at a time, described up to 8 at a time (offline/semantic_gen/tables.py)
+STARTED  = re.compile(r"\] (?:Profiling|Describing): (?P<table>\S+)$")
 FAILED   = re.compile(r"\] Not profiled: (?P<table>\S+) ")
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
@@ -49,6 +50,7 @@ class Job:
     current_since: float | None = None   # when the current table started: how long the database takes
     done: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    started_tables: list[str] = field(default_factory=list)   # every table started, in order
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -65,6 +67,7 @@ class Job:
         line  = match.groupdict() if match else {"time": None, "level": None, "message": text}
         message = line["message"]
         if started := STARTED.search(message):
+            self.started_tables.append(started["table"])
             if self.current and self.current not in self.failed:
                 self.done.append(self.current)
             self.current, self.current_since = started["table"], time.time()
@@ -94,6 +97,7 @@ class Job:
             "running": self.running, "returncode": self.returncode, "stopped": self.stopped,
             "stopped_at": self.stopped_at, "cancel": self.cancel,
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
+            "started_tables": self.started_tables,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 
@@ -105,6 +109,16 @@ def profile_command(db: str, tables: list[str] | None, missing: bool) -> list[st
         command += ["--tables", ",".join(tables)]
     elif missing:
         command.append("--missing")
+    return command
+
+
+def semantics_command(db: str, tables: list[str] | None, fresh: bool) -> list[str]:
+    """The CLI command of `make semantics`: the missing descriptions, or `tables` described again (fresh)."""
+    command = [sys.executable, "-m", "offline.cli", "semantics", "--db", db]
+    if tables:
+        command += ["--tables", ",".join(tables)]
+    if fresh:
+        command.append("--fresh")
     return command
 
 

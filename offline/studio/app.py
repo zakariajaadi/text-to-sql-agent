@@ -31,13 +31,21 @@ from lib.database import build_database
 from lib.semantics import load_fk_relations, load_profile, load_semantics, tables_path
 from offline.semantic_gen.utils import dump_table_semantics
 from offline.studio import state
-from offline.studio.jobs import JobRunner, profile_command
+from offline.studio.jobs import JobRunner, profile_command, semantics_command
 
 STATIC = Path(__file__).parent / "static"
 
 app    = FastAPI(title="Semantic layer studio")
 runner = JobRunner()
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.middleware("http")
+async def revalidate(request, call_next):
+    """The page and its files are checked again at each load: after an update, never an old script with a new page."""
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 # ------------------------------------------------------------
@@ -129,8 +137,8 @@ def tables(db: str, refresh: bool = False):
     semantics = load_semantics(db)
     relations = load_fk_relations(db)
     metrics   = _load_metrics(db)
-    counts = {table: len(columns) for table, columns in listing["columns"].items()}
-    rows = state.table_rows(listing["tables"], counts, profile, semantics, relations, metrics,
+    names = {table: [c["name"] for c in columns] for table, columns in listing["columns"].items()}
+    rows = state.table_rows(listing["tables"], names, profile, semantics, relations, metrics,
                             db_cfg.exclude_personal_data)
     count = lambda step, status: sum(r["status"][step] == status for r in rows)  # noqa: E731
     personal = [s for columns in state.personal_columns(profile, semantics).values() for s in columns.values()]
@@ -141,7 +149,8 @@ def tables(db: str, refresh: bool = False):
         "summary": {
             "tables":    len(rows),
             "profiled":  len(rows) - count("profile", state.NONE),
-            "described": count("semantics", state.DONE),
+            "described": len(rows) - count("semantics", state.NONE),
+            "partial":   count("semantics", state.PARTIAL),
             "relations": len(relations),
             "metrics":   len([name for name in metrics if name != "ignore"]),
         },
@@ -161,6 +170,54 @@ def table_detail(db: str, table: str):
     return {**detail, "columns": len(db_columns) if db_columns else None, "version": _version(db)}
 
 
+@app.get("/api/db/{db}/tables/{table}/semantics")
+def table_semantics(db: str, table: str):
+    """A table as the Semantics screen shows it: descriptions, data_as_of, categorical columns."""
+    _db_config(db)
+    listing = _listing(db)
+    if table not in listing["tables"]:
+        raise HTTPException(404, f"Unknown table: {table}")
+    detail = state.semantics_detail(table, load_semantics(db).get(table), load_profile(db).get(table),
+                                    listing["columns"].get(table))
+    return {**detail, "version": _version(db)}
+
+
+class SemanticsEdit(BaseModel):
+    field: Literal["description", "data_as_of", "column", "categorical"]
+    value: str | bool | None = None
+    column: str | None = None
+    version: str
+
+
+@app.post("/api/db/{db}/tables/{table}/semantics")
+def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
+    """One field corrected in the studio (the description of the table or of a column, data_as_of, categorical)."""
+    _db_config(db)
+    listing = _listing(db)
+    if table not in listing["tables"]:
+        raise HTTPException(404, f"Unknown table: {table}")
+    order = [c["name"] for c in listing["columns"].get(table) or []]
+    if request.field in ("column", "categorical") and order and request.column not in order:
+        raise HTTPException(400, f"Unknown column: {table}.{request.column}")
+    try:
+        _update_semantics(db, request.version, lambda semantics: {
+            **semantics, table: state.edit_semantics(semantics.get(table), request.field, request.value,
+                                                     request.column, order)})
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(f"[studio] {db}.{table}: {request.field} {request.column or ''} edited")
+    return table_semantics(db, table)
+
+
+def _start(db: str, step: str, command: list[str], tables: list[str] | None):
+    if unknown := sorted(set(tables or []) - set(_listing(db)["tables"])):
+        raise HTTPException(400, f"Unknown table(s): {', '.join(unknown)}")
+    try:
+        return runner.start(db, step, command, tables).to_dict()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+
+
 class ProfileRequest(BaseModel):
     tables: list[str] | None = None
     missing: bool = False
@@ -172,13 +229,21 @@ def profile(db: str, request: ProfileRequest):
     _db_config(db)
     if not request.tables and not request.missing:
         raise HTTPException(400, "Choose tables, or the missing ones")
-    if unknown := sorted(set(request.tables or []) - set(_listing(db)["tables"])):
-        raise HTTPException(400, f"Unknown table(s): {', '.join(unknown)}")
-    try:
-        job = runner.start(db, "profile", profile_command(db, request.tables, request.missing), request.tables)
-    except RuntimeError as e:
-        raise HTTPException(409, str(e)) from e
-    return job.to_dict()
+    return _start(db, "profile", profile_command(db, request.tables, request.missing), request.tables)
+
+
+class SemanticsRequest(BaseModel):
+    tables: list[str] | None = None
+    fresh: bool = False
+
+
+@app.post("/api/db/{db}/semantics")
+def describe(db: str, request: SemanticsRequest):
+    """Describe the tables missing a description, or describe the tables chosen again (make semantics ARGS=...)."""
+    _db_config(db)
+    if request.fresh and not request.tables:
+        raise HTTPException(400, "Choose the tables to describe again")
+    return _start(db, "semantics", semantics_command(db, request.tables, request.fresh), request.tables)
 
 
 def _update_semantics(db: str, version: str, change) -> None:

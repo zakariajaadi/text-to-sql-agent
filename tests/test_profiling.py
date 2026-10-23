@@ -243,6 +243,12 @@ def test_profile_every_table_keeps_the_entry_of_a_failing_one(bank, monkeypatch)
     assert profile["compte"]["rows"] == 3
 
 
+def test_distinct_values_counted_on_the_sample_a_few_columns_per_query(bank, monkeypatch):
+    monkeypatch.setattr(profiling, "DISTINCT_BATCH", 1)
+    quote = bank._engine.dialect.identifier_preparer.quote
+    assert profiling._distinct_counts(bank, "compte", ["id_compte", "id_client"], quote) == {"id_compte": 3, "id_client": 2}
+
+
 def test_profile_an_unknown_table_stops(bank):
     with pytest.raises(ValueError, match="clients"):
         profiling.profile_database(bank, "bank", tables=["clients"])

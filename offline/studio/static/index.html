@@ -24,24 +24,25 @@
       </button>
     </span>
     <span class="grow"></span>
-    <ol class="stepper" aria-label="Étapes du pipeline">
-      <li class="on" aria-current="step">Profiling</li>
-      <li>Semantics</li>
-      <li>Relations</li>
-      <li>Metrics</li>
-      <li>Index</li>
+    <ol class="stepper" id="stepper" aria-label="Étapes du pipeline">
+      <li data-step="profile"><button>Profiling</button></li>
+      <li data-step="semantics"><button>Semantics</button></li>
+      <li class="later" title="À venir">Relations</li>
+      <li class="later" title="À venir">Metrics</li>
+      <li class="later" title="À venir">Index</li>
     </ol>
   </header>
 
+  <!-- Filled by studio.js from STEPS: the title, the sentence and the actions of the current step -->
   <section class="page-head">
     <div class="page-title">
-      <div class="eyebrow">Étape 1 sur 5</div>
-      <h1>Profiling</h1>
-      <p>On examine le contenu réel de chaque table pour que l'agent la lise correctement : les colonnes vides, les dates ou montants enregistrés comme du texte, les données personnelles.</p>
+      <div class="eyebrow" id="step-number"></div>
+      <h1 id="step-title"></h1>
+      <p id="step-text"></p>
     </div>
     <div class="page-actions">
-      <button class="btn" id="run-missing">Profiler les manquantes</button>
-      <button class="btn primary" id="run-selected">Profiler la sélection (0)</button>
+      <button class="btn" id="run-secondary"></button>
+      <button class="btn primary" id="run-primary"></button>
     </div>
   </section>
 
@@ -65,7 +66,7 @@
         <input id="search" type="search" placeholder="Rechercher une table" autocomplete="off">
         <div class="chips" id="filters">
           <button class="chip on" data-filter="all">Toutes</button>
-          <button class="chip" data-filter="none">À profiler</button>
+          <button class="chip" data-filter="todo"></button>
         </div>
       </div>
       <div class="row head">
@@ -78,7 +79,6 @@
     </section>
 
     <section class="panel detail" id="detail" aria-live="polite">
-      <p class="placeholder">Choisis une table pour voir ses colonnes.</p>
     </section>
   </div>
 

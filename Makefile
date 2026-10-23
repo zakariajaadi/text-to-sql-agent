@@ -50,8 +50,8 @@ hive-partitioned:  ## Create the read-mode test tables (Full/Last, Delta/All, CD
 profile:  ## Measure the data → semantic_layer/<DB>/profile.yaml (no LLM; ARGS="--tables a,b" or "--missing": only those, merged)
 	$(RUN) -m offline.cli profile --db $(DB) $(ARGS)
 
-semantics:  ## Generate table/column descriptions and categorical columns (review semantic_layer/<DB>/tables.yaml)
-	$(RUN) -m offline.cli semantics --db $(DB)
+semantics:  ## Generate table/column descriptions and categorical columns (ARGS="--tables a,b" and/or "--fresh")
+	$(RUN) -m offline.cli semantics --db $(DB) $(ARGS)
 
 relations:  ## Generate FK relations (review semantic_layer/<DB>/relationships.yaml)
 	$(RUN) -m offline.cli fk-relations --db $(DB)

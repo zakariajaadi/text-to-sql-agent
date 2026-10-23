@@ -128,6 +128,11 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .stepper li:not(:last-child)::after { content: ""; width: 16px; height: 1px; background: var(--line); margin-left: 4px; }
 .stepper li.on { color: var(--ink); font-weight: 500; }
 .stepper li.on::before { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* A step with a screen opens on a click; a step to come is plain text */
+.stepper button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.stepper li:not(.on) button { color: var(--ink-2); }
+.stepper li:not(.on) button:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.stepper li.later { cursor: default; }
 
 /* ── Level 2, the title of the page: what the step does, and its actions ── */
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; padding: 6px 0 4px; }
@@ -211,6 +216,47 @@ button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 .line { grid-template-columns: minmax(0, 1.4fr) minmax(70px, 0.6fr) minmax(0, 1fr) 104px 76px; font-size: 0.85rem; }
 .line .mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
 .line.hidden-col > .cell:first-child { color: var(--muted); }
+
+/* ── Semantics: descriptions read and corrected in place ── */
+.table-text { padding: 0 14px 14px; display: grid; gap: 10px; }
+.field-label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+.as-of { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.as-of .field-label { margin: 0; }
+/* A field reads as text, its frame shows on hover and while typing */
+.edit {
+  font: inherit; font-size: 0.85rem; line-height: 1.5; color: var(--ink); background: transparent; width: 100%;
+  border: 1px solid transparent; border-radius: 6px; padding: 3px 6px; margin: -4px -7px; resize: none; overflow: hidden;
+}
+.edit:hover { border-color: var(--line); }
+.edit:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+.edit::placeholder { color: var(--warn-ink); }
+.edit.block { margin: 0; padding: 8px 10px; border-color: var(--line); font-size: 0.9rem; }
+.edit.date { width: auto; margin: 0; padding: 3px 8px; border-color: var(--line); font-family: var(--font-mono); font-size: 0.8rem; }
+.sline {
+  display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(60px, 0.4fr) minmax(0, 2fr) 128px; gap: 12px;
+  align-items: start; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 0.85rem;
+}
+.sline:last-child { border-bottom: 0; }
+.sline.head { font-size: 0.75rem; color: var(--muted); padding-block: 9px; align-items: center; }
+.sline > .cell { padding-top: 1px; }
+.sline .mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+.sline.hidden-col > .cell:first-child { color: var(--muted); }
+.switch-cell { display: flex; align-items: center; justify-content: flex-end; gap: 8px; cursor: pointer; }
+.values { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+/* The categorical switch: a checkbox drawn as a toggle */
+input.switch {
+  appearance: none; -webkit-appearance: none; width: 28px; height: 16px; border-radius: 999px; flex: none;
+  background: var(--none); position: relative; cursor: pointer; transition: background var(--dur, 0.15s);
+}
+input.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--surface); transition: left 0.15s;
+}
+input.switch:checked { background: var(--good); }
+input.switch:checked::after { left: 14px; }
+.save-state { font-size: 0.75rem; color: var(--muted); }
+.save-state.ok { color: var(--good-ink); }
+.save-state.error { color: var(--bad-ink); }
 .fill { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
 .bar { width: 36px; height: 4px; border-radius: 2px; background: var(--chip); overflow: hidden; flex: none; }
 .bar i { display: block; height: 100%; background: var(--good); }
@@ -245,6 +291,9 @@ button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 @media (max-width: 560px) {
   .line { grid-template-columns: minmax(0, 1fr) minmax(0, auto) 88px; gap: 8px; }
   .line > :nth-child(2), .line > :nth-child(5) { display: none; }
+  .sline { grid-template-columns: minmax(0, 1fr) 64px; }
+  .sline > :nth-child(2), .sline.head > :nth-child(3) { display: none; }
+  .sline > textarea { grid-column: 1 / -1; grid-row: 2; }
   /* the name of the current step only, the others as dots: one line */
   .stepper li:not(.on) { font-size: 0; gap: 0; }
   .stepper li:not(:last-child)::after { width: 10px; margin-left: 6px; }

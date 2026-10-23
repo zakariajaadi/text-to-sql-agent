@@ -9,7 +9,7 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
                     formats and empty columns it detects into tables.yaml (a table that has none yet)
                     (--tables a,b / --missing: only those tables, merged into the profile)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
-                    (--fresh: generated again from scratch, the manual keys kept)
+                    (--fresh: generated again from scratch, the manual keys kept; --tables a,b: only those)
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
     (review the YAML files)
@@ -40,7 +40,7 @@ def main():
                         help="semantics: regenerate the descriptions and categorical columns, "
                              "keeping the manual keys (formats, exclude_columns, data_as_of...)")
     parser.add_argument("--tables", type=lambda s: [t.strip() for t in s.split(",") if t.strip()],
-                        help="profile: only these tables (comma-separated), the others kept in profile.yaml")
+                        help="profile, semantics: only these tables (comma-separated), the others left as they are")
     parser.add_argument("--missing", action="store_true",
                         help="profile: only the tables not in profile.yaml yet")
     args = parser.parse_args()
@@ -50,7 +50,7 @@ def main():
         "profile":      lambda name: profiling.profile_database(
                             db_registry[name], name, tables=args.tables, missing=args.missing,
                             personal=cfg.get_db(name).exclude_personal_data),
-        "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh),
+        "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh, tables=args.tables),
         "fk-relations": relationships.infer_fk_relations,
         "metrics":      metrics.generate_metrics,
     }

@@ -2,7 +2,8 @@
 
 """
 What the studio shows of a database, read from its semantic layer files (pure functions, unit-tested):
-the status of each table at each step, and what the profile detects in each column.
+the status of each table at each step, what the profile detects in each column, and the descriptions
+the LLM writes (semantics_detail, edit_semantics).
 
 What the profile detects is data-driven, nobody reviews it: `make profile` writes the formats and the
 empty columns into tables.yaml (offline/semantic_gen/profiling.apply_profile). The studio shows each
@@ -15,11 +16,12 @@ Personal data is hidden in the whole database at once (hide_personal).
 """
 
 import re
+from datetime import date
 
 from offline.semantic_gen.profiling import DATE_SHAPES, NUMBER_SHAPE
 
 # Status of a table at a step
-NONE, DONE = "none", "done"
+NONE, PARTIAL, DONE = "none", "partial", "done"
 PERSONAL = "personal data"
 
 
@@ -153,25 +155,37 @@ def column_kind(type_name: str | None) -> str | None:
     return "other"
 
 
-def table_rows(tables: list[str], columns: dict[str, int], profile: dict, semantics: dict,
+def undescribed(entry: dict | None, columns: list[str]) -> list[str]:
+    """The columns the agent sees (not excluded) that have no description yet."""
+    entry = entry or {}
+    excluded, described = set(entry.get("exclude_columns") or []), entry.get("columns") or {}
+    return [c for c in columns if c not in excluded and not described.get(c)]
+
+
+def table_rows(tables: list[str], columns: dict[str, list[str]], profile: dict, semantics: dict,
                relations: list[tuple[str, str]], metrics: dict, personal: bool) -> list[dict]:
     """
     One row per table of the home screen: its size (rows measured by the profile, columns of the database)
     and its status at each step. Profile: done once profiled (what it detects needs no review).
-    Semantics: done once described. Relations, metrics: done when a relation or a metric reads the table.
+    Semantics: done once the table and its columns are described, partial while some columns are not
+    (`undescribed`: added since the last description). Relations, metrics: done when a relation or a
+    metric reads the table.
     """
     related  = {side.split(".")[0] for relation in relations for side in relation}
     measured = metric_tables(metrics)
     rows = []
     for table in tables:
         facts = profile.get(table)
+        entry = semantics.get(table) or {}
+        missing = undescribed(entry, columns.get(table) or []) if entry.get("description") else []
         rows.append({
-            "name":    table,
-            "rows":    facts["rows"] if facts else None,
-            "columns": columns.get(table),
+            "name":        table,
+            "rows":        facts["rows"] if facts else None,
+            "columns":     len(columns[table]) if columns.get(table) else None,
+            "undescribed": len(missing),
             "status": {
                 "profile":   DONE if facts else NONE,
-                "semantics": DONE if (semantics.get(table) or {}).get("description") else NONE,
+                "semantics": NONE if not entry.get("description") else PARTIAL if missing else DONE,
                 "relations": DONE if table in related else NONE,
                 "metrics":   DONE if table.lower() in measured else NONE,
             },
@@ -239,3 +253,93 @@ def table_detail(table: str, facts: dict | None, entry: dict | None, personal: b
         "unique_key":   next((c["column"] for c in column_facts if c["key"] == "unique"), None),
         "column_facts": column_facts,
     }
+
+
+# ------------------------------------------------------------
+# Semantics: the descriptions the LLM writes, read and corrected in the studio
+# ------------------------------------------------------------
+
+DATE = re.compile(r"^\d{4}-\d\d-\d\d$")
+
+
+def semantics_detail(table: str, entry: dict | None, facts: dict | None, db_columns: list[dict] | None) -> dict:
+    """
+    A table as the Semantics screen shows it: its description and the date its data stops (data_as_of),
+    then one line per column of the database (`db_columns`, in DDL order; without them the described ones):
+    its type, description, whether it is categorical, and its distinct values measured by the profile
+    (of the whole table for a key, of the sample for a text column; None when not measured).
+    An excluded column is never described: the agent does not see it.
+    """
+    entry, facts = entry or {}, facts or {}
+    described   = entry.get("columns") or {}
+    categorical = set(entry.get("categorical_columns") or [])
+    excluded    = set(entry.get("exclude_columns") or [])
+    keys, texts = facts.get("keys") or {}, facts.get("text_columns") or {}
+    rows        = facts.get("rows") or 0
+    types       = {c["name"]: c["type"] for c in db_columns or []}
+    columns = []
+    for column in dict.fromkeys([*types, *described]):
+        counts = keys.get(column)
+        columns.append({
+            "column":      column,
+            "type":        types.get(column),
+            "kind":        column_kind(types.get(column)),
+            "key":         None if not counts else "unique" if rows and counts["distinct"] == counts["non_null"] == rows else "key",
+            "description": described.get(column) or "",
+            "categorical": column in categorical,
+            "distinct":    counts["distinct"] if counts else (texts.get(column) or {}).get("distinct"),
+            "sampled":     not counts and (texts.get(column) or {}).get("distinct") is not None,
+            "excluded":    column in excluded,
+        })
+    visible = [c for c in columns if not c["excluded"]]
+    return {
+        "name":        table,
+        "described":   bool(entry.get("description")),
+        "description": entry.get("description") or "",
+        "data_as_of":  str(entry["data_as_of"]) if entry.get("data_as_of") else "",
+        "counts": {
+            "columns":     len(columns),
+            "described":   sum(bool(c["description"]) for c in visible),
+            "visible":     len(visible),
+            "categorical": sum(c["categorical"] for c in visible),
+        },
+        "columns": columns,
+    }
+
+
+def edit_semantics(entry: dict | None, field: str, value, column: str | None = None,
+                   order: list[str] | None = None) -> dict:
+    """
+    The table block with one field corrected in the studio:
+      - description, data_as_of (YYYY-MM-DD): the text, removed when empty
+      - column: the description of `column`, removed when empty (make semantics then writes it again)
+      - categorical: `column` in categorical_columns or not, kept in the DDL `order`
+    ValueError on a date that is not one.
+    """
+    entry = dict(entry or {})
+    if field in ("description", "data_as_of"):
+        text = str(value or "").strip()
+        if field == "data_as_of" and text:
+            if not DATE.match(text):
+                raise ValueError(f"Not a date (YYYY-MM-DD): {text}")
+            text = date.fromisoformat(text)   # a YAML date, unquoted as written by hand
+        if text:
+            entry[field] = text
+        else:
+            entry.pop(field, None)
+    elif field == "column":
+        described = dict(entry.get("columns") or {})
+        if text := str(value or "").strip():
+            described[column] = text
+        else:
+            described.pop(column, None)
+        entry["columns"] = described
+    elif field == "categorical":
+        current = [c for c in entry.get("categorical_columns") or [] if c != column]
+        if value:
+            current.append(column)
+        rank = {name: i for i, name in enumerate(order or [])}
+        entry["categorical_columns"] = sorted(current, key=lambda c: rank.get(c, len(rank)))
+    else:
+        raise ValueError(f"Unknown field: {field}")
+    return entry
