@@ -19,7 +19,7 @@ RUN_T    = $(COMPOSE) run --rm -T app
         update build check doctor shell \
         profile semantics relations metrics index schema \
         app app-stop \
-        eval eval-dashboard
+        eval eval-dashboard eval-show
 
 ##@ Help
 
@@ -101,3 +101,6 @@ eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options
 
 eval-dashboard:  ## Build the eval dashboard of DB, offline/eval/results/dashboard.html (open it in the browser, never publish it)
 	$(RUN) python -m offline.eval.dashboard --db $(DB) $(ARGS)
+
+eval-show:  ## Print the eval misses of DB as text: agent SQL, accepted queries, judge (ARGS="--only agence": those questions)
+	$(RUN_T) python -m offline.eval.show --db $(DB) $(ARGS)

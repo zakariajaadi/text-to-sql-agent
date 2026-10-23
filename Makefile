@@ -14,7 +14,7 @@ RUN        = PYTHONPATH=src uv run python
         hive-up hive-check hive-ping hive-load hive-partitioned \
         profile semantics relations metrics index schema \
         app app-docker app-logs app-stop \
-        eval eval-dashboard test lint
+        eval eval-dashboard eval-show test lint
 
 ##@ Help
 
@@ -89,6 +89,9 @@ eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options
 
 eval-dashboard:  ## Build the eval dashboard, offline/eval/results/dashboard.html (options: ARGS="--db Chinook Northwind")
 	$(RUN) -m offline.eval.dashboard $(ARGS)
+
+eval-show:  ## Print the eval misses of DB as text: agent SQL, accepted queries, judge (ARGS="--only Brazil": those questions)
+	$(RUN) -m offline.eval.show --db $(DB) $(ARGS)
 
 test:  ## Run the unit tests
 	uv run pytest
