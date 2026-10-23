@@ -75,11 +75,13 @@ def get_structural_columns(table_name: str, ddl: str, query_tables: set[str]) ->
 
     Read from the header lines written by render_table (lib/semantics.py):
         - "-- Joins:"     → this table's join keys towards the other tables of the query
-                            (a key towards a table absent from the query cannot be used)
+                            (a key towards a table absent from the query cannot be used),
+                            and its own identifier, the key other tables point to (right side
+                            of "source = target"), whatever the query: entities are counted on it
         - "-- Read mode:" → partition column (LAST, ALL), key and version columns (LIVE)
 
-    Without them, the query can neither join the selected tables
-    nor filter the right partition / latest version.
+    Without them, the query can neither join the selected tables, count the table's
+    entities (COUNT(DISTINCT id)) nor filter the right partition / latest version.
     """
     candidate_columns = set()
 
@@ -93,7 +95,7 @@ def get_structural_columns(table_name: str, ddl: str, query_tables: set[str]) ->
             ):
                 if left_table == table_name and right_table in query_tables:
                     candidate_columns.add(left_column)
-                if right_table == table_name and left_table in query_tables:
+                if right_table == table_name:   # this table's own identifier, kept even alone
                     candidate_columns.add(right_column)
         elif line.startswith("-- Read mode:"):
             # "LIVE (key: customerid, version: time)" → every word inside the parentheses;
