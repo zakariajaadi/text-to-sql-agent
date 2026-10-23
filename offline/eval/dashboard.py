@@ -16,6 +16,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import sqlparse
 import yaml
 from loguru import logger
 
@@ -93,12 +94,17 @@ def _load_dataset(db: str) -> dict[str, dict]:
         return {q["question"]: q for q in yaml.safe_load(f) or []}
 
 
+def _pretty_sql(sql: str | None) -> str | None:
+    """One layout for both sides (datasets write gold queries on one line, the agent writes its own way)."""
+    return sqlparse.format(sql, reindent=True, keyword_case="upper") if sql else sql
+
+
 def load_run(results_file: Path) -> dict:
     """
     One database's run, as the page reads it.
     1. Read results + summary (+ meta when the run saved it)
     2. Fill missing meta from the file (date) and git (commit)
-    3. Attach the dataset's accepted queries, expected tables and notes to each result
+    3. Attach the dataset's accepted queries, expected tables and notes to each result (SQL reindented for reading)
     """
     # 1. Results
     data = json.loads(results_file.read_text())
@@ -119,7 +125,8 @@ def load_run(results_file: Path) -> dict:
         q = dataset.get(r["question"], {})
         results.append({
             **r,
-            "accepted_queries": q.get("accepted_queries", []),
+            "generated_sql": _pretty_sql(r.get("generated_sql")),
+            "accepted_queries": [_pretty_sql(s) for s in q.get("accepted_queries", [])],
             "expected_tables": q.get("expected_tables", []),
             "notes": (q.get("notes") or "").strip() or None,
             # compare: judge set in the dataset after the run counts too (rows not compared)
