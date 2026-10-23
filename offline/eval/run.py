@@ -17,7 +17,9 @@
 
 import argparse
 import os
+import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from langchain.chat_models import init_chat_model
@@ -25,6 +27,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
 from agent.graph import build_graph
+from config import cfg
 from offline.eval.eval_lib import (
     compute_summary,
     compute_table_metrics,
@@ -89,8 +92,27 @@ class EvaluationRunner:
 
     def _init_judge(self):
         """Separate model from agent to avoid self-evaluation bias."""
-        model = os.getenv("JUDGE_MODEL", "google_genai:gemini-2.5-pro")
-        return init_chat_model(model, temperature=0).with_structured_output(JudgeEvaluation)
+        self.judge_model = os.getenv("JUDGE_MODEL", "google_genai:gemini-2.5-pro")
+        return init_chat_model(self.judge_model, temperature=0).with_structured_output(JudgeEvaluation)
+
+    def meta(self) -> dict:
+        """What produced this run, saved with the results: date, models, commit."""
+        try:
+            commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                                    text=True, cwd=EVAL_DIR, check=True).stdout.strip()
+            dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True,
+                                   text=True, cwd=EVAL_DIR, check=True).stdout.strip()
+            commit += "-dirty" if dirty else ""
+        except (OSError, subprocess.CalledProcessError):
+            commit = None
+        return {
+            "db": self.db,
+            "run_at": datetime.now().isoformat(timespec="minutes"),
+            "commit": commit,
+            "agent_model": cfg.llm.model,
+            "agent_fast_model": cfg.llm_fast.model,
+            "judge_model": self.judge_model,
+        }
 
 
     # ── Core ──────────────────────────────────────────────────────────────────
@@ -277,7 +299,7 @@ def main():
     print_summary(runner.summary)
 
     # 3. Persist
-    save_results(runner.results, runner.summary, args.output or results_path(args.db))
+    save_results(runner.results, runner.summary, args.output or results_path(args.db), meta=runner.meta())
 
 
 if __name__ == "__main__":

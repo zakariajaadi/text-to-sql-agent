@@ -14,7 +14,7 @@ RUN        = PYTHONPATH=src uv run python
         hive-up hive-check hive-ping hive-load hive-partitioned \
         profile semantics relations metrics index schema \
         app app-docker app-logs app-stop \
-        eval test lint
+        eval eval-dashboard test lint
 
 ##@ Help
 
@@ -86,6 +86,9 @@ app-stop:  ## Stop the app container (Hive and Redis keep running)
 
 eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options: ARGS="--limit 5")
 	$(RUN) -m offline.eval.run --db $(DB) $(ARGS)
+
+eval-dashboard:  ## Build the eval dashboard, offline/eval/results/dashboard.html (options: ARGS="--db Chinook Northwind")
+	$(RUN) -m offline.eval.dashboard $(ARGS)
 
 test:  ## Run the unit tests
 	uv run pytest

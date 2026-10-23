@@ -124,10 +124,10 @@ def print_summary(summary: dict):
     print(f"{'=' * 50}")
 
 
-def save_results(results: list[dict], summary: dict, path: str | Path):
-    """Save results and summary to JSON for comparison."""
+def save_results(results: list[dict], summary: dict, path: str | Path, meta: dict | None = None):
+    """Save results and summary to JSON for comparison (meta: run date, models, commit — read by the dashboard)."""
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
-        json.dump({"summary": summary, "results": results}, f, indent=2)
+        json.dump({"meta": meta or {}, "summary": summary, "results": results}, f, indent=2)
     logger.info(f"Results saved to {output_path}")

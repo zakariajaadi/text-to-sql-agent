@@ -19,7 +19,7 @@ RUN_T    = $(COMPOSE) run --rm -T app
         update build check doctor shell \
         profile semantics relations metrics index schema \
         app app-stop \
-        eval
+        eval eval-dashboard
 
 ##@ Help
 
@@ -98,3 +98,6 @@ app-stop:  ## Stop and remove the app container
 
 eval:  ## Run the eval on DB, results in offline/eval/results/<db>.json (options: ARGS="--limit 5")
 	$(RUN) python -m offline.eval.run --db $(DB) $(ARGS)
+
+eval-dashboard:  ## Build the eval dashboard of DB, offline/eval/results/dashboard.html (open it in the browser, never publish it)
+	$(RUN) python -m offline.eval.dashboard --db $(DB) $(ARGS)
