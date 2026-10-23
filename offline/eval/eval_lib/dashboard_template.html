@@ -851,6 +851,11 @@ function renderMethod() {
     const m = r.meta, bits = [esc(m.db), fmtDate(m.run_at)];
     if (m.commit) bits.push(`commit <span class="mono">${esc(m.commit)}</span>`);
     if (m.agent_model) bits.push(`agent ${esc(m.agent_model)}`);
+    // Questions run again alone after the full run (--only): their answers come from a later agent
+    (m.partial_reruns || []).forEach(p => {
+      const n = p.questions?.length || 0;
+      bits.push(`${n} question${n > 1 ? "s" : ""} relancée${n > 1 ? "s" : ""} seule${n > 1 ? "s" : ""} le ${fmtDate(p.at)}${p.commit ? ` (commit <span class="mono">${esc(p.commit)}</span>)` : ""}`);
+    });
     return `<span>${bits.join(" · ")}</span>`;
   }).join("") + `<span>Page générée le ${fmtDate(DATA.generated_at)}</span>`;
 }

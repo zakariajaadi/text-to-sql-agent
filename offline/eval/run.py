@@ -7,6 +7,7 @@
 #   python -m offline.eval.run --difficulty hard                # filter by difficulty
 #   python -m offline.eval.run --limit 5                        # run first N only
 #   python -m offline.eval.run --db Northwind --rescore         # compare the saved queries again, no LLM
+#   python -m offline.eval.run --only PayPal --only BDC         # run these questions again, merged into the saved run
 #
 # Usage (importable):
 #   from offline.eval.run import EvaluationRunner
@@ -144,15 +145,20 @@ class EvaluationRunner:
     # ── Core ──────────────────────────────────────────────────────────────────
 
     def run(self, benchmark: str | Path | None = None,
-            difficulty: str = None, limit: int = None) -> list[dict]:
+            difficulty: str = None, limit: int = None, only: list[str] | None = None) -> list[dict]:
         """
         Main entry point — runs the full evaluation pipeline.
-        1. Load and filter questions from YAML
+        1. Load and filter questions from YAML (only: questions whose text holds one of these words)
         2. For each question: run agent → compute metrics → judge SQL → execution accuracy
         3. Compute aggregate summary
         """
         # 1. Load questions
         questions = load_questions(benchmark or dataset_path(self.db), difficulty)
+        if only:
+            words = [w.lower() for w in only]
+            questions = [q for q in questions if any(w in q["question"].lower() for w in words)]
+            if not questions:
+                raise SystemExit(f"No question holds {' or '.join(only)}")
         if limit:
             questions = questions[:limit]
 
@@ -313,6 +319,15 @@ class EvaluationRunner:
         return response.model_dump()
 
 
+# ── Partial rerun ─────────────────────────────────────────────────────────────
+
+def merge_results(saved: list[dict], new: list[dict]) -> list[dict]:
+    """The saved results with each new one in place of the saved one of the same question (appended if new)."""
+    by_question = {r["question"]: r for r in new}
+    merged = [by_question.pop(r["question"], r) for r in saved]
+    return merged + list(by_question.values())
+
+
 # ── Rescore ───────────────────────────────────────────────────────────────────
 
 def rescore(db: str, benchmark: str | Path | None = None, path: str | Path | None = None) -> dict:
@@ -362,23 +377,38 @@ def main():
     parser.add_argument("--output", help="Results file (default: results/<db>.json)")
     parser.add_argument("--rescore", action="store_true",
                         help="Compare the saved queries with the gold again, no LLM call (after a change of the comparison)")
+    parser.add_argument("--only", action="append", metavar="WORD",
+                        help="Run again only the questions holding this word (repeatable), merged into the saved results")
     args = parser.parse_args()
+    output = Path(args.output or results_path(args.db))
 
     if args.rescore:
-        print_summary(rescore(args.db, args.benchmark, args.output))
+        print_summary(rescore(args.db, args.benchmark, output))
         return
+    if args.only and not output.exists():
+        parser.error(f"--only merges into {output}, which does not exist: run the whole eval first")
 
     # 1. Run evaluation
     runner = EvaluationRunner(db=args.db)
-    runner.run(benchmark=args.benchmark, difficulty=args.difficulty, limit=args.limit)
+    runner.run(benchmark=args.benchmark, difficulty=args.difficulty, limit=args.limit, only=args.only)
 
     # 2. Display
     df = results_to_df(runner.results)
     print(df.drop(columns=["sql"]).to_string(index=False))
-    print_summary(runner.summary)
 
-    # 3. Persist
-    save_results(runner.results, runner.summary, args.output or results_path(args.db), meta=runner.meta())
+    # 3. Persist: a partial run replaces its questions in the saved run, which keeps its own meta
+    if args.only:
+        saved = json.loads(output.read_text())
+        results = merge_results(saved["results"], runner.results)
+        now = runner.meta()
+        rerun = {"at": now["run_at"], "commit": now["commit"], "questions": [r["question"] for r in runner.results]}
+        meta = {**saved.get("meta", {}), "partial_reruns": [*saved.get("meta", {}).get("partial_reruns", []), rerun]}
+        summary = compute_summary(results)
+        logger.info(f"{len(runner.results)} question(s) replaced in {output}")
+    else:
+        results, summary, meta = runner.results, runner.summary, runner.meta()
+    print_summary(summary)
+    save_results(results, summary, output, meta=meta)
 
 
 if __name__ == "__main__":

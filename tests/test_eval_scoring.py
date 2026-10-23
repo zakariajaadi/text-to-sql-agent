@@ -43,6 +43,16 @@ def test_an_unreachable_database_is_not_a_wrong_query():
         execution_accuracy(db, ["SELECT 1"], "SELECT 1")
 
 
+def test_a_partial_run_replaces_only_its_questions():
+    from offline.eval.run import merge_results
+    saved = [{"question": "a", "exec_exact": 1.0}, {"question": "b", "exec_exact": 0.0}, {"question": "c", "exec_exact": 1.0}]
+    new = [{"question": "b", "exec_exact": 1.0}, {"question": "d", "exec_exact": 1.0}]
+    assert merge_results(saved, new) == [
+        {"question": "a", "exec_exact": 1.0}, {"question": "b", "exec_exact": 1.0},
+        {"question": "c", "exec_exact": 1.0}, {"question": "d", "exec_exact": 1.0},
+    ]
+
+
 def _result(score, exec_exact, error=None):
     r = {"question": "q", "difficulty": "simple", "category": "count", "latency_s": 0 if error else 5.0,
          "table_recall": 0 if error else 1.0, "exec_exact": exec_exact, "judge": uniform_score(score, "")}
