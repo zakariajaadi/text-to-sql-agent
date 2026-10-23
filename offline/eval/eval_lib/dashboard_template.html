@@ -31,6 +31,9 @@
   --neutral: #8a8780;
   --chip: #efeeeb;
   --ring: rgba(22, 21, 20, 0.10);
+  --dot: rgba(22, 21, 20, 0.26);
+  --glow-1: rgba(232, 100, 65, 0.10);
+  --glow-2: rgba(232, 100, 65, 0.07);
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --radius: 10px;
@@ -41,6 +44,7 @@
     --line: #2c2c2a; --axis: #3d3d3a; --accent: #ee7350; --accent-2: #f7a64a; --accent-ink: #f59a7a;
     --s1: #3987e5; --s2: #199e70; --good: #0ca30c; --good-ink: #3cc43c; --warn: #fab219; --warn-ink: #fab219;
     --bad: #e05555; --bad-ink: #f07a7a; --neutral: #8f8b84; --chip: #262624; --ring: rgba(255, 255, 255, 0.10);
+    --dot: rgba(240, 239, 236, 0.26); --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
     color-scheme: dark;
   }
 }
@@ -49,13 +53,21 @@
   --line: #2c2c2a; --axis: #3d3d3a; --accent: #ee7350; --accent-2: #f7a64a; --accent-ink: #f59a7a;
   --s1: #3987e5; --s2: #199e70; --good: #0ca30c; --good-ink: #3cc43c; --warn: #fab219; --warn-ink: #fab219;
   --bad: #e05555; --bad-ink: #f07a7a; --neutral: #8f8b84; --chip: #262624; --ring: rgba(255, 255, 255, 0.10);
+  --dot: rgba(240, 239, 236, 0.26); --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* Dot grid and two corner glows of the agent's UI (public/custom.css): the panels are opaque, so it shows between them */
 body {
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0),
+    radial-gradient(ellipse 60% 50% at 100% 0%, var(--glow-1), transparent 70%),
+    radial-gradient(ellipse 50% 45% at 0% 100%, var(--glow-2), transparent 70%);
+  background-size: 32px 32px, 100% 100%, 100% 100%;
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 15px;
