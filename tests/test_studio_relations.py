@@ -15,6 +15,7 @@ from offline.studio.relations import (
     ignore_relation,
     join_path,
     layout,
+    relation_fanout,
     relation_row,
     relations_view,
 )
@@ -39,6 +40,22 @@ def test_relation_row_says_its_evidence():
     assert (rows[0]["links"], rows[0]["weak"], rows[0]["origin"]) == ("1 → 1", False, "profile")
     assert (rows[1]["weak"], rows[1]["links"]) == (True, "n → ?")    # under 90 %: for a human to keep or ignore
     assert (rows[2]["found"], rows[2]["weak"], rows[2]["links"]) == (None, False, "n → 1")   # not checked yet
+
+
+# customer.country is no key: 24 values for 59 rows, up to 13 rows per value; invoice joins 5.7 rows on average
+SPREAD = {"target_rows": 59, "target_values": 24, "per_value": [1, 13],
+          "source_rows": 412, "source_values": 24, "matched": 412, "joined": 2343}
+
+
+def test_a_relation_to_a_column_that_is_no_key():
+    assert relation_fanout(SPREAD) == 5.7
+    assert relation_fanout({"target_rows": 59, "target_values": 59, "per_value": [1, 1]}) is None
+    entry = add_relation({"relations": []}, "invoice.billingcountry", "customer.country", 1.0, SPREAD)
+    assert entry["relations"] == [{"from": "invoice.billingcountry", "to": "customer.country", "found": 1.0,
+                                   "fanout": 5.7, "links": "n → n", "origin": "manual"}]
+    row = relation_row(entry["relations"][0], PROFILE)
+    # all its values found, still in amber: a join on it counts each row several times
+    assert (row["weak"], row["links"], row["fanout"]) == (True, "n → n", 5.7)
 
 
 def test_relations_view_counts_and_isolated_tables():
@@ -95,6 +112,8 @@ def client(tmp_path, monkeypatch):
         "tables": TABLES, "columns": columns, "source": "database", "error": None, "read_at": 0})
     monkeypatch.setattr(studio_app, "_databases", {"awb": object()})
     monkeypatch.setattr(studio_app, "key_overlap", lambda db, source, target: 0.95)
+    monkeypatch.setattr(studio_app, "key_spread", lambda db, source, target: (
+        SPREAD if target == "personne.id_personne" else {"target_rows": 10, "target_values": 10, "per_value": [1, 1]}))
     (tmp_path / "awb").mkdir()
     (tmp_path / "awb" / "profile.yaml").write_text(yaml.safe_dump(PROFILE))
     (tmp_path / "awb" / "relationships.yaml").write_text(
@@ -117,6 +136,19 @@ def test_a_relation_added_then_ignored_from_the_page(client, tmp_path):
     text = (tmp_path / "awb" / "relationships.yaml").read_text()
     assert text.startswith("# Two id families that overlap")      # the reviewer's comment kept
     assert client.get("/api/db/awb/relations/path", params={"a": "carte", "b": "client"}).json()["joins"] is None
+
+
+def test_a_relation_to_a_column_that_is_no_key_is_added_on_demand_only(client, tmp_path):
+    version = client.get("/api/db/awb/relations").json()["version"]
+    post = lambda force, v: client.post("/api/db/awb/relations", json={  # noqa: E731
+        "source": "carte.id_personne", "target": "personne.id_personne", "version": v, "force": force}).json()
+    view = post(False, version)
+    assert view["added"] is False and view["check"]["per_value"] == [1, 13] and view["check"]["found"] == 0.95
+    assert view["version"] == version and len(view["relations"]) == 1          # nothing written
+    view = post(True, version)
+    assert view["added"] is True and view["relations"][-1]["fanout"] == 5.7 and view["weak"] == 1
+    written = yaml.safe_load((tmp_path / "awb" / "relationships.yaml").read_text())["relations"][-1]
+    assert (written["fanout"], written["links"], written["origin"]) == (5.7, "n → n", "manual")
 
 
 def test_bad_relations_are_refused(client):

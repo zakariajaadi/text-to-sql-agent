@@ -162,14 +162,27 @@ def undescribed(entry: dict | None, columns: list[str]) -> list[str]:
     return [c for c in columns if c not in excluded and not described.get(c)]
 
 
+def marks(entry: dict | None) -> dict[str, int]:
+    """
+    How many descriptions of a table the agent sees were corrected by hand (edited, kept when the table is
+    described again) and rewritten by the LLM over another text (rewritten, to read again).
+    """
+    entry = entry or {}
+    excluded = set(entry.get("exclude_columns") or [])
+    count = lambda kind: (bool(entry.get(f"{kind}_description"))  # noqa: E731
+                          + sum(c not in excluded for c in entry.get(f"{kind}_columns") or []))
+    return {"edited": count("edited"), "rewritten": count("rewritten")}
+
+
 def table_rows(tables: list[str], columns: dict[str, list[str]], profile: dict, semantics: dict,
                relations: list[tuple[str, str]], metrics: dict, personal: bool) -> list[dict]:
     """
     One row per table of the home screen: its size (rows measured by the profile, columns of the database)
     and its status at each step. Profile: done once profiled (what it detects needs no review).
     Semantics: done once the table and its columns are described, partial while some columns are not
-    (`undescribed`: added since the last description). Relations, metrics: done when a relation or a
-    metric reads the table.
+    (`undescribed`: added since the last description); with the descriptions corrected by hand and the
+    ones the LLM rewrote, to read again (marks). Relations, metrics: done when a relation or a metric
+    reads the table.
     """
     related  = {side.split(".")[0] for relation in relations for side in relation}
     measured = metric_tables(metrics)
@@ -183,6 +196,7 @@ def table_rows(tables: list[str], columns: dict[str, list[str]], profile: dict, 
             "rows":        facts["rows"] if facts else None,
             "columns":     len(columns[table]) if columns.get(table) else None,
             "undescribed": len(missing),
+            **marks(entry),
             "status": {
                 "profile":   DONE if facts else NONE,
                 "semantics": NONE if not entry.get("description") else PARTIAL if missing else DONE,
@@ -267,13 +281,16 @@ def semantics_detail(table: str, entry: dict | None, facts: dict | None, db_colu
     A table as the Semantics screen shows it: its description and the date its data stops (data_as_of),
     then one line per column of the database (`db_columns`, in DDL order; without them the described ones):
     its type, description, whether it is categorical, and its distinct values measured by the profile
-    (of the whole table for a key, of the sample for a text column; None when not measured).
+    (of the whole table for a key, of the sample for a text column; None when not measured). Each
+    description says whether it was corrected by hand (edited) or rewritten by the LLM (rewritten).
     An excluded column is never described: the agent does not see it.
     """
     entry, facts = entry or {}, facts or {}
     described   = entry.get("columns") or {}
     categorical = set(entry.get("categorical_columns") or [])
     excluded    = set(entry.get("exclude_columns") or [])
+    edited      = set(entry.get("edited_columns") or [])
+    rewritten   = set(entry.get("rewritten_columns") or [])
     keys, texts = facts.get("keys") or {}, facts.get("text_columns") or {}
     rows        = facts.get("rows") or 0
     types       = {c["name"]: c["type"] for c in db_columns or []}
@@ -290,18 +307,23 @@ def semantics_detail(table: str, entry: dict | None, facts: dict | None, db_colu
             "distinct":    counts["distinct"] if counts else (texts.get(column) or {}).get("distinct"),
             "sampled":     not counts and (texts.get(column) or {}).get("distinct") is not None,
             "excluded":    column in excluded,
+            "edited":      column in edited,
+            "rewritten":   column in rewritten,
         })
     visible = [c for c in columns if not c["excluded"]]
     return {
         "name":        table,
         "described":   bool(entry.get("description")),
         "description": entry.get("description") or "",
+        "description_edited":    bool(entry.get("edited_description")),
+        "description_rewritten": bool(entry.get("rewritten_description")),
         "data_as_of":  str(entry["data_as_of"]) if entry.get("data_as_of") else "",
         "counts": {
             "columns":     len(columns),
             "described":   sum(bool(c["description"]) for c in visible),
             "visible":     len(visible),
             "categorical": sum(c["categorical"] for c in visible),
+            **marks(entry),
         },
         "columns": columns,
     }
@@ -314,9 +336,19 @@ def edit_semantics(entry: dict | None, field: str, value, column: str | None = N
       - description, data_as_of (YYYY-MM-DD): the text, removed when empty
       - column: the description of `column`, removed when empty (make semantics then writes it again)
       - categorical: `column` in categorical_columns or not, kept in the DDL `order`
-    ValueError on a date that is not one.
+      - read: the descriptions the LLM rewrote are read (no longer rewritten_*)
+    A description corrected is marked edited (kept when the table is described again), and read;
+    emptied, it is no longer edited. ValueError on a date that is not one.
     """
     entry = dict(entry or {})
+    if field == "description":
+        _mark(entry, "description", None, bool(str(value or "").strip()))
+    elif field == "column":
+        _mark(entry, "columns", column, bool(str(value or "").strip()))
+    elif field == "read":
+        entry.pop("rewritten_description", None)
+        entry.pop("rewritten_columns", None)
+        return entry
     if field in ("description", "data_as_of"):
         text = str(value or "").strip()
         if field == "data_as_of" and text:
@@ -343,3 +375,20 @@ def edit_semantics(entry: dict | None, field: str, value, column: str | None = N
     else:
         raise ValueError(f"Unknown field: {field}")
     return entry
+
+
+def _mark(entry: dict, key: str, column: str | None, edited: bool) -> None:
+    """A description corrected by hand: edited (or no longer, when emptied), and no longer rewritten."""
+    if column is None:
+        entry.pop(f"rewritten_{key}", None)
+        if edited:
+            entry[f"edited_{key}"] = True
+        else:
+            entry.pop(f"edited_{key}", None)
+        return
+    for kind, keep in (("rewritten", False), ("edited", edited)):
+        current = [c for c in entry.get(f"{kind}_{key}") or [] if c != column] + ([column] if keep else [])
+        if current:
+            entry[f"{kind}_{key}"] = current
+        else:
+            entry.pop(f"{kind}_{key}", None)

@@ -37,7 +37,7 @@ from lib.semantics import excluded_columns, load_fk_relations, load_profile, loa
 from lib.value_index import value_index_path
 from offline.eval.dashboard import DATASETS_DIR, RESULTS_DIR, build_dashboard
 from offline.indexer.trace import read_trace
-from offline.semantic_gen.profiling import key_overlap
+from offline.semantic_gen.profiling import key_overlap, key_spread
 from offline.semantic_gen.utils import (
     dump_table_semantics,
     load_relations_file,
@@ -224,7 +224,7 @@ def table_semantics(db: str, table: str):
 
 
 class SemanticsEdit(BaseModel):
-    field: Literal["description", "data_as_of", "column", "categorical"]
+    field: Literal["description", "data_as_of", "column", "categorical", "read"]
     value: str | bool | None = None
     column: str | None = None
     version: str
@@ -232,7 +232,10 @@ class SemanticsEdit(BaseModel):
 
 @app.post("/api/db/{db}/tables/{table}/semantics")
 def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
-    """One field corrected in the studio (the description of the table or of a column, data_as_of, categorical)."""
+    """
+    One field corrected in the studio (the description of the table or of a column, data_as_of, categorical),
+    or the descriptions the LLM rewrote marked read.
+    """
     _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
@@ -276,15 +279,20 @@ def profile(db: str, request: ProfileRequest):
 class SemanticsRequest(BaseModel):
     tables: list[str] | None = None
     fresh: bool = False
+    replace_edited: bool = False
 
 
 @app.post("/api/db/{db}/semantics")
 def describe(db: str, request: SemanticsRequest):
-    """Describe the tables missing a description, or describe the tables chosen again (make semantics ARGS=...)."""
+    """
+    Describe the tables missing a description, or describe the tables chosen again (make semantics ARGS=...),
+    the descriptions corrected by hand kept unless replace_edited.
+    """
     _db_config(db)
     if request.fresh and not request.tables:
         raise HTTPException(400, "Choose the tables to describe again")
-    return _start(db, "semantics", semantics_command(db, request.tables, request.fresh), request.tables)
+    command = semantics_command(db, request.tables, request.fresh, request.replace_edited)
+    return _start(db, "semantics", command, request.tables)
 
 
 def _update_semantics(db: str, version: str, change) -> None:
@@ -415,11 +423,16 @@ class RelationRequest(BaseModel):
     source: str
     target: str
     version: str
+    force: bool = False
 
 
 @app.post("/api/db/{db}/relations")
 def add(db: str, request: RelationRequest):
-    """A relation added from the page, measured on the data first (the share of its values found)."""
+    """
+    A relation added from the page, measured on the data first: the share of its values found, and whether
+    the column it points to is a key. When it is not, a join would count each row of the source several
+    times: the relation is not added unless forced (`added` false, the measures in `check`).
+    """
     _db_config(db)
     source, target = _column_ref(db, request.source), _column_ref(db, request.target)
     if source.split(".")[0] == target.split(".")[0]:
@@ -427,13 +440,18 @@ def add(db: str, request: RelationRequest):
     if db not in _databases:
         raise HTTPException(503, "The database does not answer: the relation can't be checked")
     try:
-        found = key_overlap(_databases[db], source, target)
+        found  = key_overlap(_databases[db], source, target)
+        spread = key_spread(_databases[db], source, target)
     except Exception as e:
         raise HTTPException(502, f"The check of the relation failed: {str(e).splitlines()[0][:200]}") from e
     found = None if found is None else round(found, 3)
-    _update_relations(db, request.version, lambda entry: add_relation(entry, source, target, found))
+    check = {"source": source, "target": target, "found": found, **spread}
+    if spread["per_value"][1] > 1 and not request.force:
+        logger.info(f"[studio] {db}: relation {source} -> {target} not added, {target} is not a key")
+        return {**relations(db), "added": False, "check": check}
+    _update_relations(db, request.version, lambda entry: add_relation(entry, source, target, found, spread))
     logger.info(f"[studio] {db}: relation {source} -> {target} added ({found})")
-    return relations(db)
+    return {**relations(db), "added": True, "check": check}
 
 
 @app.post("/api/db/{db}/relations/ignore")

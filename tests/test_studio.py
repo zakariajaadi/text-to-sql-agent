@@ -131,6 +131,16 @@ def test_table_rows():
     assert rows[2]["status"]["profile"] == "none"
     # described, but a column added since has no description (an excluded one needs none)
     assert (rows[2]["status"]["semantics"], rows[2]["undescribed"]) == ("partial", 1)
+    assert (rows[1]["edited"], rows[1]["rewritten"]) == (0, 0)
+
+
+def test_table_rows_count_the_corrections_and_the_texts_to_read_again():
+    semantics = {"agence": {"description": "Agences", "columns": {"code": "Code.", "ville": "Ville."},
+                            "exclude_columns": ["fax"], "edited_description": True, "edited_columns": ["code"],
+                            "rewritten_columns": ["ville", "fax"]}}
+    row = table_rows(["agence"], {"agence": ["code", "ville", "fax"]}, {}, semantics, [], {}, personal=False)[0]
+    # a column hidden from the agent is not counted
+    assert (row["edited"], row["rewritten"], row["status"]["semantics"]) == (2, 1, "done")
 
 
 DB_COLUMNS = [{"name": "id_dossier", "type": "BIGINT"}, {"name": "date_deblocage", "type": "STRING"},
@@ -197,6 +207,15 @@ def test_profile_command():
 def test_semantics_command():
     assert semantics_command("awb", None, False)[1:] == ["-m", "offline.cli", "semantics", "--db", "awb"]
     assert semantics_command("awb", ["a"], True)[-3:] == ["--tables", "a", "--fresh"]
+    assert semantics_command("awb", ["a"], True, replace_edited=True)[-2:] == ["--fresh", "--replace-edited"]
+
+
+def test_job_counts_the_descriptions_rewritten_and_kept():
+    job = Job(id=1, db="awb", step="semantics", tables=["a", "b"], command=[])
+    for message in ("[awb] a: 12 description(s) rewritten, to read again; 2 corrected by hand kept",
+                    "[awb] b: 3 description(s) rewritten, to read again"):
+        job.add_line(f"2026-10-24 10:00:01 | INFO     | offline.semantic_gen.tables:generate:160 - {message}")
+    assert (job.to_dict()["rewritten"], job.to_dict()["kept"]) == (15, 2)
 
 
 def test_job_counts_the_tables_sent_to_the_llm():
@@ -312,7 +331,7 @@ def test_semantics_detail():
     assert (lines["agence"]["distinct"], lines["agence"]["sampled"], lines["agence"]["categorical"]) == (412, True, False)
     assert lines["statut"]["categorical"] and lines["commentaire"]["excluded"]
     # the excluded column is not counted: the agent does not see it
-    assert detail["counts"] == {"columns": 4, "described": 2, "visible": 3, "categorical": 1}
+    assert detail["counts"] == {"columns": 4, "described": 2, "visible": 3, "categorical": 1, "edited": 0, "rewritten": 0}
 
 
 def test_edit_semantics():
@@ -328,6 +347,31 @@ def test_edit_semantics():
     with pytest.raises(ValueError):
         edit_semantics(ENTRY, "data_as_of", "16/06/2026")
     assert ENTRY["columns"] == {"id_dossier": "Numéro du dossier.", "statut": "État du dossier."}   # never changed in place
+
+
+def test_a_description_corrected_is_kept_and_read():
+    entry = {**ENTRY, "rewritten_description": True, "rewritten_columns": ["statut", "id_dossier"]}
+    entry = edit_semantics(entry, "column", "Statut, relu.", "statut")
+    assert (entry["edited_columns"], entry["rewritten_columns"]) == (["statut"], ["id_dossier"])
+    entry = edit_semantics(entry, "description", "Dossiers, relus.")
+    assert entry["edited_description"] is True and "rewritten_description" not in entry
+    # emptied, it is no longer a correction: make semantics writes it again
+    assert "edited_columns" not in edit_semantics(entry, "column", "", "statut")
+    assert "edited_description" not in edit_semantics(entry, "description", "")
+    # read: the texts the LLM rewrote are no longer to read again, the corrections stay
+    read = edit_semantics(entry, "read", None)
+    assert "rewritten_columns" not in read and read["edited_columns"] == ["statut"]
+    # the categorical switch is no description
+    assert "edited_columns" not in edit_semantics(ENTRY, "categorical", True, "statut")
+
+
+def test_semantics_detail_marks_each_description():
+    entry = {**ENTRY, "edited_columns": ["statut"], "rewritten_description": True, "rewritten_columns": ["id_dossier"]}
+    detail = semantics_detail("dossier", entry, SEM_FACTS, SEM_COLUMNS)
+    lines = {c["column"]: c for c in detail["columns"]}
+    assert (lines["statut"]["edited"], lines["statut"]["rewritten"], lines["id_dossier"]["rewritten"]) == (True, False, True)
+    assert (detail["description_edited"], detail["description_rewritten"]) == (False, True)
+    assert (detail["counts"]["edited"], detail["counts"]["rewritten"]) == (1, 2)
 
 
 def test_a_description_edited_from_the_page(client, tmp_path):

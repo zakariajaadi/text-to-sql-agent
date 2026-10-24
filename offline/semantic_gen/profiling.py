@@ -298,6 +298,48 @@ def key_overlap_sql(source: str, target: str, quote, sample: int) -> str:
     )
 
 
+def key_spread(db: SQLDatabase, source: str, target: str) -> dict:
+    """
+    Whether target (table.column) is a key, and what a join on it does to the rows of source, counts only:
+      target_rows, target_values : rows of target holding a value, and their distinct values
+      per_value                  : [fewest, most] rows of target per value
+      source_rows, source_values, matched, joined : when target is not a key, the rows of source holding
+                 a value, their distinct values, the ones found in target and the rows the join makes of them
+    """
+    quote = db._engine.dialect.identifier_preparer.quote
+    with db._engine.connect() as conn:
+        rows, values, fewest, most = conn.execute(text(target_spread_sql(target, quote))).fetchone()
+        spread = {"target_rows": int(rows or 0), "target_values": int(values or 0),
+                  "per_value": [int(fewest or 0), int(most or 0)]}
+        if (most or 0) > 1:
+            rows, values, matched, joined = conn.execute(text(join_spread_sql(source, target, quote))).fetchone()
+            spread.update(source_rows=int(rows or 0), source_values=int(values or 0),
+                          matched=int(matched or 0), joined=int(joined or 0))
+    return spread
+
+
+def _value_counts_sql(ref: str, quote) -> str:
+    """The values of a column (as key_overlap compares them) and the rows holding each one."""
+    table, column = ref.split(".")
+    return (f"SELECT k, COUNT(*) AS n FROM (SELECT {_key_sql(quote(column))} AS k FROM {quote(table)} "
+            f"WHERE {quote(column)} IS NOT NULL) v GROUP BY k")
+
+
+def target_spread_sql(target: str, quote) -> str:
+    """The query of key_spread on target: its rows holding a value, its distinct values, the fewest and most rows per value."""
+    return f"SELECT SUM(n), COUNT(*), MIN(n), MAX(n) FROM ({_value_counts_sql(target, quote)}) g"
+
+
+def join_spread_sql(source: str, target: str, quote) -> str:
+    """The query of key_spread on the join: rows of source holding a value, their distinct values, found, joined."""
+    table, column = source.split(".")
+    return (
+        f"SELECT COUNT(*), COUNT(DISTINCT s.k), COUNT(t.n), SUM(t.n) FROM "
+        f"(SELECT {_key_sql(quote(column))} AS k FROM {quote(table)} WHERE {quote(column)} IS NOT NULL) s "
+        f"LEFT JOIN ({_value_counts_sql(target, quote)}) t ON s.k = t.k"
+    )
+
+
 def _key_sql(column: str) -> str:
     """
     A key value as comparable text: the two columns may be stored as int and string, and a string

@@ -5,7 +5,9 @@ The Relations screen of the studio (pure functions, unit-tested): the relations 
 with their evidence, the map of the tables they join, and the join path the agent takes between two.
 
   - evidence: the share of the values of `from` found in `to` (found, measured by the generator or
-    when a relation is added in the studio), and the cardinality read from the keys of the profile
+    when a relation is added in the studio), and the cardinality read from the keys of the profile;
+    a relation added on purpose to a column that is not a key carries its fanout (rows of `to` each
+    row of `from` joins, on average) and the cardinality measured then (links), and stays in amber
   - map: the tables laid out in layers (grandalf, Sugiyama), the referenced tables under the ones
     pointing to them; each group of joined tables side by side, the isolated tables on a last row
   - path: the tables the agent adds between two (lib/fk_graph.py, the same functions), and the
@@ -36,16 +38,20 @@ def side(ref: str, profile: dict) -> str:
 
 
 def relation_row(relation: dict, profile: dict) -> dict:
-    """A relation as the page shows it: its tables, evidence, cardinality and origin."""
-    found = relation.get("found")
+    """
+    A relation as the page shows it: its tables, evidence, cardinality and origin. Weak (amber) when few of
+    its values are found, or when it joins several rows of `to` to a row of `from` (fanout).
+    """
+    found, fanout = relation.get("found"), relation.get("fanout")
     return {
         "from":   relation["from"],
         "to":     relation["to"],
         "source": relation["from"].split(".")[0],
         "target": relation["to"].split(".")[0],
         "found":  found,
-        "weak":   found is not None and found < KEY_OVERLAP,
-        "links":  f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
+        "fanout": fanout,
+        "weak":   (found is not None and found < KEY_OVERLAP) or (fanout or 0) > 1,
+        "links":  relation.get("links") or f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
         "origin": relation.get("origin"),
     }
 
@@ -154,14 +160,29 @@ def relations_view(tables: list[str], entry: dict, profile: dict) -> dict:
     }
 
 
-def add_relation(entry: dict, source: str, target: str, found: float | None) -> dict:
-    """relationships.yaml with a relation added in the studio (origin manual); taken out of `ignore` if it was there."""
+def add_relation(entry: dict, source: str, target: str, found: float | None, spread: dict | None = None) -> dict:
+    """
+    relationships.yaml with a relation added in the studio (origin manual); taken out of `ignore` if it was
+    there. When `to` is not a key (spread, measured by key_spread), the relation carries its fanout and the
+    cardinality measured.
+    """
     entry  = {**entry, "relations": list(entry.get("relations") or []), "ignore": list(entry.get("ignore") or [])}
     same   = lambda r: (r["from"], r["to"]) == (source, target)  # noqa: E731
     entry["ignore"]    = [r for r in entry["ignore"] if not same(r)]
     entry["relations"] = [r for r in entry["relations"] if not same(r)]
-    entry["relations"].append({"from": source, "to": target, "found": found, "origin": "manual"})
+    relation = {"from": source, "to": target, "found": found}
+    if fanout := relation_fanout(spread):
+        relation["fanout"] = fanout
+        relation["links"]  = f"{'n' if spread['source_values'] < spread['source_rows'] else '1'} → n"
+    entry["relations"].append({**relation, "origin": "manual"})
     return entry
+
+
+def relation_fanout(spread: dict | None) -> float | None:
+    """Rows of `to` a row of `from` joins on average, when `to` is not a key (None when it is, or nothing joins)."""
+    if not spread or spread["per_value"][1] <= 1 or not spread.get("matched"):
+        return None
+    return round(spread["joined"] / spread["matched"], 1)
 
 
 def ignore_relation(entry: dict, source: str, target: str, ignore: bool = True) -> dict:

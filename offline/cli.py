@@ -9,7 +9,8 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
                     formats and empty columns it detects into tables.yaml (a table that has none yet)
                     (--tables a,b / --missing: only those tables, merged into the profile)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
-                    (--fresh: generated again from scratch, the manual keys kept; --tables a,b: only those)
+                    (--fresh: generated again from scratch, the manual keys and the descriptions corrected
+                    by hand kept, --replace-edited: those replaced too; --tables a,b: only those)
     fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala), each with the share
                     of its values found (--check: only measure that again, no LLM)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
@@ -39,7 +40,10 @@ def main():
     parser.add_argument("--db", help="Database name (default: all databases)")
     parser.add_argument("--fresh", action="store_true",
                         help="semantics: regenerate the descriptions and categorical columns, "
-                             "keeping the manual keys (formats, exclude_columns, data_as_of...)")
+                             "keeping the manual keys (formats, exclude_columns, data_as_of...) and the "
+                             "descriptions corrected by hand in the studio")
+    parser.add_argument("--replace-edited", action="store_true",
+                        help="semantics --fresh: replace the descriptions corrected by hand too")
     parser.add_argument("--tables", type=lambda s: [t.strip() for t in s.split(",") if t.strip()],
                         help="profile, semantics: only these tables (comma-separated), the others left as they are")
     parser.add_argument("--missing", action="store_true",
@@ -53,7 +57,8 @@ def main():
         "profile":      lambda name: profiling.profile_database(
                             db_registry[name], name, tables=args.tables, missing=args.missing,
                             personal=cfg.get_db(name).exclude_personal_data),
-        "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh, tables=args.tables),
+        "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh, tables=args.tables,
+                                                                       replace_edited=args.replace_edited),
         "fk-relations": lambda name: (relationships.check_relations if args.check else relationships.infer_fk_relations)(name),
         "metrics":      metrics.generate_metrics,
     }

@@ -79,6 +79,10 @@ SEMANTICS_HEADER = """\
 #   keep_columns         : (manual) columns the profile proposed to exclude, kept visible on purpose
 #   keep_as_text         : (manual) columns the profile reads as dates or numbers, kept as text on purpose
 #   data_as_of          : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
+#   edited_description, edited_columns       : (studio) descriptions corrected by hand, kept when the
+#                          table is described again (--fresh), unless --replace-edited
+#   rewritten_description, rewritten_columns : descriptions the LLM wrote again over another text
+#                          (--fresh), to read again; the studio drops them once read
 
 """
 
@@ -86,6 +90,7 @@ SEMANTICS_HEADER = """\
 SEMANTICS_KEY_ORDER = [
     "description", "data_as_of", "read_mode", "key_columns", "partition_column", "version_column",
     "categorical_columns", "formats", "keep_as_text", "exclude_columns", "keep_columns", "columns",
+    "edited_description", "edited_columns", "rewritten_description", "rewritten_columns",
 ]
 
 
@@ -111,6 +116,8 @@ FK_RELATIONS_HEADER = """\
 #   - the generator only ADDS relations, never modifies or removes existing ones
 #   - to reject a generated relation, move it to `ignore` (otherwise it comes back)
 #   - found: share of the values of `from` found in `to`; origin: profile, llm or manual
+#   - fanout, links: a relation added on purpose to a column of `to` that is not a key (studio): the rows
+#     of `to` each row of `from` joins on average, and the cardinality measured then
 # Table and column names must match the engine (lowercase for Hive).
 
 """

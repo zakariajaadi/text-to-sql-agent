@@ -43,7 +43,44 @@ semantics_chain = (
 # Generator
 # ------------------------------------------------------------
 
-def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str] | None = None):
+REWRITTEN_KEYS = ("rewritten_description", "rewritten_columns")
+EDITED_KEYS    = ("edited_description", "edited_columns")
+
+
+def kept_on_fresh(entry: dict, replace_edited: bool = False) -> dict:
+    """
+    What a table block keeps when it is described again (--fresh): its manual keys (formats,
+    exclude_columns, data_as_of, read mode...) and the descriptions corrected by hand in the studio
+    (edited_description, edited_columns), unless they are replaced too.
+    """
+    kept = {key: value for key, value in manual_semantics(entry).items() if key not in REWRITTEN_KEYS}
+    if replace_edited:
+        return {key: value for key, value in kept.items() if key not in EDITED_KEYS}
+    if entry.get("edited_description") and entry.get("description"):
+        kept["description"] = entry["description"]
+    edited = set(entry.get("edited_columns") or [])
+    if columns := {c: text for c, text in (entry.get("columns") or {}).items() if c in edited and text}:
+        kept["columns"] = columns
+    return kept
+
+
+def mark_rewritten(before: dict, entry: dict, order: list[str]) -> int:
+    """
+    The descriptions the LLM wrote again over another text, marked in the block (rewritten_*) for a
+    human to read again; the columns put back in the order of the table. Returns how many.
+    """
+    entry["columns"] = {c: entry["columns"][c] for c in [*order, *entry.get("columns", {})] if c in entry.get("columns", {})}
+    old = before.get("columns") or {}
+    columns = [c for c, text in entry["columns"].items() if old.get(c) and old[c] != text]
+    description = bool(before.get("description")) and before["description"] != entry.get("description")
+    for key, value in (("rewritten_description", description), ("rewritten_columns", columns)):
+        if value:
+            entry[key] = value
+    return len(columns) + description
+
+
+def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str] | None = None,
+                             replace_edited: bool = False):
     """
     Generates a semantic layer via LLM into semantic_layer/<db>/tables.yaml: missing table
     and column descriptions, and which columns are categorical, written in the database's
@@ -57,7 +94,9 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     existing descriptions are never overwritten, and a reviewed `categorical_columns`
     list only gains columns that are new to the table.
     fresh: drop the generated content first (descriptions, categorical columns) and generate
-    it again, keeping the manual keys (formats, exclude_columns, data_as_of, read mode...).
+    it again, keeping the manual keys (formats, exclude_columns, data_as_of, read mode...) and the
+    descriptions corrected by hand in the studio (all replaced with replace_edited). The texts the
+    LLM changes are marked rewritten, for a human to read again.
     tables: only these tables (the others left as they are); ValueError on an unknown one.
     """
     db         = db_registry[db_name]
@@ -65,8 +104,10 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     db_columns = table_columns(db)
     if tables and (unknown := sorted(set(tables) - set(db_columns))):
         raise ValueError(f"Unknown or excluded table(s): {', '.join(unknown)}")
+    before = {}
     if fresh:
-        existing = {table: manual_semantics(entry) if not tables or table in tables else entry
+        before   = {table: entry for table, entry in existing.items() if not tables or table in tables}
+        existing = {table: kept_on_fresh(entry, replace_edited) if table in before else entry
                     for table, entry in existing.items()}
     language   = cfg.get_db(db_name).semantic_language
     profile    = load_profile(db_name)
@@ -134,6 +175,14 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
             if column in described:
                 entry["columns"][column] = described[column]
                 added += 1
+
+    # Described again: what the LLM changed is to read again, what was corrected by hand is kept
+    for table in generated.keys() & before.keys():
+        rewritten = mark_rewritten(before[table], existing[table], db_columns.get(table, []))
+        kept = 0 if replace_edited else (bool(before[table].get("edited_description"))
+                                         + len(before[table].get("edited_columns") or []))
+        logger.info(f"[{db_name}] {table}: {rewritten} description(s) rewritten, to read again"
+                    + (f"; {kept} corrected by hand kept" if kept else ""))
 
     # Flag descriptions of columns that no longer exist
     for table, entry in existing.items():

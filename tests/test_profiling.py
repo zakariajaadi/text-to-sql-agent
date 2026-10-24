@@ -16,7 +16,9 @@ from offline.semantic_gen.profiling import (
     apply_profile,
     day_month_order,
     describe_shapes,
+    join_spread_sql,
     key_overlap_sql,
+    target_spread_sql,
     key_relations,
     month_first,
     personal_values,
@@ -178,6 +180,20 @@ def test_key_overlap_compares_digits_as_numbers():
     assert (total, found) == (5, 3)
     # Text that is not only digits stays text, trimmed (and case-sensitive)
     assert _run_on_sqlite(key_overlap_sql("loan.k", "agency.k", quote, 100), rows) == (5, 1)
+
+
+def test_key_spread_tells_a_key_and_the_rows_a_join_makes():
+    rows = {
+        "invoice":  [("FR",), ("FR",), ("US",), ("CA",), (None,)],
+        "customer": [("FR",), ("FR",), ("FR",), ("US",), ("DE",)],
+        "client":   [("FR",), ("US",), ("CA",)],
+    }
+    quote = '"{}"'.format
+    # rows holding a value, distinct values, fewest and most rows per value
+    assert _run_on_sqlite(target_spread_sql("customer.k", quote), rows) == (5, 3, 1, 3)
+    assert _run_on_sqlite(target_spread_sql("client.k", quote), rows) == (3, 3, 1, 1)
+    # rows of invoice holding a value, their distinct values, found in customer, rows the join makes
+    assert _run_on_sqlite(join_spread_sql("invoice.k", "customer.k", quote), rows) == (4, 3, 3, 7)
 
 
 def test_the_semantics_prompt_takes_the_row_facts():

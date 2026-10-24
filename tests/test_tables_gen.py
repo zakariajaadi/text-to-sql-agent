@@ -1,4 +1,5 @@
-"""Semantics generator (offline/semantic_gen/tables.py): only some tables, described again with --fresh."""
+"""Semantics generator (offline/semantic_gen/tables.py): only some tables, described again with --fresh,
+the descriptions corrected by hand kept and the ones the LLM changed marked to read again."""
 
 import sqlite3
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from langchain_community.utilities import SQLDatabase
 import lib.semantics
 from offline.semantic_gen import tables
 from offline.semantic_gen.schemas import ColumnSemantics, TableSemantics
+from offline.semantic_gen.utils import dump_table_semantics
 
 
 class FakeLLM:
@@ -59,6 +61,29 @@ def test_fresh_describes_again_the_tables_asked_for_only(llm):
     assert llm.asked == ["produit"]
     # the reviewed description of the other table is kept
     assert described() == {"client": "Reviewed client.", "produit": "New produit."}
+
+
+def test_fresh_keeps_the_corrections_made_by_hand(llm):
+    tables.generate_table_semantics("shop")
+    semantics = lib.semantics.load_semantics("shop")
+    semantics["client"].update(description="Clients, corrected.", edited_description=True, edited_columns=["label"],
+                               columns={"label": "Label, corrected.", "id": "Old id."})
+    lib.semantics.tables_path("shop").write_text(dump_table_semantics(semantics))
+
+    tables.generate_table_semantics("shop", fresh=True, tables=["client"])
+    entry = lib.semantics.load_semantics("shop")["client"]
+    assert entry["description"] == "Clients, corrected."
+    assert entry["columns"] == {"id": "New id.", "label": "Label, corrected."} and list(entry["columns"]) == ["id", "label"]
+    # what the LLM changed is to read again; the corrections stay corrections
+    assert (entry["rewritten_columns"], entry["edited_columns"]) == (["id"], ["label"])
+    assert "rewritten_description" not in entry
+
+    # replaced too on demand: the corrections go, the texts changed are to read again (the same text is not)
+    tables.generate_table_semantics("shop", fresh=True, tables=["client"], replace_edited=True)
+    entry = lib.semantics.load_semantics("shop")["client"]
+    assert (entry["description"], entry["columns"]["label"]) == ("New client.", "New label.")
+    assert "edited_description" not in entry and "edited_columns" not in entry
+    assert (entry["rewritten_description"], entry["rewritten_columns"]) == (True, ["label"])
 
 
 def test_an_unknown_table_stops(llm):

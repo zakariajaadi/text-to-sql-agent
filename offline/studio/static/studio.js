@@ -45,6 +45,7 @@ const STEPS = {
 const ui = {
   dbs: [], db: null, step: "profile", data: null, filter: "all", query: "", selected: new Set(),
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
+  relCheck: null,                                                      // a relation measured, not added (its target is no key)
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop})
   idx: null,                                                           // the Index screen
   current: null, detail: null, job: null, since: 0, polling: null, logOpen: true,
@@ -87,6 +88,7 @@ async function init() {
   $("db-select").onchange = (e) => {
     ui.db = e.target.value; store("studio.db", ui.db);
     ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
+    ui.relCheck = null; closeConfirm($("confirm"));
     ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null;
     renderDetail(); loadTables().then(() => loadScreen());
   };
@@ -113,6 +115,8 @@ function renderStep() {
   $("search").placeholder = metrics ? "Rechercher une métrique" : "Rechercher une table";
   $("list-name").textContent = metrics ? "Métrique" : "Table";
   $("list-status").textContent = metrics ? "État" : ui.step === "index" ? "Index" : "Statut";
+  $("filters").querySelector('[data-filter="review"]').hidden = ui.step !== "semantics";
+  closeConfirm($("confirm"));
   renderActions();
 }
 
@@ -126,7 +130,7 @@ function loadScreen() {
 function goTo(step) {
   if (!STEPS[step] || step === ui.step) return;
   ui.step = step; store("studio.step", step); history.replaceState(null, "", `#${step}`);
-  ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false;
+  ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false; ui.relCheck = null;
   [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   renderStep();
   if (step === "relations" || step === "metrics" || step === "index") {
@@ -171,8 +175,9 @@ function renderHeader() {
     relations: ui.data.tables.filter((t) => t.status.relations !== "done").length,
     metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0,
     index: ui.idx ? ui.idx.counts.changed + ui.idx.counts.missing : 0 }[ui.step];
-  const counts = { all: ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : s.tables, todo };
-  const labels = { all: "Toutes", todo: STEPS[ui.step].todo };
+  const review = ui.data.tables.filter((t) => t.rewritten).length;
+  const counts = { all: ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : s.tables, todo, review };
+  const labels = { all: "Toutes", todo: STEPS[ui.step].todo, review: "À relire" };
   [...$("filters").children].forEach((chip) => {
     chip.innerHTML = `${labels[chip.dataset.filter]}<span class="count">${counts[chip.dataset.filter]}</span>`;
   });
@@ -202,13 +207,15 @@ function statusPill(table) {
   }
   if (status === "none") return '<span class="pill todo">à décrire</span>';
   if (status === "partial") return `<span class="pill decide" title="Colonnes ajoutées depuis la dernière description">${table.undescribed} col. à décrire</span>`;
+  if (table.rewritten) return `<span class="pill decide" title="Descriptions réécrites par l'IA, à relire">${fmt.format(table.rewritten)} à relire</span>`;
   return '<span class="pill done">décrite</span>';
 }
 
 function visibleRows() {
   const q = ui.query.toLowerCase(), key = STEPS[ui.step].key;
   const todo = ui.step === "index" ? (t) => ["changed", "missing"].includes(indexStatus(t.name)) : (t) => t.status[key] !== "done";
-  return (ui.data?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || todo(t)));
+  const shown = ui.filter === "review" ? (t) => t.rewritten > 0 : todo;
+  return (ui.data?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || shown(t)));
 }
 
 function renderRows() {
@@ -422,9 +429,17 @@ async function changeColumn(pill) {
 
 function semanticsFigures(d) {
   const c = d.counts;
-  return `${plural(c.columns, "colonne")} · ${fmt.format(c.described)}/${fmt.format(c.visible)} décrites · `
-    + (c.categorical ? `${fmt.format(c.categorical)} catégorielle${c.categorical > 1 ? "s" : ""}` : "aucune catégorielle");
+  return [plural(c.columns, "colonne"), `${fmt.format(c.described)}/${fmt.format(c.visible)} décrites`,
+    c.rewritten ? `${fmt.format(c.rewritten)} à relire` : null,
+    c.categorical ? `${fmt.format(c.categorical)} catégorielle${c.categorical > 1 ? "s" : ""}` : "aucune catégorielle",
+    c.edited ? `${fmt.format(c.edited)} corrigée${c.edited > 1 ? "s" : ""} à la main` : null].filter(Boolean).join(" · ");
 }
+
+// The marks of a description (column: its name, "" for the table): rewritten by the LLM (an amber dot, to read
+// again), corrected by hand (a pencil, kept when the table is described again); hidden when they don't apply
+const PENCIL = '<path d="M10.5 2.5l3 3L6 13l-3.5.5L3 10z"/>';
+const rewrittenDot = (column, on) => `<span class="todo-dot" data-dot="${esc(column)}" title="Réécrite par l'IA : à relire" ${on ? "" : "hidden"}></span>`;
+const handMark = (column, on) => `<svg class="hand" data-hand="${esc(column)}" viewBox="0 0 16 16" role="img" aria-label="Corrigée à la main" ${on ? "" : "hidden"}><title>Corrigée à la main : gardée quand l'IA redécrit</title>${PENCIL}</svg>`;
 
 function renderSemantics(d, el, message) {
   if (!d.described) {
@@ -435,15 +450,15 @@ function renderSemantics(d, el, message) {
     return;
   }
   const lines = d.columns.map((c) => {
-    const name = `${esc(c.column)}${c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : ""}`;
+    const key = c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : "";
     if (c.excluded) {
-      return `<div class="sline hidden-col"><span class="cell">${name} <span class="pill hide">cachée</span></span>
+      return `<div class="sline hidden-col"><span class="cell">${esc(c.column)}${key} <span class="pill hide">cachée</span></span>
         <span class="cell mono">${esc((c.type || "—").toLowerCase())}</span>
         <span class="muted-text">cachée à l'agent : pas de description</span><span></span></div>`;
     }
     const values = c.distinct == null ? "" : `<span class="values" title="${c.sampled ? "Valeurs distinctes sur l'échantillon du profil" : "Valeurs distinctes de la table"}">${plural(c.distinct, "valeur")}</span>`;
     return `<div class="sline">
-      <span class="cell">${name}</span>
+      <span class="cell">${rewrittenDot(c.column, c.rewritten)}${esc(c.column)}${key}${handMark(c.column, c.edited)}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
       <textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea>
       <label class="switch-cell">${values}<input type="checkbox" class="switch" data-field="categorical" data-column="${esc(c.column)}" ${c.categorical ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
@@ -452,10 +467,13 @@ function renderSemantics(d, el, message) {
 
   el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2><span class="figures" id="sem-figures">${semanticsFigures(d)}</span>
       <span class="grow"></span><span class="save-state" id="save-state"></span>
-      <button class="btn ghost small" id="describe-again" title="L'IA réécrit toutes les descriptions de cette table">Redécrire</button></div>
+      <button class="btn ghost small" id="mark-read" title="Les descriptions réécrites par l'IA sortent de « à relire »" ${d.counts.rewritten ? "" : "hidden"}>Tout marquer relu</button>
+      <button class="btn ghost small" id="describe-again" title="L'IA réécrit les descriptions de cette table ; celles corrigées à la main sont gardées">Redécrire</button></div>
+    <div class="confirm" id="sem-confirm" role="group" aria-label="Redécrire ${esc(d.name)}" hidden></div>
+    <p class="legend muted-text" id="sem-legend" ${d.counts.rewritten ? "" : "hidden"}><span><span class="todo-dot"></span>réécrite par l'IA, à relire : le point part quand tu la modifies</span><span><svg class="hand" viewBox="0 0 16 16" aria-hidden="true">${PENCIL}</svg>corrigée à la main, gardée</span></p>
     ${message ? `<p class="note error">${esc(message)}</p>` : ""}
     <div class="table-text">
-      <label class="field-label" for="sem-description">Description de la table</label>
+      <label class="field-label" for="sem-description">${rewrittenDot("", d.description_rewritten)}Description de la table${handMark("", d.description_edited)}</label>
       <textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea>
       <div class="as-of">
         <label class="field-label" for="sem-as-of">Données arrêtées au</label>
@@ -468,7 +486,8 @@ function renderSemantics(d, el, message) {
       ${lines}
     </div>`;
 
-  $("describe-again").onclick = () => runJob("semantics", { tables: [d.name], fresh: true });
+  $("describe-again").onclick = () => redescribeTable(d);
+  $("mark-read").onclick = () => markRead(d);
   el.querySelectorAll("textarea.edit").forEach((area) => {
     fitHeight(area);
     area.addEventListener("input", () => fitHeight(area));
@@ -476,6 +495,87 @@ function renderSemantics(d, el, message) {
   });
   $("sem-as-of").addEventListener("change", (e) => saveSemantics(e.target, e.target.value));
   el.querySelectorAll("input.switch").forEach((box) => box.addEventListener("change", () => saveSemantics(box, box.checked)));
+}
+
+// The marks of the page after a save, without drawing it again (the focus stays where it is)
+function updateMarks(d) {
+  const edited = new Set(d.columns.filter((c) => c.edited).map((c) => c.column));
+  const rewritten = new Set(d.columns.filter((c) => c.rewritten).map((c) => c.column));
+  $("detail").querySelectorAll("[data-dot]").forEach((dot) => {
+    dot.hidden = dot.dataset.dot ? !rewritten.has(dot.dataset.dot) : !d.description_rewritten;
+  });
+  $("detail").querySelectorAll("[data-hand]").forEach((hand) => {
+    hand.toggleAttribute("hidden", hand.dataset.hand ? !edited.has(hand.dataset.hand) : !d.description_edited);
+  });
+  $("sem-figures").textContent = semanticsFigures(d);
+  $("sem-legend").hidden = $("mark-read").hidden = !d.counts.rewritten;
+}
+
+// Describe a table again: straight away, unless it holds corrections made by hand (kept, or replaced on a click)
+function redescribeTable(d) {
+  const edited = d.counts.edited;
+  if (!edited) { runJob("semantics", { tables: [d.name], fresh: true }); return; }
+  const written = 1 + d.counts.visible - edited;
+  const which = [d.description_edited ? "la description de la table" : null,
+    ...d.columns.filter((c) => c.edited && !c.excluded).map((c) => `<span class="mono">${esc(c.column)}</span>`)].filter(Boolean);
+  const list = which.length > 1 ? `${which.slice(0, -1).join(", ")} et ${which.at(-1)}` : which[0];
+  openConfirm($("sem-confirm"), {
+    text: `L'IA réécrit les <b>${plural(written, "description")}</b> qu'elle a écrites. `
+      + `${edited > 1 ? `Tes <b>${fmt.format(edited)} corrections</b> restent telles quelles` : "Ta <b>correction</b> reste telle quelle"} : ${list}.`,
+    edited,
+    button: (replace) => `Redécrire ${plural(replace ? written + edited : written, "description")}`,
+    run: (replace) => runJob("semantics", { tables: [d.name], fresh: true, replace_edited: replace }),
+  });
+}
+
+// The selection described again: the same question, for every table checked that holds corrections
+function redescribeSelection() {
+  const chosen = (ui.data?.tables || []).filter((t) => ui.selected.has(t.name));
+  const edited = chosen.reduce((n, t) => n + (t.edited || 0), 0);
+  const run = (replace) => runJob("semantics", { tables: chosen.map((t) => t.name), fresh: true, replace_edited: replace });
+  if (!edited) { run(false); return; }
+  openConfirm($("confirm"), {
+    text: `L'IA réécrit les descriptions de ${plural(chosen.length, "table")}. `
+      + `${edited > 1 ? `Tes <b>${fmt.format(edited)} corrections</b> restent telles quelles` : "Ta <b>correction</b> reste telle quelle"}`
+      + ` (${names(chosen.filter((t) => t.edited).map((t) => t.name))}).`,
+    edited,
+    button: () => `Redécrire ${plural(chosen.length, "table")}`,
+    run,
+  });
+}
+
+// The strip before describing again: what the LLM rewrites, what it keeps, the corrections replaced on a click
+function openConfirm(strip, { text, edited, button, run }) {
+  strip.innerHTML = `<p>${text}</p>
+    <span class="confirm-actions">
+      <label class="check"><input type="checkbox" data-replace>Remplacer aussi ${edited > 1 ? `mes ${fmt.format(edited)} corrections` : "ma correction"}</label>
+      <button class="btn small ghost" type="button" data-cancel>Annuler</button>
+      <button class="btn small primary" type="button" data-run>${button(false)}</button>
+    </span>`;
+  strip.hidden = false;
+  const replace = strip.querySelector("[data-replace]"), go = strip.querySelector("[data-run]");
+  replace.onchange = () => { go.textContent = button(replace.checked); };
+  strip.querySelector("[data-cancel]").onclick = () => closeConfirm(strip);
+  go.onclick = () => { closeConfirm(strip); run(replace.checked); };
+  go.focus();
+}
+
+function closeConfirm(strip) {
+  strip.hidden = true;
+  strip.innerHTML = "";
+}
+
+// The descriptions the LLM rewrote, read: their dots go
+async function markRead(d) {
+  try {
+    ui.detail = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/semantics`,
+      { method: "POST", body: { field: "read", version: d.version } });
+  } catch (e) {
+    renderDetail(e.status === 409 ? "tables.yaml a changé : rouvre la table" : e.message);
+    return;
+  }
+  renderDetail();
+  loadTables();
 }
 
 // A description grows with its text, no scroll inside it
@@ -493,8 +593,8 @@ async function saveSemantics(input, value) {
   try {
     const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/semantics`, { method: "POST", body });
     if (ui.detail?.name !== d.name) return;
-    Object.assign(ui.detail, { version: saved.version, counts: saved.counts });
-    $("sem-figures").textContent = semanticsFigures(saved);
+    Object.assign(ui.detail, saved);
+    updateMarks(saved);
     state.textContent = "Enregistré";
     state.className = "save-state ok";
     loadTables();
@@ -505,6 +605,8 @@ async function saveSemantics(input, value) {
 }
 
 // ── Relations: the map of the tables, the path of the agent, the evidence ──
+
+const KEY_OVERLAP = 0.9;   // values found under it: the relation is in amber (offline/studio/relations.py)
 
 const ORIGINS = { profile: ["mesurée", "Clé de même nom dont les valeurs se retrouvent (profil)"],
   llm: ["IA", "Proposée par l'IA à partir des noms et des descriptions"],
@@ -537,15 +639,20 @@ function mapSvg() {
   const onPath = new Set((ui.path.result?.layers || []).flat());
   const layer = new Map((ui.path.result?.layers || []).flatMap((tables, i) => tables.map((t) => [t, i])));
   const near = new Set(ui.rel.relations.filter((r) => r.source === cur || r.target === cur).flatMap((r) => [r.source, r.target]));
+  const pairs = new Map();   // two relations between the same tables: side by side, not one over the other
   const edges = ui.rel.relations.filter((r) => r.source !== r.target && nodes[r.source] && nodes[r.target]).map((r) => {
-    const s = nodes[r.source], t = nodes[r.target];
-    const [x1, y1, x2, y2] = [s.x + s.w / 2, s.y + s.h, t.x + t.w / 2, t.y];
+    const s = nodes[r.source], t = nodes[r.target], pair = [r.source, r.target].sort().join("|");
+    const dx = 14 * (pairs.get(pair) || 0);
+    pairs.set(pair, (pairs.get(pair) || 0) + 1);
+    const [x1, y1, x2, y2] = [s.x + s.w / 2 + dx, s.y + s.h, t.x + t.w / 2 + dx, t.y];
     const down = y2 > y1, my = (y1 + y2) / 2;
     const d = down ? `M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}` : `M${x1} ${s.y + s.h / 2} L${x2} ${t.y + t.h / 2}`;
     const inPath = layer.has(r.source) && layer.has(r.target) && Math.abs(layer.get(r.source) - layer.get(r.target)) === 1;
     const cls = ["e", r.weak ? "weak" : "", r.found == null ? "unchecked" : "", cur && (r.source === cur || r.target === cur) ? "on" : "",
       cur && !near.has(r.source) && r.source !== cur ? "dim" : "", inPath ? "path" : ""].join(" ");
-    return `<path class="${cls}" d="${d}"><title>${esc(r.from)} → ${esc(r.to)}${r.found != null ? ` · ${pct(r.found)} des valeurs trouvées` : ""}</title></path>`;
+    const said = r.fanout ? ` · chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois`
+      : r.found != null ? ` · ${pct(r.found)} des valeurs trouvées` : "";
+    return `<path class="${cls}" d="${d}"><title>${esc(r.from)} → ${esc(r.to)}${said}</title></path>`;
   }).join("");
   const isolated = new Set(ui.rel.isolated);
   const boxes = Object.entries(nodes).map(([table, n]) => {
@@ -573,11 +680,12 @@ function pathText() {
 function relationLine(r) {
   const [origin, title] = ORIGINS[r.origin] || ["—", "Écrite avant que le studio note l'origine"];
   const found = r.found == null ? '<span class="muted-text" title="Pas encore vérifiée sur les données : Revérifier">non vérifiée</span>'
-    : `<span class="bar"><i class="${r.weak ? "low" : ""}" style="width:${Math.round(r.found * 100)}%"></i></span>${pct(r.found)}`;
+    : `<span class="bar"><i class="${r.found < KEY_OVERLAP ? "low" : ""}" style="width:${Math.round(r.found * 100)}%"></i></span>${pct(r.found)}`;
   return `<div class="rline${r.weak ? " weak" : ""}">
     <span class="cell mono" title="${esc(r.from)} → ${esc(r.to)}">${esc(r.from)} <span class="arrow">→</span> ${esc(r.to)}</span>
     <span class="fill">${found}</span>
-    <span class="cell mono muted" title="Combien de lignes d'un côté pour une ligne de l'autre">${esc(r.links)}</span>
+    ${r.fanout ? `<span class="cell mono warn-text" title="${esc(r.to)} n'est pas une clé : chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois en moyenne">${esc(r.links)}</span>`
+      : `<span class="cell mono muted" title="Combien de lignes d'un côté pour une ligne de l'autre">${esc(r.links)}</span>`}
     <span class="cell muted" title="${title}">${origin}</span>
     <button class="icon-btn small" data-ignore="${esc(r.from)}|${esc(r.to)}" title="Retirer : la relation va dans ignore et ne reviendra pas" aria-label="Retirer ${esc(r.from)} vers ${esc(r.to)}">✕</button>
   </div>`;
@@ -595,6 +703,9 @@ function renderRelations(el, message) {
     rel.weak ? `${fmt.format(rel.weak)} à vérifier` : null, rel.unchecked ? `${fmt.format(rel.unchecked)} non vérifiée${rel.unchecked > 1 ? "s" : ""}` : null]
     .filter(Boolean).join(" · ");
   const options = (value) => `<option value="">—</option>` + tables.map((t) => `<option ${t === value ? "selected" : ""}>${esc(t)}</option>`).join("");
+  // The form keeps the relation just checked; a new one starts from the table chosen on the map
+  const chosen = ui.relCheck ? { source: ui.relCheck.source.split("."), target: ui.relCheck.target.split(".") }
+    : { source: [cur, null], target: [null, null] };
 
   el.innerHTML = `<div class="detail-head"><h2>Carte des tables</h2><span class="figures">${figures}</span>
       <span class="grow"></span><span class="save-state" id="rel-state">${message ? esc(message) : ""}</span>
@@ -607,12 +718,13 @@ function renderRelations(el, message) {
     </div>
     <form class="add-form" id="add-form" ${ui.adding ? "" : "hidden"}>
       <span class="muted-text">Nouvelle relation</span>
-      <select id="add-source-table" aria-label="Table qui pointe">${options(cur)}</select><select id="add-source-column" aria-label="Colonne qui pointe"></select>
+      <select id="add-source-table" aria-label="Table qui pointe">${options(chosen.source[0])}</select><select id="add-source-column" aria-label="Colonne qui pointe"></select>
       <span class="arrow">→</span>
-      <select id="add-target-table" aria-label="Table pointée">${options(null)}</select><select id="add-target-column" aria-label="Colonne pointée"></select>
+      <select id="add-target-table" aria-label="Table pointée">${options(chosen.target[0])}</select><select id="add-target-column" aria-label="Colonne pointée"></select>
       <button class="btn small primary" type="submit">Vérifier et ajouter</button>
       <button class="btn small ghost" type="button" id="add-cancel">Annuler</button>
     </form>
+    ${ui.adding && ui.relCheck ? relationCheck(ui.relCheck) : ""}
     <div class="columns">
       <div class="rline head"><span>${cur ? `Relations de ${esc(cur)}` : "Toutes les relations"}</span><span class="num">Valeurs trouvées</span><span>Liens</span><span>Origine</span><span></span></div>
       ${shown.map(relationLine).join("") || `<p class="placeholder">${cur ? "Aucune relation : l'agent ne peut joindre cette table à aucune autre." : "Aucune relation."}</p>`}
@@ -631,17 +743,53 @@ function renderRelations(el, message) {
   el.querySelectorAll("[data-ignore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.ignore, false)));
   el.querySelectorAll("[data-restore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.restore, true)));
   for (const end of ["source", "target"]) {
-    const fill = () => { $(`add-${end}-column`).innerHTML = columnsOf($(`add-${end}-table`).value); };
-    $(`add-${end}-table`).onchange = fill;
-    fill();
+    const fill = (column) => { $(`add-${end}-column`).innerHTML = columnsOf($(`add-${end}-table`).value, column); };
+    $(`add-${end}-table`).onchange = () => { forgetCheck(); fill(); };
+    $(`add-${end}-column`).onchange = forgetCheck;
+    fill(chosen[end][1]);
   }
-  $("add-cancel").onclick = () => { ui.adding = false; renderDetail(); };
+  $("add-cancel").onclick = () => { ui.adding = false; ui.relCheck = null; renderDetail(); };
   $("add-form").onsubmit = (e) => { e.preventDefault(); addRelation(); };
+  if ($("add-anyway")) $("add-anyway").onclick = () => addRelation(true);
 }
 
 // The columns of a table, for the add form
-function columnsOf(table) {
-  return (ui.rel?.columns[table] || []).map((c) => `<option>${esc(c)}</option>`).join("");
+function columnsOf(table, chosen = null) {
+  return (ui.rel?.columns[table] || []).map((c) => `<option ${c === chosen ? "selected" : ""}>${esc(c)}</option>`).join("");
+}
+
+// Another relation chosen in the form: the check of the previous one goes
+function forgetCheck() {
+  ui.relCheck = null;
+  $("rel-check")?.remove();
+}
+
+// A relation measured and not added: its target is no key, a join on it would count each row several times.
+// What the data says, as the tests of a metric; added on a click only
+function relationCheck(c) {
+  const [table] = c.source.split("."), [target] = c.target.split("."), [fewest, most] = c.per_value;
+  const found = c.found == null ? '<span class="muted-text">—</span>' : share(c.found, c.found < KEY_OVERLAP);
+  const foundText = c.found == null ? `<span class="mono">${esc(c.source)}</span> n'a aucune valeur.`
+    : c.found >= 1 ? `Toutes les valeurs de <span class="mono">${esc(c.source)}</span> se retrouvent dans <span class="mono">${esc(target)}</span>.`
+    : `${pct(1 - c.found)} des valeurs de <span class="mono">${esc(c.source)}</span> ne se retrouvent pas dans <span class="mono">${esc(target)}</span>.`;
+  const lines = [
+    checkLine("Valeurs trouvées", found, foundText, c.found != null && c.found < KEY_OVERLAP),
+    checkLine("Lignes par valeur", `${fmt.format(fewest)} à ${fmt.format(most)}`,
+      `<span class="mono">${esc(c.target)}</span> : ${plural(c.target_values, "valeur")} pour ${plural(c.target_rows, "ligne")}, ce n'est pas une clé.`, true),
+  ];
+  if (c.matched) {
+    const times = c.joined / c.matched;
+    lines.push(checkLine("Lignes comptées", `<span class="bar"><i class="low" style="width:100%"></i></span>${fmt.format(c.joined)} / ${fmt.format(c.matched)}`,
+      `Chaque ligne de ${esc(table)} comptée ${decimal(times)} fois en moyenne : la jointure multiplie ses montants.`, true));
+  }
+  const other = ui.rel.relations.find((r) => [r.source, r.target].sort().join("|") === [table, target].sort().join("|"));
+  const foot = other ? `<span class="muted-text">L'agent va déjà de ${esc(table)} à ${esc(target)} par <span class="mono">${esc(other.from)} → ${esc(other.to)}</span>.</span>` : "";
+  return `<div class="result" id="rel-check" role="status">
+      <p class="result-title">Pas ajoutée : <span class="mono">${esc(c.target)}</span> n'est pas une clé, la jointure compterait chaque ligne de ${esc(table)} plusieurs fois.</p>
+      <div class="mline head"><span>Sur les données</span><span class="num">Mesure</span><span>Ce que ça veut dire</span></div>
+      ${lines.join("")}
+      <div class="result-foot">${foot}<span class="grow"></span><button class="btn small" type="button" id="add-anyway">Ajouter quand même</button></div>
+    </div>`;
 }
 
 async function findPath() {
@@ -668,24 +816,39 @@ async function moveRelation(pair, back) {
   loadTables(); renderDetail();
 }
 
-async function addRelation() {
+// A relation measured on the data, then added; not added when its target is no key, unless forced (a click)
+async function addRelation(force = false) {
   const source = `${$("add-source-table").value}.${$("add-source-column").value}`;
   const target = `${$("add-target-table").value}.${$("add-target-column").value}`;
   $("rel-state").textContent = "Vérification sur les données…";
+  $("rel-state").className = "save-state";
+  let response;
   try {
-    ui.rel = await api(`/api/db/${encodeURIComponent(ui.db)}/relations`,
-      { method: "POST", body: { source, target, version: ui.rel.version } });
+    response = await api(`/api/db/${encodeURIComponent(ui.db)}/relations`,
+      { method: "POST", body: { source, target, version: ui.rel.version, force } });
   } catch (e) {
     $("rel-state").textContent = e.status === 409 ? "relationships.yaml a changé : recharge la page" : e.message;
     $("rel-state").className = "save-state error";
     return;
   }
+  ui.rel = response;
+  if (!response.added) {
+    ui.relCheck = response.check;
+    renderDetail();
+    $("rel-check")?.scrollIntoView({ block: "nearest" });
+    return;
+  }
   ui.adding = false;
+  ui.relCheck = null;
   const added = ui.rel.relations.find((r) => r.from === source && r.to === target);
   ui.current = source.split(".")[0];
   loadTables();
-  renderDetail(added?.found == null ? "Ajoutée, mais aucune valeur à vérifier"
-    : `Ajoutée : ${pct(added.found)} des valeurs trouvées${added.weak ? " — peu, à vérifier" : ""}`);
+  renderDetail();
+  const [state, warn] = added?.fanout ? [`Ajoutée à la main : chaque ligne de ${added.source} comptée ${decimal(added.fanout)} fois en moyenne`, true]
+    : added?.found == null ? ["Ajoutée, mais aucune valeur à vérifier", false]
+    : [`Ajoutée : ${pct(added.found)} des valeurs trouvées${added.weak ? " — peu, à vérifier" : ""}`, added.weak];
+  $("rel-state").textContent = state;
+  $("rel-state").className = `save-state${warn ? " warn" : ""}`;
 }
 
 // ── Metrics: the formula, the query a test runs, what the data says ──
@@ -1139,7 +1302,7 @@ async function runJob(step, request) {
 function runSelection() {
   if (!ui.selected.size) { showBanner("Coche d'abord les tables dans la liste.", true); return; }
   if (ui.step === "profile") runJob("profile", { tables: [...ui.selected] });
-  else runJob("semantics", { tables: [...ui.selected], fresh: true });
+  else redescribeSelection();
 }
 function runMissing() {
   runJob(ui.step === "profile" ? "profile" : "semantics", ui.step === "profile" ? { missing: true } : {});
@@ -1157,7 +1320,7 @@ $("run-secondary").addEventListener("click", () => {
     testMetrics((ui.met?.metrics || []).filter((m) => m.sql).map((m) => m.name));
   }
   else if (ui.step === "index") runJob("eval/run", {});
-  else if (ui.step === "relations") { ui.adding = true; renderDetail(); $("add-form")?.scrollIntoView({ block: "nearest" }); }
+  else if (ui.step === "relations") { ui.adding = true; ui.relCheck = null; renderDetail(); $("add-form")?.scrollIntoView({ block: "nearest" }); }
   else if (ui.step === "profile") runMissing();
   else runSelection();
 });
@@ -1289,6 +1452,14 @@ function semanticsJobTitle(job, now) {
   if (job.stopped) return ["Description arrêtée · rien n'est écrit : tables.yaml n'est mis à jour qu'à la fin", "failed"];
   if (job.returncode) return [`Échec de la description (code ${job.returncode}) · voir les logs`, "failed"];
   if (!sent) return ["Rien à décrire : chaque table a déjà ses descriptions", ""];
+  if (job.command.includes("--fresh")) {
+    // Described again: what the LLM changed, to read again, and the corrections made by hand it kept
+    const which = sent > 2 ? plural(sent, "table") : job.started_tables.map(esc).join(", ");
+    const changed = job.rewritten ? `${plural(job.rewritten, "description")} ${job.rewritten > 1 ? "réécrites" : "réécrite"}, à relire`
+      : "aucune description changée";
+    const kept = job.kept ? ` · ${job.kept > 1 ? `tes ${fmt.format(job.kept)} corrections gardées` : "ta correction gardée"}` : "";
+    return [`Description terminée · ${which} · <b>${changed}</b>${kept}`, ""];
+  }
   return [`Description terminée · ${plural(sent, "table")} ${sent > 1 ? "décrites" : "décrite"} · à relire`, ""];
 }
 

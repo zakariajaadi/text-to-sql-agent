@@ -35,6 +35,8 @@ FETCHING = re.compile(r"\] Fetching values: (?P<table>\S+) \(")
 PHASES   = (("] Built: ", "documents"), (" schemas to Chroma.", "values"))
 # A question of the eval asked to the agent (offline/eval/run.py)
 QUESTION = re.compile(r"^\[(?P<n>\d+)/(?P<total>\d+)\] ")
+# A table described again (semantics --fresh): the descriptions the LLM changed, the ones corrected by hand kept
+REWRITTEN = re.compile(r"\] \S+: (?P<rewritten>\d+) description\(s\) rewritten, to read again(?:; (?P<kept>\d+) corrected by hand kept)?$")
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
 NOT_CANCELLED = "the running query could not be cancelled"
@@ -61,6 +63,8 @@ class Job:
     checked: int = 0                                          # relations measured on the data
     phase: str | None = None                                  # index: "documents", then "values" (PHASES)
     progress: list[int] | None = None                         # eval: [question, questions]
+    rewritten: int = 0                                        # semantics --fresh: descriptions the LLM changed
+    kept: int = 0                                             # ... and the ones corrected by hand it kept
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -89,6 +93,9 @@ class Job:
             self.current, self.current_since, self.phase = None, None, phase
         elif question := QUESTION.match(message):
             self.progress = [int(question["n"]), int(question["total"])]
+        elif described := REWRITTEN.search(message):
+            self.rewritten += int(described["rewritten"])
+            self.kept      += int(described["kept"] or 0)
         elif failed := FAILED.search(message):
             self.failed.append(failed["table"])
         elif CHECKING in message:
@@ -118,6 +125,7 @@ class Job:
             "stopped_at": self.stopped_at, "cancel": self.cancel,
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
             "started_tables": self.started_tables, "checked": self.checked, "phase": self.phase, "progress": self.progress,
+            "rewritten": self.rewritten, "kept": self.kept,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 
@@ -153,13 +161,18 @@ def relations_command(db: str, check: bool) -> list[str]:
     return command + ["--check"] if check else command
 
 
-def semantics_command(db: str, tables: list[str] | None, fresh: bool) -> list[str]:
-    """The CLI command of `make semantics`: the missing descriptions, or `tables` described again (fresh)."""
+def semantics_command(db: str, tables: list[str] | None, fresh: bool, replace_edited: bool = False) -> list[str]:
+    """
+    The CLI command of `make semantics`: the missing descriptions, or `tables` described again (fresh),
+    the descriptions corrected by hand kept unless replace_edited.
+    """
     command = [sys.executable, "-m", "offline.cli", "semantics", "--db", db]
     if tables:
         command += ["--tables", ",".join(tables)]
     if fresh:
         command.append("--fresh")
+        if replace_edited:
+            command.append("--replace-edited")
     return command
 
 
