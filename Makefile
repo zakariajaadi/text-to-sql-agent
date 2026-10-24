@@ -53,8 +53,8 @@ profile:  ## Measure the data → semantic_layer/<DB>/profile.yaml (no LLM; ARGS
 semantics:  ## Generate table/column descriptions and categorical columns (ARGS="--tables a,b" and/or "--fresh")
 	$(RUN) -m offline.cli semantics --db $(DB) $(ARGS)
 
-relations:  ## Generate FK relations (review semantic_layer/<DB>/relationships.yaml)
-	$(RUN) -m offline.cli fk-relations --db $(DB)
+relations:  ## Generate FK relations, each checked on the data (ARGS="--check": only check them again, no LLM)
+	$(RUN) -m offline.cli fk-relations --db $(DB) $(ARGS)
 
 metrics:  ## Propose business metrics (review semantic_layer/<DB>/metrics.yaml)
 	$(RUN) -m offline.cli metrics --db $(DB)

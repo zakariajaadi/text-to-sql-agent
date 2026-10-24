@@ -10,7 +10,8 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
                     (--tables a,b / --missing: only those tables, merged into the profile)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
                     (--fresh: generated again from scratch, the manual keys kept; --tables a,b: only those)
-    fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala)
+    fk-relations  → semantic_layer/<db>/relationships.yaml  FK relations (Hive / Impala), each with the share
+                    of its values found (--check: only measure that again, no LLM)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
     (review the YAML files)
     index         → Chroma schema index + value index data/values/<db>.sqlite (default command)
@@ -43,6 +44,8 @@ def main():
                         help="profile, semantics: only these tables (comma-separated), the others left as they are")
     parser.add_argument("--missing", action="store_true",
                         help="profile: only the tables not in profile.yaml yet")
+    parser.add_argument("--check", action="store_true",
+                        help="fk-relations: measure the share of values found of every relation, no LLM")
     args = parser.parse_args()
 
     commands = {
@@ -51,7 +54,7 @@ def main():
                             db_registry[name], name, tables=args.tables, missing=args.missing,
                             personal=cfg.get_db(name).exclude_personal_data),
         "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh, tables=args.tables),
-        "fk-relations": relationships.infer_fk_relations,
+        "fk-relations": lambda name: (relationships.check_relations if args.check else relationships.infer_fk_relations)(name),
         "metrics":      metrics.generate_metrics,
     }
 

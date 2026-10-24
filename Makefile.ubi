@@ -71,8 +71,8 @@ profile:  ## Measure the data → profile.yaml (no LLM, one query at a time; ARG
 semantics:  ## Generate the table descriptions and categorical columns (ARGS="--fresh" to redo them, "--tables a,b": only those)
 	$(RUN) python -m offline.cli semantics --db $(DB) $(ARGS)
 
-relations:  ## Generate FK relations (review relationships.yaml)
-	$(RUN) python -m offline.cli fk-relations --db $(DB)
+relations:  ## Generate FK relations, each checked on the data (ARGS="--check": only check them again, no LLM)
+	$(RUN) python -m offline.cli fk-relations --db $(DB) $(ARGS)
 
 metrics:  ## Propose business metrics (review metrics.yaml)
 	$(RUN) python -m offline.cli metrics --db $(DB)

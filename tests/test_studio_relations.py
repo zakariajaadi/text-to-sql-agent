@@ -1,0 +1,128 @@
+"""Relations screen of the studio (offline/studio/relations.py): evidence, map, path, add and ignore."""
+
+from types import SimpleNamespace
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+import lib.semantics
+from offline.semantic_gen import utils
+from offline.studio import app as studio_app
+from offline.studio.relations import (
+    add_relation,
+    fk_graph,
+    ignore_relation,
+    join_path,
+    layout,
+    relation_row,
+    relations_view,
+)
+
+PROFILE = {
+    "client":        {"rows": 10, "keys": {"id_client": {"non_null": 10, "distinct": 10}}},
+    "client_master": {"rows": 10, "keys": {"id_client": {"non_null": 10, "distinct": 10},
+                                           "id_personne": {"non_null": 10, "distinct": 9}}},
+    "carte":         {"rows": 30, "keys": {"id_client": {"non_null": 30, "distinct": 8}}},
+}
+TABLES = ["client", "client_master", "personne", "carte", "impaye", "bilan"]
+RELATIONS = [
+    {"from": "client_master.id_client", "to": "client.id_client", "found": 1.0, "origin": "profile"},
+    {"from": "client_master.id_personne", "to": "personne.id_personne", "found": 0.62, "origin": "llm"},
+    {"from": "carte.id_client", "to": "client.id_client"},
+    {"from": "impaye.id_personne", "to": "personne.id_personne", "found": 0.97, "origin": "manual"},
+]
+
+
+def test_relation_row_says_its_evidence():
+    rows = [relation_row(r, PROFILE) for r in RELATIONS]
+    assert (rows[0]["links"], rows[0]["weak"], rows[0]["origin"]) == ("1 → 1", False, "profile")
+    assert (rows[1]["weak"], rows[1]["links"]) == (True, "n → ?")    # under 90 %: for a human to keep or ignore
+    assert (rows[2]["found"], rows[2]["weak"], rows[2]["links"]) == (None, False, "n → 1")   # not checked yet
+
+
+def test_relations_view_counts_and_isolated_tables():
+    view = relations_view(TABLES, {"relations": RELATIONS, "ignore": []}, PROFILE)
+    assert view["counts"] == {"client": 2, "client_master": 2, "personne": 2, "carte": 1, "impaye": 1, "bilan": 0}
+    assert (view["isolated"], view["weak"], view["unchecked"]) == (["bilan"], 1, 1)
+
+
+def test_layout_places_every_table_without_overlap():
+    result = layout(TABLES, RELATIONS)
+    nodes = result["nodes"]
+    assert set(nodes) == set(TABLES)
+    boxes = list(nodes.values())
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"] or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"]
+    # a table pointing to another one is above it; the isolated table on a last row
+    assert nodes["carte"]["y"] < nodes["client"]["y"]
+    assert nodes["bilan"]["y"] > max(n["y"] for t, n in nodes.items() if t != "bilan")
+    assert result["width"] >= max(n["x"] + n["w"] for n in boxes)
+
+
+def test_join_path_is_the_one_of_the_agent():
+    graph = fk_graph(RELATIONS, TABLES)
+    assert join_path("carte", "impaye", graph) == {
+        "joins": 4, "layers": [["carte"], ["client"], ["client_master"], ["personne"], ["impaye"]], "bridged": False}
+    assert join_path("carte", "personne", graph)["bridged"]           # 3 joins: the agent bridges it
+    assert join_path("carte", "bilan", graph) == {"joins": None, "layers": [], "bridged": False}
+
+
+def test_add_and_ignore_a_relation():
+    entry = {"relations": list(RELATIONS), "ignore": [{"from": "bilan.id", "to": "client.id_client"}]}
+    entry = add_relation(entry, "bilan.id", "client.id_client", 0.4)
+    assert entry["ignore"] == [] and entry["relations"][-1] == {"from": "bilan.id", "to": "client.id_client",
+                                                                "found": 0.4, "origin": "manual"}
+    entry = ignore_relation(entry, "carte.id_client", "client.id_client")
+    assert entry["ignore"] == [{"from": "carte.id_client", "to": "client.id_client"}]
+    assert ignore_relation(entry, "carte.id_client", "client.id_client", ignore=False)["ignore"] == []
+    with pytest.raises(ValueError):
+        ignore_relation(entry, "x.a", "y.b")
+
+
+# =============================================================================
+# Routes, and relationships.yaml written with its own comments kept
+# =============================================================================
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(lib.semantics, "SEMANTIC_LAYER_DIR", tmp_path)
+    monkeypatch.setattr(utils, "SEMANTIC_LAYER_DIR", tmp_path)
+    monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(exclude_personal_data=False))
+    columns = {t: [{"name": "id_client", "type": "INT"}, {"name": "id_personne", "type": "INT"}] for t in TABLES}
+    monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: {
+        "tables": TABLES, "columns": columns, "source": "database", "error": None, "read_at": 0})
+    monkeypatch.setattr(studio_app, "_databases", {"awb": object()})
+    monkeypatch.setattr(studio_app, "key_overlap", lambda db, source, target: 0.95)
+    (tmp_path / "awb").mkdir()
+    (tmp_path / "awb" / "profile.yaml").write_text(yaml.safe_dump(PROFILE))
+    (tmp_path / "awb" / "relationships.yaml").write_text(
+        "# Two id families that overlap: never join client and personne directly.\n\n"
+        + yaml.safe_dump({"relations": RELATIONS[:1], "ignore": []}))
+    return TestClient(studio_app.app)
+
+
+def test_a_relation_added_then_ignored_from_the_page(client, tmp_path):
+    view = client.get("/api/db/awb/relations").json()
+    assert view["isolated"] == ["personne", "carte", "impaye", "bilan"] and "id_client" in view["columns"]["carte"]
+
+    view = client.post("/api/db/awb/relations", json={"source": "carte.id_client", "target": "client.id_client",
+                                                      "version": view["version"]}).json()
+    assert view["relations"][-1]["found"] == 0.95 and view["relations"][-1]["origin"] == "manual"
+    view = client.post("/api/db/awb/relations/ignore", json={"source": "carte.id_client", "target": "client.id_client",
+                                                             "version": view["version"]}).json()
+    assert [r["from"] for r in view["ignored"]] == ["carte.id_client"]
+
+    text = (tmp_path / "awb" / "relationships.yaml").read_text()
+    assert text.startswith("# Two id families that overlap")      # the reviewer's comment kept
+    assert client.get("/api/db/awb/relations/path", params={"a": "carte", "b": "client"}).json()["joins"] is None
+
+
+def test_bad_relations_are_refused(client):
+    version = client.get("/api/db/awb/relations").json()["version"]
+    post = lambda source, target, v=version: client.post(  # noqa: E731
+        "/api/db/awb/relations", json={"source": source, "target": target, "version": v})
+    assert post("carte.inconnue", "client.id_client").status_code == 400
+    assert post("carte.id_client", "carte.id_personne").status_code == 400       # one table
+    assert post("carte.id_client", "client.id_client", "1").status_code == 409    # page older than the file

@@ -29,9 +29,22 @@ from sqlalchemy import inspect as sa_inspect
 from config import SEMANTIC_LAYER_DIR, cfg
 from lib.database import build_database
 from lib.semantics import load_fk_relations, load_profile, load_semantics, tables_path
-from offline.semantic_gen.utils import dump_table_semantics
+from offline.semantic_gen.profiling import key_overlap
+from offline.semantic_gen.utils import (
+    dump_table_semantics,
+    load_relations_file,
+    relations_path,
+    write_relations_file,
+)
 from offline.studio import state
-from offline.studio.jobs import JobRunner, profile_command, semantics_command
+from offline.studio.jobs import JobRunner, profile_command, relations_command, semantics_command
+from offline.studio.relations import (
+    add_relation,
+    fk_graph,
+    ignore_relation,
+    join_path,
+    relations_view,
+)
 
 STATIC = Path(__file__).parent / "static"
 
@@ -321,3 +334,99 @@ def job(since: int = 0):
 def stop():
     runner.stop()
     return job()
+
+
+# ------------------------------------------------------------
+# Relations: the map of the tables, the evidence of each relation, the path of the agent
+# ------------------------------------------------------------
+
+def _relations_version(db: str) -> str:
+    """Version of relationships.yaml (its modification time), as _version for tables.yaml."""
+    path = relations_path(db)
+    return str(path.stat().st_mtime_ns if path.exists() else 0)
+
+
+def _update_relations(db: str, version: str, change) -> None:
+    """Rewrite relationships.yaml with change(entry), unless it changed since the page read it."""
+    with _lock:
+        if version != _relations_version(db):
+            raise HTTPException(409, "relationships.yaml changed since the page read it: reload the page")
+        write_relations_file(db, change(load_relations_file(db)))
+
+
+@app.get("/api/db/{db}/relations")
+def relations(db: str):
+    """The Relations screen: the relations with their evidence, the ignored ones, the map of the tables."""
+    _db_config(db)
+    listing = _listing(db)
+    view = relations_view(listing["tables"], load_relations_file(db), load_profile(db))
+    columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
+    return {**view, "columns": columns, "version": _relations_version(db)}
+
+
+@app.get("/api/db/{db}/relations/path")
+def relations_path_between(db: str, a: str, b: str):
+    """The join path the agent takes between two tables (lib/fk_graph.py)."""
+    _db_config(db)
+    tables = _listing(db)["tables"]
+    if a not in tables or b not in tables:
+        raise HTTPException(404, f"Unknown table: {a if a not in tables else b}")
+    return join_path(a, b, fk_graph(load_relations_file(db)["relations"], tables))
+
+
+def _column_ref(db: str, ref: str) -> str:
+    """A table.column of the database, or 400."""
+    table, _, column = ref.partition(".")
+    columns = [c["name"] for c in _listing(db)["columns"].get(table) or []]
+    if column not in columns:
+        raise HTTPException(400, f"Unknown column: {ref}")
+    return ref
+
+
+class RelationRequest(BaseModel):
+    source: str
+    target: str
+    version: str
+
+
+@app.post("/api/db/{db}/relations")
+def add(db: str, request: RelationRequest):
+    """A relation added from the page, measured on the data first (the share of its values found)."""
+    _db_config(db)
+    source, target = _column_ref(db, request.source), _column_ref(db, request.target)
+    if source.split(".")[0] == target.split(".")[0]:
+        raise HTTPException(400, "Two columns of two different tables")
+    if db not in _databases:
+        raise HTTPException(503, "The database does not answer: the relation can't be checked")
+    try:
+        found = key_overlap(_databases[db], source, target)
+    except Exception as e:
+        raise HTTPException(502, f"The check of the relation failed: {str(e).splitlines()[0][:200]}") from e
+    found = None if found is None else round(found, 3)
+    _update_relations(db, request.version, lambda entry: add_relation(entry, source, target, found))
+    logger.info(f"[studio] {db}: relation {source} -> {target} added ({found})")
+    return relations(db)
+
+
+@app.post("/api/db/{db}/relations/ignore")
+def ignore(db: str, request: RelationRequest, back: bool = False):
+    """A relation moved to `ignore` (it never comes back), or back from it (back=true)."""
+    _db_config(db)
+    try:
+        _update_relations(db, request.version,
+                          lambda entry: ignore_relation(entry, request.source, request.target, ignore=not back))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(f"[studio] {db}: relation {request.source} -> {request.target} {'restored' if back else 'ignored'}")
+    return relations(db)
+
+
+class RelationsRun(BaseModel):
+    check: bool = False
+
+
+@app.post("/api/db/{db}/relations/run")
+def find_relations(db: str, request: RelationsRun):
+    """Find the relations (measured, then LLM), or only check the declared ones again (make relations ARGS=...)."""
+    _db_config(db)
+    return _start(db, "relations", relations_command(db, request.check), None)

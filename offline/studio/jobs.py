@@ -28,6 +28,7 @@ LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\d (?P<time>\d\d:\d\d:\d\d) \| (?P<level>\
 # A table started: profiled one at a time, described up to 8 at a time (offline/semantic_gen/tables.py)
 STARTED  = re.compile(r"\] (?:Profiling|Describing): (?P<table>\S+)$")
 FAILED   = re.compile(r"\] Not profiled: (?P<table>\S+) ")
+CHECKING = "] Checking: "   # a relation measured on the data (offline/semantic_gen/relationships.py)
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
 NOT_CANCELLED = "the running query could not be cancelled"
@@ -51,6 +52,7 @@ class Job:
     done: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     started_tables: list[str] = field(default_factory=list)   # every table started, in order
+    checked: int = 0                                          # relations measured on the data
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -73,6 +75,8 @@ class Job:
             self.current, self.current_since = started["table"], time.time()
         elif failed := FAILED.search(message):
             self.failed.append(failed["table"])
+        elif CHECKING in message:
+            self.checked += 1
         elif CANCELLED in message or NOT_CANCELLED in message:
             self.cancel = "cancelled" if CANCELLED in message else "failed"
         self.lines.append(line)
@@ -97,7 +101,7 @@ class Job:
             "running": self.running, "returncode": self.returncode, "stopped": self.stopped,
             "stopped_at": self.stopped_at, "cancel": self.cancel,
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
-            "started_tables": self.started_tables,
+            "started_tables": self.started_tables, "checked": self.checked,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 
@@ -110,6 +114,12 @@ def profile_command(db: str, tables: list[str] | None, missing: bool) -> list[st
     elif missing:
         command.append("--missing")
     return command
+
+
+def relations_command(db: str, check: bool) -> list[str]:
+    """The CLI command of `make relations`: find the relations (measured and LLM), or only check them again."""
+    command = [sys.executable, "-m", "offline.cli", "fk-relations", "--db", db]
+    return command + ["--check"] if check else command
 
 
 def semantics_command(db: str, tables: list[str] | None, fresh: bool) -> list[str]:
