@@ -2,6 +2,7 @@
 // the tables of the database on the left (a status pill each), the chosen table on the right.
 //   Profiling: what the profile detects in each column (declared type against the data, exceptions)
 //   Semantics: the descriptions the LLM writes, read and corrected in place
+//   Metrics: the metrics on the left instead of the tables, each tested on the data (counts, never a value)
 // Everything comes from the API of offline/studio/app.py; the page keeps no state of its own but the
 // chosen database, step, filter and selection.
 
@@ -28,11 +29,17 @@ const STEPS = {
     text: "L'agent passe d'une table à l'autre grâce à ces liens. Chacun est vérifié sur les données : la part des valeurs d'une table qu'on retrouve dans l'autre.",
     primary: () => "Chercher les relations", secondary: () => "Ajouter une relation",
   },
+  metrics: {
+    number: 4, title: "Metrics", key: "metrics", todo: "À revoir",
+    text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose ; chacune est testée sur les données (lignes comptées deux fois, mesures vides, dates manquantes) sans jamais en montrer le résultat.",
+    primary: () => "Proposer des métriques", secondary: () => (ui.testing ? "Arrêter les tests" : "Tout tester"),
+  },
 };
 
 const ui = {
   dbs: [], db: null, step: "profile", data: null, filter: "all", query: "", selected: new Set(),
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
+  met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop})
   current: null, detail: null, job: null, since: 0, polling: null, logOpen: true,
   clockOffset: 0,   // seconds the clock of the page is ahead of the server's
 };
@@ -73,12 +80,13 @@ async function init() {
   $("db-select").onchange = (e) => {
     ui.db = e.target.value; store("studio.db", ui.db);
     ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
-    renderDetail(); loadTables().then(() => ui.step === "relations" && loadRelations());
+    ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true;
+    renderDetail(); loadTables().then(() => loadScreen());
   };
   ui.step = STEPS[location.hash.slice(1)] ? location.hash.slice(1) : STEPS[stored("studio.step")] ? stored("studio.step") : "profile";
   renderStep();
   await loadTables();
-  if (ui.step === "relations") await loadRelations();
+  await loadScreen();
   await pollJob();
 }
 
@@ -94,7 +102,17 @@ function renderStep() {
     li.toggleAttribute("aria-current", li.dataset.step === ui.step);
   });
   document.body.dataset.step = ui.step;
+  const metrics = ui.step === "metrics";
+  $("search").placeholder = metrics ? "Rechercher une métrique" : "Rechercher une table";
+  $("list-name").textContent = metrics ? "Métrique" : "Table";
+  $("list-status").textContent = metrics ? "État" : "Statut";
   renderActions();
+}
+
+// The screens whose content is not the tables: read when they open
+function loadScreen() {
+  if (ui.step === "relations") return loadRelations();
+  if (ui.step === "metrics") return loadMetrics();
 }
 
 function goTo(step) {
@@ -103,7 +121,11 @@ function goTo(step) {
   ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false;
   [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   renderStep();
-  if (step === "relations") { loadRelations(); return; }
+  if (step === "relations" || step === "metrics") {
+    if (ui.data) { renderHeader(); renderRows(); }
+    renderDetail(); loadScreen();
+    return;
+  }
   if (ui.data) { renderHeader(); renderRows(); }
   if (ui.current) openTable(ui.current); else renderDetail();
 }
@@ -137,8 +159,9 @@ function renderHeader() {
   if (data.error) showBanner(`La base ne répond pas : les tables viennent de profile.yaml et tables.yaml. ${data.error}`);
   else $("banner").hidden = true;
   const todo = { profile: s.tables - s.profiled, semantics: s.tables - (s.described - s.partial),
-    relations: ui.data.tables.filter((t) => t.status.relations !== "done").length }[ui.step];
-  const counts = { all: s.tables, todo };
+    relations: ui.data.tables.filter((t) => t.status.relations !== "done").length,
+    metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0 }[ui.step];
+  const counts = { all: ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : s.tables, todo };
   const labels = { all: "Toutes", todo: STEPS[ui.step].todo };
   [...$("filters").children].forEach((chip) => {
     chip.innerHTML = `${labels[chip.dataset.filter]}<span class="count">${counts[chip.dataset.filter]}</span>`;
@@ -178,6 +201,9 @@ function visibleRows() {
 }
 
 function renderRows() {
+  if (ui.step === "metrics") { renderMetricRows(); return; }
+  $("list-extra").innerHTML = "";
+  $("empty").textContent = "Aucune table ne correspond.";
   const rows = visibleRows();
   $("rows").innerHTML = rows.map((t) => `<div class="row${t.name === ui.current ? " current" : ""}" data-table="${esc(t.name)}">
       <input type="checkbox" ${ui.selected.has(t.name) ? "checked" : ""} aria-label="Sélectionner ${esc(t.name)}">
@@ -222,6 +248,7 @@ function renderPersonal() {
 $("rows").addEventListener("click", (e) => {
   const row = e.target.closest(".row");
   if (!row) return;
+  if (ui.step === "metrics") { openMetric(row.dataset.metric, "metric"); return; }
   const name = row.dataset.table;
   if (e.target.matches("input[type=checkbox]")) {
     e.target.checked ? ui.selected.add(name) : ui.selected.delete(name);
@@ -264,6 +291,7 @@ async function openTable(name) {
 function renderDetail(message) {
   const d = ui.detail, el = $("detail");
   if (ui.step === "relations") { renderRelations(el, message); return; }
+  if (ui.step === "metrics") { renderMetric(el, message); return; }
   if (!d) { el.innerHTML = '<p class="placeholder">Choisis une table pour voir ses colonnes.</p>'; return; }
   if (d.error) { el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2></div><p class="note">${esc(d.error)}</p>`; return; }
   if (ui.step === "profile") renderProfile(d, el, message); else renderSemantics(d, el, message);
@@ -645,6 +673,247 @@ async function addRelation() {
     : `Ajoutée : ${pct(added.found)} des valeurs trouvées${added.weak ? " — peu, à vérifier" : ""}`);
 }
 
+// ── Metrics: the formula, the query a test runs, what the data says ──
+
+async function loadMetrics() {
+  const db = ui.db;
+  try {
+    const met = await api(`/api/db/${encodeURIComponent(db)}/metrics`);
+    if (db !== ui.db) return;
+    ui.met = met;
+  } catch (e) {
+    showBanner(`Impossible de lire les métriques : ${e.message}`, true);
+    return;
+  }
+  if (ui.step !== "metrics") return;
+  if (ui.data) renderHeader();
+  renderRows(); renderDetail();
+}
+
+const METRIC_PILLS = {
+  ok: '<span class="pill done">vérifiée</span>', check: '<span class="pill decide">à revoir</span>',
+  error: '<span class="pill hide">erreur</span>', untested: '<span class="pill todo">non testée</span>',
+};
+
+function renderMetricRows() {
+  const met = ui.met, q = ui.query.toLowerCase();
+  const rows = (met?.metrics || []).filter((m) => (!q || m.name.toLowerCase().includes(q))
+    && (ui.filter === "all" || m.state === "check" || m.state === "error"));
+  const current = (name, kind) => (name === ui.metric && kind === ui.metricKind ? " current" : "");
+  $("rows").innerHTML = rows.map((m) => `<div class="row${current(m.name, "metric")}" data-metric="${esc(m.name)}">
+      <span></span><span class="cell" title="${esc(m.name)}">${esc(m.name)}</span>
+      ${ui.testing?.current === m.name ? '<span class="pill running">en cours</span>' : METRIC_PILLS[m.state]}
+    </div>`).join("");
+  $("empty").textContent = met && !met.metrics.length
+    ? "Pas encore de métrique : « Proposer des métriques » demande à l'IA d'en écrire." : "Aucune métrique ne correspond.";
+  $("empty").hidden = !met || rows.length > 0;
+  // What the last run left out, and the names in ignore: under the metrics, quieter
+  const group = (title, names, kind, pill) => (names.length ? `<div class="list-group">${title} · ${fmt.format(names.length)}</div>`
+    + names.map((name) => `<div class="row aside${current(name, kind)}" data-name="${esc(name)}" data-kind="${kind}">
+        <span></span><span class="cell" title="${esc(name)}">${esc(name)}</span><span class="pill todo">${pill}</span></div>`).join("") : "");
+  $("list-extra").innerHTML = met ? group("Écartées au dernier lancement", met.skipped.map((s) => s.name), "skipped", "écartée")
+    + group("Retirées", met.ignored, "ignored", "retirée") : "";
+  renderActions();
+}
+
+$("list-extra").addEventListener("click", (e) => {
+  const row = e.target.closest(".row[data-kind]");
+  if (row) openMetric(row.dataset.name, row.dataset.kind);
+});
+
+function openMetric(name, kind) {
+  ui.metric = name; ui.metricKind = kind;
+  renderRows(); renderDetail();
+}
+
+// Why the generator would not propose a metric today, or why it left a proposal out
+const RULES = {
+  count: (m) => `Un simple comptage d'une colonne : le générateur ne la proposerait plus. L'agent compte seul, et cette métrique ajoute ${esc(m.tables.join(", ") || "sa table")} à chaque question qui en parle.`,
+  same: (m) => `Même formule que ${esc(m.rule_with)} : l'agent ne saura pas laquelle prendre.`,
+  distinct: () => "SUM(DISTINCT …) ou AVG(DISTINCT …) : deux lignes de même montant ne compteraient qu'une fois.",
+  known: () => "Ce nom est aussi dans ignore : le générateur la tient pour retirée.",
+};
+const SKIPPED = {
+  count: "Un simple comptage d'une colonne : l'agent compte seul.",
+  same: "Même formule qu'une métrique déjà écrite, sous un autre nom.",
+  distinct: "SUM(DISTINCT …) ou AVG(DISTINCT …) : deux lignes de même montant ne compteraient qu'une fois.",
+  known: "Même nom qu'une métrique écrite ou retirée.",
+  rejected: "Refusée à la vérification : l'agent ne l'aurait pas acceptée, ou la base ne la compile pas.",
+  other: "Écartée par le générateur.",
+};
+const ERRORS = {
+  hidden: "Elle lit une colonne cachée à l'agent : il refusera de démarrer tant qu'elle y est.",
+  invalid: "L'agent refusera de démarrer avec cette métrique.",
+  joins: "Ses tables ne sont reliées par aucune relation : elle ne peut pas être calculée. La relation s'ajoute dans Relations.",
+};
+
+const at = (seconds) => new Date(seconds * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const decimal = (x) => new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(x);
+const share = (x, warn) => (x == null ? '<span class="muted-text">—</span>'
+  : `<span class="bar"><i class="${warn ? "low" : ""}" style="width:${Math.round(Math.min(x, 1) * 100)}%"></i></span>${pct(x)}`);
+
+// One line of "Sur les données": the check, its measure, what it means; amber when worth a look
+const checkLine = (label, measure, text, warn = false) => `<div class="mline${warn ? " warn" : ""}">
+    <span>${label}</span><span class="fill">${measure}</span><span class="muted-text">${text}</span></div>`;
+
+function checkLines(m) {
+  const t = m.test;
+  if (!t) return checkLine("Pas encore testée", "", "« Tester » compte ses lignes sur la base, sans lire une valeur.");
+  if (t.error) return checkLine("Compile", '<span class="bad-text">non</span>', `<span class="mono">${esc(t.error)}</span>`, true);
+  const lines = [checkLine("Compile", `oui · ${decimal(t.seconds)} s`, m.joins ? "La base accepte la formule et ses jointures." : "Une seule table : pas de jointure.")];
+  for (const c of t.tables) {
+    const ratio = c.rows ? c.counted / c.rows : null;
+    const text = c.counted > c.rows ? `Chaque ligne de ${esc(c.table)} comptée ${decimal(ratio)} fois en moyenne : la jointure multiplie ses montants.`
+      : c.counted < c.rows ? `${plural(c.rows - c.counted, "ligne")} de ${esc(c.table)} sans correspondance, absentes du total.`
+      : `Chaque ligne de ${esc(c.table)} comptée une fois : la jointure n'en double ni n'en perd.`;
+    const bar = `<span class="bar"><i class="${c.warn ? "low" : ""}" style="width:${Math.round(Math.min(ratio ?? 0, 1) * 100)}%"></i></span>`;
+    lines.push(checkLine("Lignes comptées", `${bar}${fmt.format(c.counted)} / ${fmt.format(c.rows)}`, text, c.warn));
+  }
+  for (const s of t.measures) {
+    const text = s.conditional ? "Vide hors de sa condition, exprès."
+      : s.share === 1 ? "Aucune ligne ignorée par le calcul."
+      : s.share == null ? "Aucune ligne à calculer." : `${pct(1 - s.share)} des lignes ignorées : <span class="mono">${esc(s.sql)}</span> y est vide.`;
+    lines.push(checkLine("Mesure remplie", share(s.share, s.warn), text, s.warn));
+  }
+  if (t.date) {
+    const d = t.date, text = d.share === 1 || d.share == null ? `<span class="mono">${esc(d.column)}</span>`
+      : `<span class="mono">${esc(d.column)}</span> : ${pct(1 - d.share)} des lignes hors de toute période.`;
+    lines.push(checkLine("Date remplie", share(d.share, d.warn), text, d.warn));
+  }
+  const sign = { positive: "positif", negative: "négatif", zero: "zéro", empty: "vide" }[t.sign];
+  const said = { zero: "Zéro sur toute la base : sa condition ne trouve peut-être aucune ligne.",
+    empty: "Vide sur toute la base : aucune ligne à calculer." }[t.sign] || "La valeur n'est jamais affichée.";
+  lines.push(checkLine("Résultat", sign, said, t.sign === "zero" || t.sign === "empty"));
+  return lines.join("");
+}
+
+function renderMetric(el, message) {
+  const met = ui.met;
+  if (!met) { el.innerHTML = '<p class="placeholder">Lecture des métriques…</p>'; return; }
+  const note = message ? `<p class="note error">${esc(message)}</p>` : "";
+  if (ui.metricKind === "skipped") {
+    const s = met.skipped.find((x) => x.name === ui.metric);
+    if (s) {
+      el.innerHTML = `<div class="detail-head"><h2>${esc(s.name)}</h2><span class="figures">proposée par l'IA · pas ajoutée</span></div>
+        <div class="metric-fields"><p class="said">${SKIPPED[s.reason] || SKIPPED.other}</p>
+        ${s.reason === "rejected" || s.reason === "other" ? `<pre class="sql">${esc(s.detail)}</pre>` : ""}
+        <p class="muted-text">Le générateur l'a écartée avant de l'écrire dans metrics.yaml : rien à faire.</p></div>`;
+      return;
+    }
+  }
+  if (ui.metricKind === "ignored" && met.ignored.includes(ui.metric)) {
+    el.innerHTML = `<div class="detail-head"><h2>${esc(ui.metric)}</h2><span class="figures">dans ignore</span><span class="grow"></span>
+        <button class="btn ghost small" id="metric-allow">Autoriser à nouveau</button></div>${note}
+      <div class="metric-fields"><p class="said">Retirée : le générateur ne la proposera plus. Sa définition n'est plus dans metrics.yaml.</p>
+      <p class="muted-text">« Autoriser à nouveau » enlève son nom de ignore : l'IA pourra la reproposer.</p></div>`;
+    $("metric-allow").onclick = () => moveMetric(ui.metric, true);
+    return;
+  }
+  const m = met.metrics.find((x) => x.name === ui.metric);
+  if (!m) { el.innerHTML = '<p class="placeholder">Choisis une métrique pour voir sa formule et ses tests.</p>'; return; }
+
+  const figures = [m.tables.join(", "), m.sql ? (m.joins ? plural(m.joins, "jointure") : "sans jointure") : null,
+    m.test && !m.test.error ? `testée à ${at(m.test.at)}` : null].filter(Boolean).join(" · ");
+  const testing = ui.testing?.current === m.name;
+  const error = m.error ? `<div class="error-note"><span>${ERRORS[m.error.kind]}</span><code>${esc(m.error.detail)}</code></div>` : "";
+  const rule = m.rule ? `<div class="rule-note"><span>${RULES[m.rule](m)}</span><button class="btn small" data-retire="1">Retirer</button></div>` : "";
+  const dates = [...new Set([m.time_dimension, ...m.dates, ""])];   // the current date first, "aucune" last
+  el.innerHTML = `<div class="detail-head"><h2>${esc(m.name)}</h2><span class="figures">${esc(figures)}</span>
+      <span class="grow"></span><span class="save-state" id="save-state"></span>
+      ${m.sql ? `<button class="btn ghost small" id="metric-test" ${testing ? "disabled" : ""}>${testing ? "Test en cours…" : "Tester"}</button>` : ""}
+      <button class="btn ghost small" data-retire="1" title="Son nom va dans ignore : le générateur ne la proposera plus">Retirer</button></div>
+    ${note}${error}${rule}
+    <div class="metric-fields">
+      <div><label class="field-label" for="met-description">Description</label>
+        <textarea class="edit block" id="met-description" rows="1" data-field="description">${esc(m.description)}</textarea></div>
+      <div><label class="field-label" for="met-synonyms">Synonymes</label>
+        <textarea class="edit block" id="met-synonyms" rows="1" data-field="synonyms" placeholder="d'autres mots pour la même chose, séparés par des virgules">${esc(m.synonyms.join(", "))}</textarea></div>
+      <div class="formula-line">
+        <div><label class="field-label" for="met-expr">Formule</label>
+          <textarea class="edit block mono" id="met-expr" rows="1" data-field="expr" spellcheck="false">${esc(m.expr)}</textarea></div>
+        <div><label class="field-label" for="met-date">Date par défaut</label>
+          <select class="edit-select" id="met-date" data-field="time_dimension">${dates.map((d) =>
+            `<option value="${esc(d)}" ${d === m.time_dimension ? "selected" : ""}>${d ? esc(d) : "aucune"}</option>`).join("")}</select></div>
+      </div>
+      <p class="note error refused" id="metric-refused" hidden></p>
+      ${m.sql ? `<div><span class="field-label">Requête testée</span><pre class="sql">${esc(m.sql)}</pre></div>` : ""}
+    </div>
+    ${m.sql ? `<div class="columns"><div class="mline head"><span>Sur les données</span><span class="num">Mesure</span><span>Ce que ça veut dire</span></div>
+      ${checkLines(m)}</div>` : ""}`;
+
+  el.querySelectorAll("textarea.edit").forEach((area) => {
+    fitHeight(area);
+    area.addEventListener("input", () => fitHeight(area));
+    area.addEventListener("change", () => saveMetric(m.name, area));
+  });
+  $("met-date").addEventListener("change", (e) => saveMetric(m.name, e.target));
+  if ($("metric-test")) $("metric-test").onclick = () => testMetrics([m.name]);
+  el.querySelectorAll("[data-retire]").forEach((b) => b.addEventListener("click", () => moveMetric(m.name, false)));
+}
+
+// One field written into metrics.yaml as soon as it is left; a new formula or date is checked by the base first, then tested
+async function saveMetric(name, input) {
+  const field = input.dataset.field, state = $("save-state"), refused = $("metric-refused");
+  state.textContent = field === "expr" || field === "time_dimension" ? "Vérification sur la base…" : "Enregistrement…";
+  state.className = "save-state";
+  refused.hidden = true;
+  try {
+    ui.met = await api(`/api/db/${encodeURIComponent(ui.db)}/metrics/${encodeURIComponent(name)}`,
+      { method: "POST", body: { field, value: input.value, version: ui.met.version } });
+  } catch (e) {
+    state.textContent = e.status === 409 ? "metrics.yaml a changé : recharge la page" : "Refusée";
+    state.className = "save-state error";
+    // Why, under the fields: nothing is written, the text stays to be corrected
+    if (e.status !== 409) { refused.innerHTML = `Rien n'est écrit : <span class="mono">${esc(e.message)}</span>`; refused.hidden = false; }
+    return;
+  }
+  if (field === "expr" || field === "time_dimension") {
+    renderRows(); renderDetail();
+    testMetrics([name]);
+    return;
+  }
+  state.textContent = "Enregistré";
+  state.className = "save-state ok";
+}
+
+// The metrics tested one after the other (a query of counts each); "Arrêter les tests" stops after the current one
+async function testMetrics(names) {
+  if (ui.testing) return;
+  const db = ui.db;
+  ui.testing = { current: null, stop: false };
+  renderActions();
+  let message;
+  for (const name of names) {
+    if (ui.testing.stop || db !== ui.db) break;
+    ui.testing.current = name;
+    if (ui.step === "metrics") { renderRows(); if (ui.metric === name) renderDetail(); }
+    try {
+      const met = await api(`/api/db/${encodeURIComponent(db)}/metrics/${encodeURIComponent(name)}/test`, { method: "POST" });
+      if (db === ui.db) ui.met = met;
+    } catch (e) {
+      message = e.status === 503 ? "La base ne répond pas : les métriques ne peuvent pas être testées." : e.message;
+      break;
+    }
+  }
+  ui.testing = null;
+  if (db !== ui.db || ui.step !== "metrics") return;
+  if (ui.data) renderHeader();
+  renderRows(); renderDetail(message);
+}
+
+async function moveMetric(name, back) {
+  try {
+    ui.met = await api(`/api/db/${encodeURIComponent(ui.db)}/metrics/${encodeURIComponent(name)}/ignore${back ? "?back=true" : ""}`,
+      { method: "POST", body: { version: ui.met.version } });
+  } catch (e) {
+    renderDetail(e.status === 409 ? "metrics.yaml a changé : recharge la page" : e.message);
+    return;
+  }
+  ui.metricKind = back ? "metric" : "ignored";
+  if (back) ui.metric = null;
+  loadTables(); renderRows(); renderDetail();
+}
+
 // ── Jobs ─────────────────────────────────────────────────
 
 async function runJob(step, request) {
@@ -673,12 +942,17 @@ function runMissing() {
   runJob(ui.step === "profile" ? "profile" : "semantics", ui.step === "profile" ? { missing: true } : {});
 }
 $("run-primary").addEventListener("click", () => {
-  if (ui.step === "relations") runJob("relations/run", {});
+  if (ui.step === "metrics") runJob("metrics/run", {});
+  else if (ui.step === "relations") runJob("relations/run", {});
   else if (ui.step === "profile") runSelection();
   else runMissing();
 });
 $("run-secondary").addEventListener("click", () => {
-  if (ui.step === "relations") { ui.adding = true; renderDetail(); $("add-form")?.scrollIntoView({ block: "nearest" }); }
+  if (ui.step === "metrics") {
+    if (ui.testing) { ui.testing.stop = true; return; }
+    testMetrics((ui.met?.metrics || []).filter((m) => m.sql).map((m) => m.name));
+  }
+  else if (ui.step === "relations") { ui.adding = true; renderDetail(); $("add-form")?.scrollIntoView({ block: "nearest" }); }
   else if (ui.step === "profile") runMissing();
   else runSelection();
 });
@@ -713,6 +987,13 @@ async function pollJob() {
       if (job.step === "semantics" && ended && job.started_tables.includes(ui.current)) openTable(ui.current);
     }
     if (job.step === "relations" && ended && ui.step === "relations") await loadRelations();
+    // The metrics a run adds are tested at once: the data says what to look at
+    if (job.step === "metrics" && ended) {
+      await loadMetrics();
+      renderJob();   // its title counts what the run added and skipped
+      const added = (ui.met?.added || []).filter((name) => ui.met.metrics.some((m) => m.name === name && m.sql));
+      if (ui.step === "metrics" && added.length) testMetrics(added);
+    }
   }
   if (job.running) schedulePoll();
 }
@@ -743,7 +1024,7 @@ function renderJob() {
   if (!job) return;
   $("job").hidden = false;
   const now = Date.now() / 1000 - ui.clockOffset;   // the clock of the server
-  const titles = { semantics: semanticsJobTitle, relations: relationsJobTitle, profile: profileJobTitle };
+  const titles = { semantics: semanticsJobTitle, relations: relationsJobTitle, metrics: metricsJobTitle, profile: profileJobTitle };
   const [title, halo] = (titles[job.step] || profileJobTitle)(job, now);
   $("job-title").innerHTML = title;
   $("job-halo").className = `halo ${halo}`;
@@ -775,6 +1056,17 @@ function relationsJobTitle(job, now) {
   if (job.stopped) return [`${what} arrêtée · rien n'est écrit : relationships.yaml n'est mis à jour qu'à la fin`, "failed"];
   if (job.returncode) return [`Échec de la ${checkOnly ? "vérification" : "recherche"} (code ${job.returncode}) · voir les logs`, "failed"];
   return [`${checkOnly ? "Vérification" : "Recherche"} terminée · ${checked}`, ""];
+}
+
+// A run of the generator: one call of the LLM, then each proposal checked; metrics.yaml written once at the end
+function metricsJobTitle(job, now) {
+  if (job.running && job.stopped) return [`Arrêt en cours… ${duration(now - job.stopped_at)}`, "running"];
+  if (job.running) return [`Proposition des métriques de ${esc(job.db)} par l'IA · ${duration(now - job.started)}`, "running"];
+  if (job.stopped) return ["Proposition arrêtée · rien n'est écrit : metrics.yaml n'est écrit qu'à la fin", "failed"];
+  if (job.returncode) return [`Échec de la proposition (code ${job.returncode}) · voir les logs`, "failed"];
+  const run = job.db === ui.db ? ui.met : null, added = run?.added.length ?? 0, skipped = run?.skipped.length ?? 0;
+  return [`Proposition terminée · ${plural(added, "métrique")} ${added > 1 ? "ajoutées" : "ajoutée"}`
+    + (skipped ? ` · ${fmt.format(skipped)} écartée${skipped > 1 ? "s" : ""}` : ""), ""];
 }
 
 function profileJobTitle(job, now) {

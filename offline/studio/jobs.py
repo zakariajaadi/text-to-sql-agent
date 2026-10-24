@@ -116,6 +116,11 @@ def profile_command(db: str, tables: list[str] | None, missing: bool) -> list[st
     return command
 
 
+def metrics_command(db: str) -> list[str]:
+    """The CLI command of `make metrics`: metrics proposed by the LLM, added to metrics.yaml."""
+    return [sys.executable, "-m", "offline.cli", "metrics", "--db", db]
+
+
 def relations_command(db: str, check: bool) -> list[str]:
     """The CLI command of `make relations`: find the relations (measured and LLM), or only check them again."""
     command = [sys.executable, "-m", "offline.cli", "fk-relations", "--db", db]

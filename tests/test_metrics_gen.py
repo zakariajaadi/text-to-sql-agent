@@ -1,8 +1,8 @@
-"""Metrics generator (offline/semantic_gen/metrics.py): proposals skipped before validation."""
+"""Metrics generator (offline/semantic_gen/metrics.py): proposals skipped before validation (utils.skip_reason)."""
 
 import pytest
 
-from offline.semantic_gen.metrics import skip_reason   # resources stubbed in conftest.py
+from offline.semantic_gen.utils import skip_reason
 
 KNOWN   = {"revenue": {"expr": "SUM(invoice_line.unitprice * invoice_line.quantity)"}}
 IGNORED = ["order_count"]

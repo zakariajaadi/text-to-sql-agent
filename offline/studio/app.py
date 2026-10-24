@@ -10,7 +10,8 @@ to what it detects, hide the personal data of the whole database.
 
 The YAML files of semantic_layer/<db>/ stay the source of truth: the CLI and the Makefile keep working,
 the studio reads the files at each request and writes tables.yaml only on a click of the page.
-It shows shapes and counts of the data, never a value. The database is only read to list the tables.
+It shows shapes and counts of the data, never a value. The database is read to list the tables, to
+measure a relation added and to test a metric (counts only).
 """
 
 import threading
@@ -25,19 +26,38 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text
 
 from config import SEMANTIC_LAYER_DIR, cfg
 from lib.database import build_database
-from lib.semantics import load_fk_relations, load_profile, load_semantics, tables_path
+from lib.metrics import metrics_path, read_metrics_file
+from lib.semantics import excluded_columns, load_fk_relations, load_profile, load_semantics, tables_path
 from offline.semantic_gen.profiling import key_overlap
 from offline.semantic_gen.utils import (
     dump_table_semantics,
     load_relations_file,
     relations_path,
+    write_metrics_file,
     write_relations_file,
 )
 from offline.studio import state
-from offline.studio.jobs import JobRunner, profile_command, relations_command, semantics_command
+from offline.studio.jobs import (
+    JobRunner,
+    metrics_command,
+    profile_command,
+    relations_command,
+    semantics_command,
+)
+from offline.studio.metrics import (
+    edit_metric,
+    ignore_metric,
+    last_run,
+    metric_row,
+    metrics_view,
+    measure_key,
+    measure_queries,
+    read_measures,
+)
 from offline.studio.relations import (
     add_relation,
     fk_graph,
@@ -430,3 +450,158 @@ def find_relations(db: str, request: RelationsRun):
     """Find the relations (measured, then LLM), or only check the declared ones again (make relations ARGS=...)."""
     _db_config(db)
     return _start(db, "relations", relations_command(db, request.check), None)
+
+
+# ------------------------------------------------------------
+# Metrics: each metric checked against the rules of the agent, tested on the data (counts, never its value)
+# ------------------------------------------------------------
+
+_tests: dict[str, dict[str, dict]] = {}   # {db: {metric: {key, result}}}: the last test of each, while it is unchanged
+_runs:  dict[str, dict] = {}              # {db: what the last run of the generator skipped and added}
+
+
+def _metrics_version(db: str) -> str:
+    """Version of metrics.yaml (its modification time), as _version for tables.yaml."""
+    path = metrics_path(db)
+    return str(path.stat().st_mtime_ns if path.exists() else 0)
+
+
+def _update_metrics(db: str, version: str, change) -> None:
+    """Rewrite metrics.yaml with change(entries, ignored), unless it changed since the page read it."""
+    with _lock:
+        if version != _metrics_version(db):
+            raise HTTPException(409, "metrics.yaml changed since the page read it: reload the page")
+        write_metrics_file(db, *change(*read_metrics_file(db)))
+
+
+def _metrics_context(db: str) -> dict:
+    """What the checks of a metric read: the columns of the database and their types, the hidden ones, the formats, the relations."""
+    db_cfg    = _db_config(db)
+    listing   = _listing(db)
+    semantics = load_semantics(db)
+    return {
+        "columns":      {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()},
+        "column_types": {f"{table}.{c['name']}": c["type"] for table, cols in listing["columns"].items() for c in cols},
+        "hidden":       {table: excluded_columns(entry) for table, entry in semantics.items()},
+        "formats":      {table: (entry or {}).get("formats") or {} for table, entry in semantics.items()},
+        "fk_relations": load_fk_relations(db),
+        "dialect":      db_cfg.dialect,
+    }
+
+
+def _last_run(db: str) -> dict:
+    """What the last run of the generator on the database skipped and added, read from its lines."""
+    job = runner.job
+    if job and job.db == db and job.step == "metrics":
+        _runs[db] = last_run(job.lines)
+    return _runs.get(db) or {}
+
+
+def _metric(db: str, name: str, entries: dict, ignored: list[str], context: dict) -> dict:
+    if name not in entries:
+        raise HTTPException(404, f"Unknown metric: {name}")
+    return metric_row(name, entries[name], entries, ignored, **context)
+
+
+def _database(db: str):
+    if db not in _databases:
+        raise HTTPException(503, "The database does not answer: the metric can't be checked")
+    return _databases[db]
+
+
+def _first_line(error: Exception) -> str:
+    return (str(error).splitlines() or [""])[0][:300]
+
+
+@app.get("/api/db/{db}/metrics")
+def metrics_screen(db: str):
+    """The Metrics screen: each metric with its checks and its last test, the ignored names, the last run."""
+    context = _metrics_context(db)
+    entries, ignored = read_metrics_file(db)
+    view = metrics_view(entries, ignored, tests=_tests.get(db, {}), run=_last_run(db), **context)
+    return {**view, "dialect": context["dialect"], "version": _metrics_version(db)}
+
+
+@app.post("/api/db/{db}/metrics/run")
+def propose_metrics(db: str):
+    """Propose metrics with the LLM (make metrics): added to metrics.yaml, a known or rejected one never again."""
+    _db_config(db)
+    return _start(db, "metrics", metrics_command(db), None)
+
+
+@app.post("/api/db/{db}/metrics/{name}/test")
+def test_one_metric(db: str, name: str):
+    """
+    A metric tested on the data, counts only: the rows its joins count, its measures and its date
+    filled, the sign of its result, never its value. Kept until the metric changes.
+    """
+    context = _metrics_context(db)
+    row = _metric(db, name, *read_metrics_file(db), context)
+    if not row["sql"]:
+        raise HTTPException(400, f"The metric can't be computed: {row['error']['detail']}")
+    database = _database(db)
+    plan     = measure_queries(row, context["column_types"], context["fk_relations"], context["dialect"])
+    started  = time.time()
+    try:
+        with database._engine.connect() as conn:
+            main = tuple(conn.execute(text(plan["main"])).fetchone())
+            rows = {table: conn.execute(text(sql)).scalar() for table, sql in plan["tables"].items()}
+        result = read_measures(plan, main, rows, time.time() - started)
+    except Exception as e:
+        result = {"error": _first_line(e), "seconds": round(time.time() - started, 1)}
+    result["at"] = time.time()
+    _tests.setdefault(db, {})[name] = {"key": measure_key(row), "result": result}
+    logger.info(f"[studio] {db}: metric {name} tested ({result.get('error') or 'counts read'})")
+    return metrics_screen(db)
+
+
+class MetricEdit(BaseModel):
+    field: Literal["description", "synonyms", "expr", "time_dimension"]
+    value: str | None = None
+    version: str
+
+
+@app.post("/api/db/{db}/metrics/{name}")
+def edit_one_metric(db: str, name: str, request: MetricEdit):
+    """
+    One field of a metric corrected in the studio. A new expression or date is checked first: the
+    startup validation of the agent, its joins, then the database compiles it on an empty result.
+    """
+    context = _metrics_context(db)
+    entries, ignored = read_metrics_file(db)
+    change = lambda entries, ignored: (edit_metric(entries, name, request.field, request.value), ignored)  # noqa: E731
+    try:
+        edited, _ = change(entries, ignored)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if request.field in ("expr", "time_dimension"):
+        row = _metric(db, name, edited, ignored, context)
+        if row["error"]:
+            detail = row["error"]["detail"]
+            raise HTTPException(400, f"reads a column hidden from the agent: {detail}" if row["error"]["kind"] == "hidden" else detail)
+        database = _database(db)
+        try:
+            with database._engine.connect() as conn:
+                conn.execute(text(f"{row['sql']}\nWHERE 1 = 0"))
+        except Exception as e:
+            raise HTTPException(400, f"The database refuses it: {_first_line(e)}") from e
+    _update_metrics(db, request.version, change)
+    logger.info(f"[studio] {db}: metric {name} {request.field} edited")
+    return metrics_screen(db)
+
+
+class MetricVersion(BaseModel):
+    version: str
+
+
+@app.post("/api/db/{db}/metrics/{name}/ignore")
+def ignore_one_metric(db: str, name: str, request: MetricVersion, back: bool = False):
+    """A metric rejected (deleted, its name in `ignore`: never proposed again), or its name out of `ignore` (back=true)."""
+    _db_config(db)
+    try:
+        _update_metrics(db, request.version, lambda entries, ignored: ignore_metric(entries, ignored, name, ignore=not back))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    _tests.get(db, {}).pop(name, None)
+    logger.info(f"[studio] {db}: metric {name} {'allowed again' if back else 'ignored'}")
+    return metrics_screen(db)

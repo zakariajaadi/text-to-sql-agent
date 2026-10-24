@@ -10,9 +10,6 @@ modified, rejected ones (listed in `ignore`) never come back. It reads the datab
 Pipeline order: semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
 
-import re
-
-import yaml
 from langchain_community.utilities import SQLDatabase
 from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
@@ -21,30 +18,14 @@ from sqlalchemy import inspect as sa_inspect
 from config import cfg
 from lib.metrics import metrics_path, read_metrics_file, validate_metric
 from lib.semantics import excluded_columns, load_fk_relations, load_semantics
-from lib.sql_tools import contains_expression, join_condition
 from offline.semantic_gen.prompts import METRICS_PROMPT
 from offline.semantic_gen.schemas import MetricProposals
-from offline.semantic_gen.utils import FlowListDumper, render_schemas
+from offline.semantic_gen.utils import metric_from_clause, render_schemas, skip_reason, write_metrics_file
 from resources import db_registry, model
 
 # ------------------------------------------------------------
 # Constants
 # ------------------------------------------------------------
-
-METRICS_HEADER = """\
-# Business metrics, generated (make metrics) and reviewed manually (lib/metrics.py).
-# The generator only ADDS metrics, it never modifies or removes existing ones.
-#   description    : what the metric measures, read by the LLM to pick it
-#   synonyms       : other words for it in the questions, any language
-#   expr           : aggregate SQL expression, every column written table.column
-#   time_dimension : default date for periods and trends (optional)
-# To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
-# Checked at startup: an unknown table or column stops the app.
-
-"""
-
-# Key order of a metric block in the YAML
-METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension"]
 
 # Languages of the metric synonyms, besides English: the languages users ask in
 SYNONYM_LANGUAGES = "French"
@@ -52,13 +33,6 @@ SYNONYM_LANGUAGES = "French"
 # Column types, from the type name reported by SQLAlchemy (Hive types don't subclass the generic ones)
 NUMERIC_TYPES  = ("int", "decimal", "numeric", "float", "double", "real")
 TEMPORAL_TYPES = ("date", "time")
-
-# Never proposed, whatever the name: two rows with the same amount are two amounts
-DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
-
-# Never proposed either: a plain count of one column (COUNT(DISTINCT t.id), COUNT(*)) holds no business
-# rule, the agent counts entities by itself, and a metric forces its table into every question it matches
-PLAIN_COUNT = re.compile(r"^\s*COUNT\s*\(\s*(DISTINCT\s+)?(\*|[\w.`\"]+)\s*\)\s*$", re.IGNORECASE)
 
 # ------------------------------------------------------------
 # Chain
@@ -151,35 +125,13 @@ def generate_metrics(db_name: str):
             continue
         added[name] = entry
 
-    path = metrics_path(db_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_dump_metrics({**entries, **added}, ignored))
-    logger.info(f"[{db_name}] {len(added)} new metric(s) added to {path.name}: {', '.join(added) or 'none'} — review them.")
+    write_metrics_file(db_name, {**entries, **added}, ignored)
+    logger.info(f"[{db_name}] {len(added)} new metric(s) added to {metrics_path(db_name).name}: {', '.join(added) or 'none'} — review them.")
 
 
 # ------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------
-
-def skip_reason(name: str, expr: str, known: dict[str, dict], ignored: list[str], dialect: str) -> str | None:
-    """
-    Why a proposed metric is not added (None: it goes on to validation): its name is defined or
-    rejected, its expression is the one of a known metric, it sums distinct values, or it only counts
-    one column. The last three are checked on the expression, as the LLM proposes a rejected metric
-    again under another name.
-    """
-    if name in known or name in ignored:
-        return "already defined or rejected"
-    # Same expression whatever the aliases: each one contains the other (a ratio only contains its parts)
-    if any(contains_expression(expr, e.get("expr", ""), dialect) and contains_expression(e.get("expr", ""), expr, dialect)
-           for e in known.values()):
-        return "same expression as an existing metric"
-    if DISTINCT_AMOUNT.search(expr):
-        return "SUM(DISTINCT ...) or AVG(DISTINCT ...) drops the equal amounts of different rows"
-    if PLAIN_COUNT.match(expr):
-        return "a plain count of one column holds no business rule: the agent counts entities by itself"
-    return None
-
 
 def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantics: dict) -> dict[str, dict]:
     """
@@ -243,9 +195,8 @@ def _compile_metric(db: SQLDatabase, expr: str, tables: list[str], fk_relations:
                     dialect: str):
     """
     Have the database compile the metric on an empty result (WHERE 1 = 0): catches what static
-    checks can't (types, functions). Its tables are joined through the declared relationships,
-    a join key stored as text cast as in the "-- Joins" lines (join_condition);
-    raises ValueError when they can't all be joined.
+    checks can't (types, functions). Its tables are joined through the declared relationships
+    (metric_from_clause); raises ValueError when they can't all be joined.
     """
     # Type names by their SQLAlchemy class (STRING, INT, DECIMAL...): enough to tell text from numbers
     inspector    = sa_inspect(db._engine)
@@ -255,35 +206,4 @@ def _compile_metric(db: SQLDatabase, expr: str, tables: list[str], fk_relations:
         for column in inspector.get_columns(table)
     }
 
-    def link(table: str, joined: list[str]) -> tuple[str, str] | None:
-        """A relationship between the table and one already joined."""
-        for source, target in fk_relations:
-            ends = (source.split(".")[0], target.split(".")[0])
-            if table in ends and (set(ends) - {table}) & set(joined):
-                return source, target
-        return None
-
-    joined, joins, pending = [tables[0]], [], list(tables[1:])
-    while pending:
-        table, relation = next(((t, link(t, joined)) for t in pending if link(t, joined)), (None, None))
-        if table is None:
-            raise ValueError(f"tables {', '.join(pending)} not joined to {', '.join(joined)} by a relationship")
-        joins.append(f"JOIN {table} ON {join_condition(*relation, column_types, dialect)}")
-        joined.append(table)
-        pending.remove(table)
-
-    db.run(f"SELECT {expr} FROM {joined[0]} {' '.join(joins)} WHERE 1 = 0")
-
-
-def _dump_metrics(metrics: dict[str, dict], ignored: list[str]) -> str:
-    """Dump one YAML block per metric, separated by a blank line, then the ignored names."""
-    def ordered(entry: dict) -> dict:
-        rank = {key: i for i, key in enumerate(METRICS_KEY_ORDER)}
-        return dict(sorted(entry.items(), key=lambda item: rank.get(item[0], len(rank))))
-
-    blocks = [
-        yaml.dump({name: ordered(entry)}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True, width=1000)
-        for name, entry in metrics.items()
-    ]
-    blocks.append(yaml.dump({"ignore": ignored}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True))
-    return METRICS_HEADER + "\n".join(blocks)
+    db.run(f"SELECT {expr} {metric_from_clause(tables, fk_relations, column_types, dialect)} WHERE 1 = 0")

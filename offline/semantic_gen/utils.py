@@ -2,9 +2,11 @@
 
 """
 Helpers shared by the generators (tables.py, relationships.py, metrics.py) and offline/studio:
-reading the database structure, rendering schemas for the LLM, dumping reviewed YAML files.
+reading the database structure, rendering schemas for the LLM, dumping reviewed YAML files,
+the rules a metric is checked against.
 """
 
+import re
 from pathlib import Path
 
 import yaml
@@ -13,7 +15,9 @@ from sqlalchemy import inspect as sa_inspect
 
 from config import SEMANTIC_LAYER_DIR, cfg
 from lib.column_pruning import get_column_types
+from lib.metrics import metrics_path
 from lib.semantics import load_fk_relations, load_semantics, render_table
+from lib.sql_tools import contains_expression, join_condition
 
 
 def table_columns(db: SQLDatabase) -> dict[str, list[str]]:
@@ -142,4 +146,106 @@ def write_relations_file(db_name: str, entry: dict) -> None:
     temporary = path.with_suffix(".yaml.tmp")
     temporary.write_text(header + yaml.safe_dump(entry, sort_keys=False, default_flow_style=None,
                                                  allow_unicode=True, width=1000))
+    temporary.replace(path)
+
+
+# ------------------------------------------------------------
+# metrics.yaml (written by metrics.py and offline/studio)
+# ------------------------------------------------------------
+
+METRICS_HEADER = """\
+# Business metrics, generated (make metrics) and reviewed manually (lib/metrics.py).
+# The generator only ADDS metrics, it never modifies or removes existing ones.
+#   description    : what the metric measures, read by the LLM to pick it
+#   synonyms       : other words for it in the questions, any language
+#   expr           : aggregate SQL expression, every column written table.column
+#   time_dimension : default date for periods and trends (optional)
+# To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
+# Checked at startup: an unknown table or column stops the app.
+
+"""
+
+# Key order of a metric block in the YAML
+METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension"]
+
+# Never proposed, whatever the name: two rows with the same amount are two amounts
+DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
+
+# Never proposed either: a plain count of one column (COUNT(DISTINCT t.id), COUNT(*)) holds no business
+# rule, the agent counts entities by itself, and a metric forces its table into every question it matches
+PLAIN_COUNT = re.compile(r"^\s*COUNT\s*\(\s*(DISTINCT\s+)?(\*|[\w.`\"]+)\s*\)\s*$", re.IGNORECASE)
+
+# The reasons of skip_reason, written in the log of a run and read back by offline/studio
+KNOWN_NAME      = "already defined or rejected"
+SAME_EXPRESSION = "same expression as an existing metric"
+DISTINCT_SUM    = "SUM(DISTINCT ...) or AVG(DISTINCT ...) drops the equal amounts of different rows"
+COUNT_ONLY      = "a plain count of one column holds no business rule: the agent counts entities by itself"
+
+
+def skip_reason(name: str, expr: str, known: dict[str, dict], ignored: list[str], dialect: str) -> str | None:
+    """
+    Why a proposed metric is not added (None: it goes on to validation): its name is defined or
+    rejected, its expression is the one of a known metric, it sums distinct values, or it only counts
+    one column. The last three are checked on the expression, as the LLM proposes a rejected metric
+    again under another name.
+    """
+    if name in known or name in ignored:
+        return KNOWN_NAME
+    # Same expression whatever the aliases: each one contains the other (a ratio only contains its parts)
+    if any(contains_expression(expr, e.get("expr", ""), dialect) and contains_expression(e.get("expr", ""), expr, dialect)
+           for e in known.values()):
+        return SAME_EXPRESSION
+    if DISTINCT_AMOUNT.search(expr):
+        return DISTINCT_SUM
+    if PLAIN_COUNT.match(expr):
+        return COUNT_ONLY
+    return None
+
+
+def metric_from_clause(tables: list[str], fk_relations: list[tuple[str, str]], column_types: dict[str, str],
+                       dialect: str) -> str:
+    """
+    The FROM and JOIN lines a metric is computed on: its first table, the others joined through the
+    declared relationships, a join key stored as text cast as in the "-- Joins" lines (join_condition;
+    column_types: {"table.column": type}). Raises ValueError when they can't all be joined.
+    """
+    def link(table: str, joined: list[str]) -> tuple[str, str] | None:
+        """A relationship between the table and one already joined."""
+        for source, target in fk_relations:
+            ends = (source.split(".")[0], target.split(".")[0])
+            if table in ends and (set(ends) - {table}) & set(joined):
+                return source, target
+        return None
+
+    joined, lines, pending = [tables[0]], [f"FROM {tables[0]}"], list(tables[1:])
+    while pending:
+        table, relation = next(((t, link(t, joined)) for t in pending if link(t, joined)), (None, None))
+        if table is None:
+            raise ValueError(f"tables {', '.join(pending)} not joined to {', '.join(joined)} by a relationship")
+        lines.append(f"JOIN {table} ON {join_condition(*relation, column_types, dialect)}")
+        joined.append(table)
+        pending.remove(table)
+    return "\n".join(lines)
+
+
+def dump_metrics(metrics: dict[str, dict], ignored: list[str]) -> str:
+    """Dump one YAML block per metric, separated by a blank line, then the ignored names."""
+    def ordered(entry: dict) -> dict:
+        rank = {key: i for i, key in enumerate(METRICS_KEY_ORDER)}
+        return dict(sorted(entry.items(), key=lambda item: rank.get(item[0], len(rank))))
+
+    blocks = [
+        yaml.dump({name: ordered(entry)}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True, width=1000)
+        for name, entry in metrics.items()
+    ]
+    blocks.append(yaml.dump({"ignore": ignored}, Dumper=FlowListDumper, sort_keys=False, allow_unicode=True))
+    return METRICS_HEADER + "\n".join(blocks)
+
+
+def write_metrics_file(db_name: str, metrics: dict[str, dict], ignored: list[str]) -> None:
+    """Written at once (a temporary file renamed): offline/studio reads it while a run goes on."""
+    path = metrics_path(db_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".yaml.tmp")
+    temporary.write_text(dump_metrics(metrics, ignored))
     temporary.replace(path)

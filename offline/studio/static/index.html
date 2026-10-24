@@ -28,7 +28,7 @@
       <li data-step="profile"><button>Profiling</button></li>
       <li data-step="semantics"><button>Semantics</button></li>
       <li data-step="relations"><button>Relations</button></li>
-      <li class="later" title="À venir">Metrics</li>
+      <li data-step="metrics"><button>Metrics</button></li>
       <li class="later" title="À venir">Index</li>
     </ol>
   </header>
@@ -71,11 +71,12 @@
       </div>
       <div class="row head">
         <input type="checkbox" id="select-all" aria-label="Tout sélectionner">
-        <span>Table</span>
-        <span>Statut</span>
+        <span id="list-name">Table</span>
+        <span id="list-status">Statut</span>
       </div>
       <div id="rows"></div>
       <div class="empty" id="empty" hidden>Aucune table ne correspond.</div>
+      <div id="list-extra"></div>
     </section>
 
     <section class="panel detail" id="detail" aria-live="polite">
