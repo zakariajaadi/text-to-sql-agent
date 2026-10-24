@@ -18,10 +18,14 @@ IGNORED = ["order_count"]
     ("outstanding", "SUM(DISTINCT loan.outstanding_amount)", True),
     ("outstanding_bis", "sum( distinct loan.outstanding_amount ) / COUNT(DISTINCT loan.loan_id)", True),
     ("average_premium", "AVG(DISTINCT policy.premium)", True),
-    # New metrics, counting distinct entities included
+    # A plain count of one column: no business rule, and it would force its table into the questions
+    ("loan_count", "COUNT(DISTINCT loan.loan_id)", True),
+    ("row_count", "count(*)", True),
+    ("client_count", "COUNT( DISTINCT `client`.`client_id` )", True),
+    # New metrics, a count with a business rule included
     ("quantity", "SUM(invoice_line.quantity)", False),
-    ("loan_count", "COUNT(DISTINCT loan.loan_id)", False),
     ("average_loan", "SUM(loan.amount) / COUNT(DISTINCT loan.client_id)", False),
+    ("late_loan_count", "COUNT(DISTINCT CASE WHEN loan.status = 'LATE' THEN loan.loan_id END)", False),
 ])
 def test_skip_reason(name, expr, skipped):
     assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped

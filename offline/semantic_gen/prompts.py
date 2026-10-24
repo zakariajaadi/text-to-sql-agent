@@ -111,7 +111,9 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    → SUM(...) / COUNT(DISTINCT order_lines.order_id). Never AVG over line-level rows for them.
 5. Count entities with COUNT(DISTINCT table.id), never COUNT(*). DISTINCT is only for counting
    entities: never SUM(DISTINCT ...) or AVG(DISTINCT ...) on an amount, as two rows with the same
-   amount are two amounts.
+   amount are two amounts. Never propose a metric that only counts one column (COUNT(DISTINCT
+   table.id) alone): the agent counts entities by itself. A count is a metric only with a business
+   rule inside (a CASE on a status, a ratio), e.g. COUNT(DISTINCT CASE WHEN ... THEN table.id END).
 6. time_dimension: the business date of the event the metric measures (order date, invoice date),
    from the fact table or from a table it joins to through the "-- Joins:" lines. Empty if none.
 7. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.

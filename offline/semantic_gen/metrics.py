@@ -56,6 +56,10 @@ TEMPORAL_TYPES = ("date", "time")
 # Never proposed, whatever the name: two rows with the same amount are two amounts
 DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
 
+# Never proposed either: a plain count of one column (COUNT(DISTINCT t.id), COUNT(*)) holds no business
+# rule, the agent counts entities by itself, and a metric forces its table into every question it matches
+PLAIN_COUNT = re.compile(r"^\s*COUNT\s*\(\s*(DISTINCT\s+)?(\*|[\w.`\"]+)\s*\)\s*$", re.IGNORECASE)
+
 # ------------------------------------------------------------
 # Chain
 # ------------------------------------------------------------
@@ -160,8 +164,9 @@ def generate_metrics(db_name: str):
 def skip_reason(name: str, expr: str, known: dict[str, dict], ignored: list[str], dialect: str) -> str | None:
     """
     Why a proposed metric is not added (None: it goes on to validation): its name is defined or
-    rejected, its expression is the one of a known metric, or it sums distinct values. The last two
-    are checked on the expression, as the LLM proposes a rejected metric again under another name.
+    rejected, its expression is the one of a known metric, it sums distinct values, or it only counts
+    one column. The last three are checked on the expression, as the LLM proposes a rejected metric
+    again under another name.
     """
     if name in known or name in ignored:
         return "already defined or rejected"
@@ -171,6 +176,8 @@ def skip_reason(name: str, expr: str, known: dict[str, dict], ignored: list[str]
         return "same expression as an existing metric"
     if DISTINCT_AMOUNT.search(expr):
         return "SUM(DISTINCT ...) or AVG(DISTINCT ...) drops the equal amounts of different rows"
+    if PLAIN_COUNT.match(expr):
+        return "a plain count of one column holds no business rule: the agent counts entities by itself"
     return None
 
 
