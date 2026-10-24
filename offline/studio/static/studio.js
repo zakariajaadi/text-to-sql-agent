@@ -3,6 +3,7 @@
 //   Profiling: what the profile detects in each column (declared type against the data, exceptions)
 //   Semantics: the descriptions the LLM writes, read and corrected in place
 //   Metrics: the metrics on the left instead of the tables, each tested on the data (counts, never a value)
+//   Index: what the agent reads of each table (its document) against the files today, and the eval of the agent
 // Everything comes from the API of offline/studio/app.py; the page keeps no state of its own but the
 // chosen database, step, filter and selection.
 
@@ -34,12 +35,18 @@ const STEPS = {
     text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose ; chacune est testée sur les données (lignes comptées deux fois, mesures vides, dates manquantes) sans jamais en montrer le résultat.",
     primary: () => "Proposer des métriques", secondary: () => (ui.testing ? "Arrêter les tests" : "Tout tester"),
   },
+  index: {
+    number: 5, title: "Index", key: "index", todo: "À réindexer",
+    text: "Ce que l'agent lit vraiment : une fiche par table, faite des fichiers des étapes 1 à 4, et les valeurs des colonnes catégorielles lues dans la base. Une correction n'arrive chez l'agent qu'une fois réindexée.",
+    primary: () => "Réindexer", secondary: () => "Évaluer l'agent",
+  },
 };
 
 const ui = {
   dbs: [], db: null, step: "profile", data: null, filter: "all", query: "", selected: new Set(),
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop})
+  idx: null,                                                           // the Index screen
   current: null, detail: null, job: null, since: 0, polling: null, logOpen: true,
   clockOffset: 0,   // seconds the clock of the page is ahead of the server's
 };
@@ -80,7 +87,7 @@ async function init() {
   $("db-select").onchange = (e) => {
     ui.db = e.target.value; store("studio.db", ui.db);
     ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
-    ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true;
+    ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null;
     renderDetail(); loadTables().then(() => loadScreen());
   };
   ui.step = STEPS[location.hash.slice(1)] ? location.hash.slice(1) : STEPS[stored("studio.step")] ? stored("studio.step") : "profile";
@@ -105,7 +112,7 @@ function renderStep() {
   const metrics = ui.step === "metrics";
   $("search").placeholder = metrics ? "Rechercher une métrique" : "Rechercher une table";
   $("list-name").textContent = metrics ? "Métrique" : "Table";
-  $("list-status").textContent = metrics ? "État" : "Statut";
+  $("list-status").textContent = metrics ? "État" : ui.step === "index" ? "Index" : "Statut";
   renderActions();
 }
 
@@ -113,6 +120,7 @@ function renderStep() {
 function loadScreen() {
   if (ui.step === "relations") return loadRelations();
   if (ui.step === "metrics") return loadMetrics();
+  if (ui.step === "index") return loadIndex();
 }
 
 function goTo(step) {
@@ -121,7 +129,8 @@ function goTo(step) {
   ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false;
   [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   renderStep();
-  if (step === "relations" || step === "metrics") {
+  if (step === "relations" || step === "metrics" || step === "index") {
+    if (step === "index") ui.current = null;   // the Index screen opens on the whole database
     if (ui.data) { renderHeader(); renderRows(); }
     renderDetail(); loadScreen();
     return;
@@ -160,7 +169,8 @@ function renderHeader() {
   else $("banner").hidden = true;
   const todo = { profile: s.tables - s.profiled, semantics: s.tables - (s.described - s.partial),
     relations: ui.data.tables.filter((t) => t.status.relations !== "done").length,
-    metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0 }[ui.step];
+    metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0,
+    index: ui.idx ? ui.idx.counts.changed + ui.idx.counts.missing : 0 }[ui.step];
   const counts = { all: ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : s.tables, todo };
   const labels = { all: "Toutes", todo: STEPS[ui.step].todo };
   [...$("filters").children].forEach((chip) => {
@@ -179,9 +189,10 @@ function showBanner(text, error = false) {
 function statusPill(table) {
   const job = ui.job;
   if (job?.running && job.db === ui.db && job.step === ui.step
-      && (job.step === "profile" ? job.current === table.name : job.started_tables.includes(table.name))) {
+      && (job.step === "profile" || job.step === "index" ? job.current === table.name : job.started_tables.includes(table.name))) {
     return '<span class="pill running">en cours</span>';
   }
+  if (ui.step === "index") return INDEX_PILLS[indexStatus(table.name)] || "";
   const status = table.status[STEPS[ui.step].key];
   if (ui.step === "profile") return status === "none" ? '<span class="pill todo">à profiler</span>' : '<span class="pill done">profilée</span>';
   if (ui.step === "relations") {
@@ -196,8 +207,8 @@ function statusPill(table) {
 
 function visibleRows() {
   const q = ui.query.toLowerCase(), key = STEPS[ui.step].key;
-  return (ui.data?.tables || []).filter((t) =>
-    (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || t.status[key] !== "done"));
+  const todo = ui.step === "index" ? (t) => ["changed", "missing"].includes(indexStatus(t.name)) : (t) => t.status[key] !== "done";
+  return (ui.data?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || todo(t)));
 }
 
 function renderRows() {
@@ -212,6 +223,7 @@ function renderRows() {
     </div>`).join("");
   $("empty").hidden = rows.length > 0;
   $("select-all").checked = rows.length > 0 && rows.every((t) => ui.selected.has(t.name));
+  if (ui.step === "index") renderGone();
   renderActions();
   renderPersonal();
 }
@@ -219,6 +231,7 @@ function renderRows() {
 function renderActions() {
   $("run-primary").textContent = STEPS[ui.step].primary(ui.selected.size);
   $("run-secondary").textContent = STEPS[ui.step].secondary(ui.selected.size);
+  $("run-secondary").hidden = ui.step === "index" && ui.idx?.dataset === false;   // no eval questions for the database
 }
 
 // Personal data: one rule for the whole database, not a correction to review table by table
@@ -279,9 +292,10 @@ async function openTable(name) {
   ui.current = name;
   renderRows();
   if (ui.step === "relations") { selectOnMap(name); return; }
-  const step = ui.step, path = step === "profile" ? "" : "/semantics";
+  const step = ui.step, db = encodeURIComponent(ui.db), table = encodeURIComponent(name);
   try {
-    ui.detail = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(name)}${path}`);
+    ui.detail = await api(step === "index" ? `/api/db/${db}/index/${table}`
+      : `/api/db/${db}/tables/${table}${step === "profile" ? "" : "/semantics"}`);
   } catch (e) {
     ui.detail = { name, error: e.message };
   }
@@ -292,6 +306,7 @@ function renderDetail(message) {
   const d = ui.detail, el = $("detail");
   if (ui.step === "relations") { renderRelations(el, message); return; }
   if (ui.step === "metrics") { renderMetric(el, message); return; }
+  if (ui.step === "index") { renderIndex(el, message); return; }
   if (!d) { el.innerHTML = '<p class="placeholder">Choisis une table pour voir ses colonnes.</p>'; return; }
   if (d.error) { el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2></div><p class="note">${esc(d.error)}</p>`; return; }
   if (ui.step === "profile") renderProfile(d, el, message); else renderSemantics(d, el, message);
@@ -717,6 +732,11 @@ function renderMetricRows() {
 }
 
 $("list-extra").addEventListener("click", (e) => {
+  if (ui.step === "index") {
+    const gone = e.target.closest(".row[data-table]");
+    if (gone) openTable(gone.dataset.table);
+    return;
+  }
   const row = e.target.closest(".row[data-kind]");
   if (row) openMetric(row.dataset.name, row.dataset.kind);
 });
@@ -914,6 +934,189 @@ async function moveMetric(name, back) {
   loadTables(); renderRows(); renderDetail();
 }
 
+// ── Index: what the agent reads of each table, against the files today ──
+
+async function loadIndex() {
+  const db = ui.db;
+  try {
+    const idx = await api(`/api/db/${encodeURIComponent(db)}/index`);
+    if (db !== ui.db) return;
+    ui.idx = idx;
+  } catch (e) {
+    showBanner(`Impossible de lire l'index : ${e.message}`, true);
+    return;
+  }
+  if (ui.step !== "index") return;
+  if (ui.data) { renderHeader(); renderRows(); }
+  if (ui.current) openTable(ui.current); else renderDetail();
+}
+
+const indexStatus = (name) => ui.idx?.tables.find((t) => t.name === name)?.status;
+const INDEX_PILLS = {
+  fresh: '<span class="pill done">à jour</span>',
+  changed: '<span class="pill decide" title="Les fichiers ont changé depuis l\'index : l\'agent lit encore l\'ancienne fiche">modifiée</span>',
+  missing: '<span class="pill todo" title="Pas dans l\'index : l\'agent ne voit pas cette table">à indexer</span>',
+  unknown: '<span class="pill todo" title="Index construit avant que le studio en garde la trace">état inconnu</span>',
+};
+
+// The tables the index holds that the database no longer has: under the tables, quieter
+function renderGone() {
+  const gone = ui.idx?.gone || [];
+  $("list-extra").innerHTML = gone.length ? `<div class="list-group">Plus dans la base · ${fmt.format(gone.length)}</div>`
+    + gone.map((name) => `<div class="row aside${name === ui.current ? " current" : ""}" data-table="${esc(name)}">
+        <span></span><span class="cell" title="${esc(name)}">${esc(name)}</span><span class="pill todo">à retirer</span></div>`).join("") : "";
+}
+
+const when = (seconds) => `${new Date(seconds * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} à ${at(seconds)}`;
+
+// "a, b et c", or "a, b, c, d et 3 autres"
+function names(list, max = 4) {
+  const shown = list.slice(0, max).map((name) => `<span class="mono">${esc(name)}</span>`), more = list.length - shown.length;
+  if (more) return `${shown.join(", ")} et ${more} autre${more > 1 ? "s" : ""}`;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(", ")} et ${shown.at(-1)}` : shown.join("");
+}
+
+// One line of the Index screen; tone "warn" (amber: to look at) or "bad" (red: the agent won't start)
+const indexLine = (label, measure, text, tone = "") => `<div class="mline${tone ? ` ${tone}` : ""}">
+    <span>${label}</span><span class="fill">${measure}</span><span class="muted-text">${text}</span></div>`;
+
+// What the files changed since the index, or how old an index built before its trace is
+function indexNote(idx) {
+  if (!idx.trace) {
+    if (!idx.values_at) return `<div class="error-note"><span>Jamais indexée : l'agent ne voit aucune table de ${esc(ui.db)}. « Réindexer » écrit leurs fiches.</span></div>`;
+    const newer = Object.entries(idx.files).filter(([, time]) => time > idx.values_at).map(([file, time]) => `${file} (${when(time)})`);
+    return `<div class="rule-note"><span>Index construit avant que le studio en garde la trace${newer.length
+      ? ` : ${newer.join(" et ")} ${newer.length > 1 ? "ont" : "a"} changé depuis` : ""}. Réindexe une fois pour voir ce que l'agent lit, table par table.</span></div>`;
+  }
+  const changed = idx.tables.filter((t) => t.status === "changed").map((t) => t.name);
+  const missing = idx.tables.filter((t) => t.status === "missing").map((t) => t.name);
+  const parts = [];
+  if (changed.length) {
+    parts.push(`${changed.length > 1 ? `${fmt.format(changed.length)} tables ont changé` : "Une table a changé"} depuis (${names(changed)}) : `
+      + `l'agent lit encore ${changed.length > 1 ? "leurs anciennes fiches" : "son ancienne fiche"}.`);
+  }
+  if (missing.length) parts.push(`${names(missing)} ${missing.length > 1 ? "ne sont pas" : "n'est pas"} dans l'index : l'agent ne ${missing.length > 1 ? "les" : "la"} voit pas.`);
+  if (idx.gone.length) {
+    parts.push(`${names(idx.gone)} ${idx.gone.length > 1 ? "ne sont plus" : "n'est plus"} dans la base : `
+      + `${idx.gone.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
+  }
+  return parts.length ? `<div class="rule-note"><span>${parts.join(" ")}</span></div>` : "";
+}
+
+// What the agent receives: the documents, the values (listed or searched), the sample rows, the metrics it checks at startup
+function indexLines(idx) {
+  const raw = idx.raw.filter((t) => !idx.gone.includes(t)), m = idx.metrics;
+  const rows = idx.sample_rows, now = idx.sample_rows_now;
+  const lines = [
+    indexLine("Fiches", fmt.format(idx.documents), raw.length
+      ? `${names(raw)} sans description : la structure brute seulement. Semantics les décrit.` : "Une par table, toutes décrites.", raw.length ? "warn" : ""),
+    indexLine("Valeurs listées", `${fmt.format(idx.inline.columns)} col. · ${fmt.format(idx.inline.values)}`,
+      "Listées telles quelles : l'agent les recopie dans ses filtres."),
+    indexLine("Valeurs cherchées", `${fmt.format(idx.searched.columns)} col. · ${fmt.format(idx.searched.values)}`,
+      "Trop nombreuses pour la fiche : retrouvées quand une question les cite."),
+  ];
+  if (idx.dropped.length) {
+    lines.push(indexLine("Écartées", `${fmt.format(idx.dropped.length)} col.`, `${names(idx.dropped)} : catégorielle${idx.dropped.length > 1 ? "s" : ""}, `
+      + "mais aucune valeur indexée (vide, ou trop de valeurs distinctes).", "warn"));
+  }
+  lines.push(rows !== now
+    ? indexLine("Exemples de lignes", rows ? `${fmt.format(rows)} par fiche` : "aucune",
+      `La configuration en demande ${now ? fmt.format(now) : "aucune"} : réindexer pour l'appliquer.`, "warn")
+    : indexLine("Exemples de lignes", rows ? `${fmt.format(rows)} par fiche` : "aucune",
+      rows ? "Envoyés au modèle sous la structure, colonnes cachées retirées." : "Aucune ligne de la base dans les fiches."));
+  lines.push(m.errors.length
+    ? indexLine("Métriques", `${fmt.format(m.total - m.errors.length)} / ${fmt.format(m.total)}`, "L'agent refusera de démarrer : "
+      + m.errors.map((e) => `<span class="mono">${esc(e.name)}</span> (${esc(e.detail)})`).join(", ") + ".", "bad")
+    : indexLine("Métriques", m.total ? `${fmt.format(m.total)} / ${fmt.format(m.total)}` : "aucune",
+      m.total ? "Elles lisent des colonnes de l'index : l'agent démarre." : "Pas de métrique : rien à vérifier."));
+  return lines.join("");
+}
+
+// The last eval: its score, whether it measured this index, the dashboard of the database
+function evalLines(idx) {
+  const head = '<div class="mline head"><span>Évaluation</span><span class="num">Résultats exacts</span><span></span></div>';
+  if (!idx.dataset) {
+    return head + indexLine("Questions", "aucune", `Pas de questions pour cette base : <span class="mono">offline/eval/datasets/${esc(ui.db.toLowerCase())}.yaml</span>.`);
+  }
+  const e = idx.eval;
+  if (!e) return head + indexLine("Dernière mesure", "—", "Jamais évaluée : « Évaluer l'agent » lui pose les questions de la base.");
+  const built = idx.built_at ?? idx.values_at, before = built != null && e.at < built;
+  const text = `${when(e.at)} · ${fmt.format(e.exact)} réponses exactes sur ${fmt.format(e.scored)} comparées aux lignes attendues`
+    + (e.questions > e.scored ? ` (${fmt.format(e.questions)} questions)` : "") + (before ? " · mesurée avant cet index : à refaire" : "");
+  return head + `<div class="mline with-link${before ? " warn" : ""}"><span>Dernière mesure</span><span class="fill">${pct(e.scored ? e.exact / e.scored : null)}</span>
+    <span class="muted-text">${text}</span><a class="btn ghost small" href="/eval/${encodeURIComponent(ui.db)}" target="_blank" rel="noopener">Ouvrir le tableau ↗</a></div>`;
+}
+
+function renderIndex(el, message) {
+  const idx = ui.idx;
+  if (!idx) { el.innerHTML = '<p class="placeholder">Lecture de l\'index…</p>'; return; }
+  if (ui.current) { renderDocument(el, message); return; }
+  const figures = idx.trace ? `indexé le ${when(idx.built_at)} · ${plural(idx.documents, "fiche")} · ${plural(idx.inline.values + idx.searched.values, "valeur")}`
+    : idx.values_at ? `index du ${when(idx.values_at)}` : "jamais indexé";
+  el.innerHTML = `<div class="detail-head"><h2>Index de ${esc(ui.db)}</h2><span class="figures">${figures}</span></div>
+    ${message ? `<p class="note error">${esc(message)}</p>` : ""}${indexNote(idx)}
+    ${idx.trace ? `<div class="columns"><div class="mline head"><span>Ce que l'agent reçoit</span><span class="num">Mesure</span><span>Ce que ça veut dire</span></div>
+      ${indexLines(idx)}</div>` : ""}
+    <div class="columns">${evalLines(idx)}</div>`;
+}
+
+// What changed in a document since the index, in a few words each
+const CHANGES = {
+  described: () => "la table est décrite depuis",
+  undescribed: () => "sa description a été retirée",
+  description: () => "la description de la table",
+  data_as_of: () => "la date des données",
+  read_mode: () => "le mode de lecture",
+  columns: (c) => `la description de ${names(c.columns)}`,
+  formats: (c) => `le format de ${names(c.columns)}`,
+  hidden: (c) => `${names(c.columns)} ${c.columns.length > 1 ? "cachées" : "cachée"}`,
+  shown: (c) => `${names(c.columns)} de nouveau ${c.columns.length > 1 ? "visibles" : "visible"}`,
+  categorical: (c) => [c.added.length && `${names(c.added)} ${c.added.length > 1 ? "devenues catégorielles" : "devenue catégorielle"}`,
+    c.removed.length && `${names(c.removed)} plus catégorielle${c.removed.length > 1 ? "s" : ""}`].filter(Boolean).join(", "),
+  relations: (c) => [...c.added.map(([s, t]) => `la jointure <span class="mono">${esc(s)} → ${esc(t)}</span> ajoutée`),
+    ...c.removed.map(([s, t]) => `la jointure <span class="mono">${esc(s)} → ${esc(t)}</span> retirée`)].join(", "),
+  db_columns: (c) => [c.added.length && `${names(c.added)} ${c.added.length > 1 ? "ajoutées" : "ajoutée"} dans la base`,
+    c.removed.length && `${names(c.removed)} ${c.removed.length > 1 ? "retirées" : "retirée"} de la base`].filter(Boolean).join(", "),
+};
+
+// A column of the document: its type, its format, its values (listed, searched, none), or hidden, or new in the database
+function documentLine(c) {
+  const type = `<span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>`;
+  if (c.hidden) return `<div class="xline hidden-col"><span class="cell">${esc(c.column)} <span class="pill hide">cachée</span></span>${type}<span class="xvalues">hors de la fiche</span></div>`;
+  if (c.added) return `<div class="xline warn"><span class="cell">${esc(c.column)}</span>${type}<span class="xvalues">ajoutée depuis l'index</span></div>`;
+  const format = c.format ? ` <span class="pill type">${esc(formatLabel(c.format))}</span>` : "";
+  const values = c.gone ? "plus dans la base" : !c.values ? "—" : c.values.dropped ? "aucune valeur indexée"
+    : `${fmt.format(c.values.count)} · ${c.values.inline ? "dans la fiche" : "cherchées"}`;
+  return `<div class="xline${c.gone || c.values?.dropped ? " warn" : ""}"><span class="cell">${esc(c.column)}${format}</span>${type}<span class="xvalues">${values}</span></div>`;
+}
+
+function renderDocument(el, message) {
+  const d = ui.detail;
+  if (!d || d.name !== ui.current) { el.innerHTML = '<p class="placeholder">Lecture de la fiche…</p>'; return; }
+  const head = (figures) => `<div class="detail-head"><h2>${esc(d.name)}</h2>${figures ? `<span class="figures">${figures}</span>` : ""}
+    <span class="grow"></span><button class="btn ghost small" id="index-back">← Index de ${esc(ui.db)}</button></div>`
+    + (message ? `<p class="note error">${esc(message)}</p>` : "");
+  if (d.error) {
+    el.innerHTML = head("") + `<p class="note error">${esc(d.error)}</p>`;
+  } else if (d.status === "unknown") {
+    el.innerHTML = head("") + '<p class="placeholder">Index construit avant que le studio en garde la trace : « Réindexer » montre la fiche de cette table.</p>';
+  } else if (d.status === "missing") {
+    el.innerHTML = head("") + '<p class="placeholder">Pas dans l\'index : l\'agent ne voit pas cette table. « Réindexer » l\'ajoute.</p>';
+  } else {
+    const figures = [`${fmt.format(d.chars)} caractères`, d.described ? (d.joins ? plural(d.joins, "jointure") : "aucune jointure") : null,
+      d.described ? "décrite" : "structure brute", d.data_as_of ? `données au ${d.data_as_of}` : null].filter(Boolean).join(" · ");
+    const notes = [
+      d.gone && "Plus dans la base : sa fiche partira à la prochaine indexation.",
+      d.changes.length && `Depuis l'index : ${d.changes.map((c) => CHANGES[c.kind](c)).join(" · ")}. L'agent lit encore l'ancienne fiche.`,
+      !d.described && !d.gone && !d.changes.length && "Sans description : l'agent ne lit que la structure brute. Semantics la décrit.",
+    ].filter(Boolean);
+    el.innerHTML = head(figures) + notes.map((n) => `<div class="rule-note"><span>${n}</span></div>`).join("")
+      + `<div class="columns"><div class="xline head"><span>Colonne de la fiche</span><span>Type</span><span class="num">Valeurs</span></div>
+        ${d.columns.map(documentLine).join("")}</div>`;
+  }
+  $("index-back").onclick = () => { ui.current = null; ui.detail = null; renderRows(); renderDetail(); };
+}
+
 // ── Jobs ─────────────────────────────────────────────────
 
 async function runJob(step, request) {
@@ -943,6 +1146,7 @@ function runMissing() {
 }
 $("run-primary").addEventListener("click", () => {
   if (ui.step === "metrics") runJob("metrics/run", {});
+  else if (ui.step === "index") runJob("index/run", {});
   else if (ui.step === "relations") runJob("relations/run", {});
   else if (ui.step === "profile") runSelection();
   else runMissing();
@@ -952,6 +1156,7 @@ $("run-secondary").addEventListener("click", () => {
     if (ui.testing) { ui.testing.stop = true; return; }
     testMetrics((ui.met?.metrics || []).filter((m) => m.sql).map((m) => m.name));
   }
+  else if (ui.step === "index") runJob("eval/run", {});
   else if (ui.step === "relations") { ui.adding = true; renderDetail(); $("add-form")?.scrollIntoView({ block: "nearest" }); }
   else if (ui.step === "profile") runMissing();
   else runSelection();
@@ -994,6 +1199,8 @@ async function pollJob() {
       const added = (ui.met?.added || []).filter((name) => ui.met.metrics.some((m) => m.name === name && m.sql));
       if (ui.step === "metrics" && added.length) testMetrics(added);
     }
+    // A new index or a new eval: what the agent reads, its score
+    if ((job.step === "index" || job.step === "eval") && ended) { await loadIndex(); renderJob(); }
   }
   if (job.running) schedulePoll();
 }
@@ -1024,13 +1231,51 @@ function renderJob() {
   if (!job) return;
   $("job").hidden = false;
   const now = Date.now() / 1000 - ui.clockOffset;   // the clock of the server
-  const titles = { semantics: semanticsJobTitle, relations: relationsJobTitle, metrics: metricsJobTitle, profile: profileJobTitle };
+  const titles = { semantics: semanticsJobTitle, relations: relationsJobTitle, metrics: metricsJobTitle, profile: profileJobTitle,
+    index: indexJobTitle, eval: evalJobTitle };
   const [title, halo] = (titles[job.step] || profileJobTitle)(job, now);
   $("job-title").innerHTML = title;
   $("job-halo").className = `halo ${halo}`;
   $("job-stop").hidden = !job.running || job.stopped;
   $("job-log").hidden = !ui.logOpen;
   $("job-toggle").textContent = ui.logOpen ? "Masquer les logs" : "Voir les logs";
+}
+
+// An index: the values read table after table, then the documents written into Chroma, then the value index
+function indexJobTitle(job, now) {
+  const total = ui.data?.summary.described;
+  if (job.running && job.stopped) return [`Arrêt en cours… ${duration(now - job.stopped_at)}`, "running"];
+  if (job.running && job.current) {
+    const waited = now - job.current_since;
+    let title = `Lecture des valeurs · <b>${esc(job.current)}</b> depuis ${duration(waited)}${total ? ` (${job.done.length + 1}/${total})` : ""}`;
+    if (waited > SLOW_SECONDS) title += ' · <span class="slow">la base met du temps à répondre</span>';
+    return [title, "running"];
+  }
+  if (job.running && job.phase === "documents") return [`Écriture des fiches dans Chroma… ${duration(now - job.started)}`, "running"];
+  if (job.running && job.phase === "values") return ["Écriture de l'index des valeurs…", "running"];
+  if (job.running) return [`Connexion à la base… ${duration(now - job.started)}`, "running"];
+  // Before the documents, nothing is written: the agent keeps the previous index
+  if (job.stopped) {
+    return [job.phase ? '<span class="slow">Index arrêté pendant l\'écriture : il peut être incomplet, réindexe</span>'
+      : "Index arrêté · rien n'est écrit : l'agent garde l'index précédent", "failed"];
+  }
+  if (job.returncode) return [`Échec de l'index (code ${job.returncode}) · ${job.phase ? "" : "rien n'est écrit · "}voir les logs`, "failed"];
+  const idx = job.db === ui.db ? ui.idx : null;
+  const counts = idx?.trace ? ` · ${plural(idx.documents, "fiche")} · ${plural(idx.inline.values + idx.searched.values, "valeur")}` : "";
+  return [`Index terminé${counts} · l'agent le lira à son prochain démarrage`, ""];
+}
+
+// An eval: the questions of the dataset asked to the agent, the results written once at the end
+function evalJobTitle(job, now) {
+  if (job.running && job.stopped) return [`Arrêt en cours… ${duration(now - job.stopped_at)}`, "running"];
+  if (job.running && !job.progress) return [`Préparation de l'évaluation… ${duration(now - job.started)}`, "running"];
+  if (job.running) {
+    return [`Évaluation de l'agent sur ${esc(job.db)} · question ${job.progress[0]}/${job.progress[1]} · ${duration(now - job.started)}`, "running"];
+  }
+  if (job.stopped) return ["Évaluation arrêtée · les résultats précédents sont gardés", "failed"];
+  if (job.returncode) return [`Échec de l'évaluation (code ${job.returncode}) · voir les logs`, "failed"];
+  const e = job.db === ui.db ? ui.idx?.eval : null;
+  return [`Évaluation terminée${e ? ` · ${fmt.format(e.exact)} résultats exacts sur ${fmt.format(e.scored)}` : ""}`, ""];
 }
 
 // A description run: the tables sent to the LLM (8 at a time), tables.yaml written once at the end

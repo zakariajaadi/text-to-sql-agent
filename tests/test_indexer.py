@@ -109,6 +109,23 @@ def test_a_failed_embedding_leaves_the_previous_index_intact(indexer):
     assert store.documents["test_customers"].page_content == "old"
 
 
+def test_the_trace_holds_what_went_into_each_document_never_a_value(indexer, monkeypatch):
+    monkeypatch.setattr(schema_indexer, "cfg", types.SimpleNamespace(get_db=lambda name: types.SimpleNamespace(sample_rows=0)))
+    customers = "CREATE TABLE `customers` (\n\t`id` INT,  -- Id.\n\t`country` STRING  -- Country. Values: 'USA'\n)"
+    semantics = {"customers": {"description": "Customers.", "categorical_columns": ["country", "city"]}}
+    values    = {"customers": {"country": {"USA": 13}, "city": {f"city {i}": 1 for i in range(40)}}}
+
+    trace = indexer.trace([doc("test", "customers", customers), doc("test", "orders", "CREATE TABLE `orders` (\n\t`id` INT\n)")],
+                          values, semantics, [("orders.customerid", "customers.id"), ("a.x", "b.y")])
+    assert trace["sample_rows"] == 0 and trace["built_at"] > 0
+    assert trace["tables"]["customers"] == {
+        "semantics": semantics["customers"], "relations": [["orders.customerid", "customers.id"]],
+        "columns": {"id": "INT", "country": "STRING"}, "chars": len(customers),
+        "values": {"country": {"count": 1, "inline": True}, "city": {"count": 40, "inline": False}},
+    }
+    assert trace["tables"]["orders"]["semantics"] is None
+
+
 # =============================================================================
 # Categorical values
 # =============================================================================

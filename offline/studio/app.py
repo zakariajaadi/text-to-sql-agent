@@ -2,7 +2,7 @@
 
 """
 Studio of the semantic layer: a web page to run the pipeline steps and see what they write, instead
-of patch scripts. Step 1, profiling: the tables and their status at each step, profile the ones chosen
+of patch scripts (Profiling, Semantics, Relations, Metrics, then Index: what the agent reads, and its eval). Step 1, profiling: the tables and their status at each step, profile the ones chosen
 or missing, read the profile of a table (declared type against what the data holds), make an exception
 to what it detects, hide the personal data of the whole database.
 
@@ -14,6 +14,8 @@ It shows shapes and counts of the data, never a value. The database is read to l
 measure a relation added and to test a metric (counts only).
 """
 
+import json
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -21,7 +23,7 @@ from typing import Literal
 
 import yaml
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
@@ -32,6 +34,9 @@ from config import SEMANTIC_LAYER_DIR, cfg
 from lib.database import build_database
 from lib.metrics import metrics_path, read_metrics_file
 from lib.semantics import excluded_columns, load_fk_relations, load_profile, load_semantics, tables_path
+from lib.value_index import value_index_path
+from offline.eval.dashboard import DATASETS_DIR, RESULTS_DIR, build_dashboard
+from offline.indexer.trace import read_trace
 from offline.semantic_gen.profiling import key_overlap
 from offline.semantic_gen.utils import (
     dump_table_semantics,
@@ -41,8 +46,11 @@ from offline.semantic_gen.utils import (
     write_relations_file,
 )
 from offline.studio import state
+from offline.studio.index import document_view, eval_run, index_view
 from offline.studio.jobs import (
     JobRunner,
+    eval_command,
+    index_command,
     metrics_command,
     profile_command,
     relations_command,
@@ -605,3 +613,75 @@ def ignore_one_metric(db: str, name: str, request: MetricVersion, back: bool = F
     _tests.get(db, {}).pop(name, None)
     logger.info(f"[studio] {db}: metric {name} {'allowed again' if back else 'ignored'}")
     return metrics_screen(db)
+
+
+# ------------------------------------------------------------
+# Index: what the agent reads of each table against the files today, and the eval of the agent
+# ------------------------------------------------------------
+
+def _eval_results(db: str) -> tuple[dict | None, float | None]:
+    """The results of the last eval of the database (make eval) and the time of their file, or (None, None)."""
+    path = RESULTS_DIR / f"{db.lower()}.json"
+    if not path.exists():
+        return None, None
+    return json.loads(path.read_text()), path.stat().st_mtime
+
+
+@app.get("/api/db/{db}/index")
+def index_screen(db: str):
+    """
+    The Index screen: each table with its status in the index, what the agent receives, the last eval.
+    The dates of the files and of the value index tell how old an index built before its trace is.
+    """
+    db_cfg  = _db_config(db)
+    listing = _listing(db)
+    columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
+    view    = index_view(listing["tables"], columns, load_semantics(db), load_fk_relations(db), read_trace(db),
+                         read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db)))
+    files   = {name: path.stat().st_mtime for name, path in (("tables.yaml", tables_path(db)),
+                                                             ("relationships.yaml", relations_path(db))) if path.exists()}
+    values  = value_index_path(db)
+    return {**view, "files": files, "values_at": values.stat().st_mtime if values.exists() else None,
+            "sample_rows_now": db_cfg.sample_rows, "dataset": (DATASETS_DIR / f"{db.lower()}.yaml").exists()}
+
+
+@app.get("/api/db/{db}/index/{table}")
+def index_document(db: str, table: str):
+    """The document of a table as the agent reads it, and what changed since the index."""
+    _db_config(db)
+    listing, trace = _listing(db), read_trace(db)
+    if table not in listing["tables"] and table not in (trace or {}).get("tables", {}):
+        raise HTTPException(404, f"Unknown table: {table}")
+    view = document_view(table, trace, load_semantics(db).get(table), load_fk_relations(db), listing["columns"].get(table))
+    return {**view, "gone": listing["source"] == "database" and table not in listing["tables"]}
+
+
+@app.post("/api/db/{db}/index/run")
+def run_index(db: str):
+    """Index the database again (make index): the documents of the tables, the value index and its trace."""
+    _db_config(db)
+    return _start(db, "index", index_command(db), None)
+
+
+@app.post("/api/db/{db}/eval/run")
+def run_eval(db: str):
+    """Ask the questions of the eval to the agent (make eval): offline/eval/results/<db>.json."""
+    _db_config(db)
+    if not (DATASETS_DIR / f"{db.lower()}.yaml").exists():
+        raise HTTPException(400, f"No eval questions for {db}: offline/eval/datasets/{db.lower()}.yaml")
+    return _start(db, "eval", eval_command(db), None)
+
+
+@app.get("/eval/{db}")
+def eval_dashboard(db: str):
+    """
+    The eval dashboard of this database alone, built from its results at each request (make eval-dashboard
+    builds every database into one file): the results of a database stay out of the page of another.
+    """
+    _db_config(db)
+    path = RESULTS_DIR / f"{db.lower()}.json"
+    if not path.exists():
+        raise HTTPException(404, f"{db} was never evaluated: make eval DB={db}")
+    with tempfile.TemporaryDirectory() as folder:
+        html = build_dashboard([path], Path(folder) / "dashboard.html").read_text()
+    return HTMLResponse(html)

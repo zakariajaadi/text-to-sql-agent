@@ -117,6 +117,7 @@ body {
 .btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
 .btn.ghost:hover { background: var(--hover); }
 .btn.small { padding: 3px 10px; font-size: 0.8rem; }
+a.btn { display: inline-block; text-decoration: none; }
 input[type="search"] {
   font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 6px 12px; width: 220px; max-width: 100%;
@@ -342,6 +343,23 @@ body[data-step="metrics"] #select-all { visibility: hidden; }
 .mline.head { font-size: 0.75rem; color: var(--muted); padding-block: 9px; }
 .mline.warn { background: var(--warn-soft); }
 
+/* ── Index: what the agent reads of each table, against the files today ── */
+body[data-step="index"] .row input, body[data-step="index"] #select-all { visibility: hidden; }
+.mline.bad { background: var(--bad-soft); }
+.mline.bad .muted-text { color: var(--bad-ink); }
+.mline.with-link { grid-template-columns: 124px 196px minmax(0, 1fr) auto; }
+.mline .mono, .rule-note .mono { font-family: var(--font-mono); font-size: 0.78rem; }
+.xline {
+  display: grid; grid-template-columns: minmax(0, 1fr) 110px 170px; gap: 12px; align-items: center;
+  padding: 7px 14px; border-bottom: 1px solid var(--line); font-size: 0.85rem;
+}
+.xline:last-child { border-bottom: 0; }
+.xline.head { font-size: 0.75rem; color: var(--muted); padding-block: 9px; }
+.xline .mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+.xline.warn { background: var(--warn-soft); }
+.xline.hidden-col > .cell:first-child, .xline.hidden-col .xvalues { color: var(--muted); }
+.xvalues { text-align: right; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+
 /* ── Job ────────────────────────────────────────────── */
 .job { padding: 12px 16px; }
 .job-head { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; flex-wrap: wrap; }
@@ -380,6 +398,10 @@ body[data-step="metrics"] #select-all { visibility: hidden; }
   .mline { grid-template-columns: minmax(0, 1fr) auto; }
   .mline > :nth-child(3) { grid-column: 1 / -1; }
   .mline.head > :nth-child(3) { display: none; }
+  .mline.with-link { grid-template-columns: minmax(0, 1fr) auto; }
+  .mline.with-link > .btn { grid-column: 1 / -1; justify-self: start; }
+  .xline { grid-template-columns: minmax(0, 1fr) auto; }
+  .xline > :nth-child(2) { display: none; }
   /* the name of the current step only, the others as dots: one line */
   .stepper li:not(.on) { font-size: 0; gap: 0; }
   .stepper li:not(:last-child)::after { width: 10px; margin-left: 6px; }

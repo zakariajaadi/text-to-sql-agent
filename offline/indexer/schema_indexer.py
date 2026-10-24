@@ -11,9 +11,11 @@ semantic_layer/<db>/tables.yaml, the values of its categorical columns are read 
 database, and undocumented tables are indexed with their raw DDL.
 
 Run it last, once the generated YAML files are reviewed (see offline/cli.py).
-Pipeline order: fetch_values → build_documents → index → index_values
+Pipeline order: fetch_values → build_documents → index → index_values, then the trace of the run
+(offline/indexer/trace.py), read by the studio.
 """
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from langchain_core.documents import Document
@@ -28,6 +30,7 @@ from offline.indexer.categorical_values import (
     fetch_categorical_columns_values,
     fits_in_prompt,
 )
+from offline.indexer.trace import write_trace
 from resources import db_registry, vector_store
 
 
@@ -181,8 +184,34 @@ class SchemaIndexer:
         }
         write_value_index(self.db_name, values, inline)
 
+    def trace(self, documents: list[Document], values: dict[str, dict[str, dict[str, int]]],
+              semantics: dict, fk_relations: list[tuple[str, str]]) -> dict:
+        """
+        What went into each document (offline/indexer/trace.py): the semantic layer read when the run
+        started, the columns the document shows, the number of values indexed. Never a value.
+
+        semantics, fk_relations: read before the documents are built. A file corrected during the run
+        then shows as changed since the index, never the reverse.
+        """
+        tables = {}
+        for document in documents:
+            table = document.metadata["table_name"]
+            tables[table] = {
+                "semantics": semantics.get(table),
+                "relations": [[source, target] for source, target in fk_relations
+                              if table in (source.split(".")[0], target.split(".")[0])],
+                "columns":   get_column_types(document.page_content),
+                "chars":     len(document.page_content),
+                "values":    {column: {"count": len(counts), "inline": fits_in_prompt(counts)}
+                              for column, counts in values.get(table, {}).items()},
+            }
+        return {"built_at": time.time(), "sample_rows": cfg.get_db(self.db_name).sample_rows, "tables": tables}
+
     def run(self):
-        """Run the full pipeline: fetch_values → build_documents → index → index_values."""
-        values = self.fetch_values()
-        self.index(self.build_documents(values))
+        """Run the full pipeline: fetch_values → build_documents → index → index_values, then write its trace."""
+        semantics, fk_relations = load_semantics(self.db_name), load_fk_relations(self.db_name)
+        values    = self.fetch_values()
+        documents = self.build_documents(values)
+        self.index(documents)
         self.index_values(values)
+        write_trace(self.db_name, self.trace(documents, values, semantics, fk_relations))

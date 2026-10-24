@@ -6,7 +6,7 @@ Makefile runs, one job at a time (a Hive or Impala job at a time, and one writer
 The studio process stays light (no model, no Chroma) and a job can be stopped.
 
 The output is kept line by line, its colors stripped; the lines of the CLI give the progress
-("Profiling: <table>", "Not profiled: <table>").
+("Profiling: <table>", "Not profiled: <table>", "Fetching values: <table>", "[3/23] <question>").
 """
 
 import os
@@ -29,6 +29,12 @@ LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\d (?P<time>\d\d:\d\d:\d\d) \| (?P<level>\
 STARTED  = re.compile(r"\] (?:Profiling|Describing): (?P<table>\S+)$")
 FAILED   = re.compile(r"\] Not profiled: (?P<table>\S+) ")
 CHECKING = "] Checking: "   # a relation measured on the data (offline/semantic_gen/relationships.py)
+# The index (offline/indexer/schema_indexer.py): the values read table after table, then the documents
+# built and written into Chroma, then the value index
+FETCHING = re.compile(r"\] Fetching values: (?P<table>\S+) \(")
+PHASES   = (("] Built: ", "documents"), (" schemas to Chroma.", "values"))
+# A question of the eval asked to the agent (offline/eval/run.py)
+QUESTION = re.compile(r"^\[(?P<n>\d+)/(?P<total>\d+)\] ")
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
 NOT_CANCELLED = "the running query could not be cancelled"
@@ -53,6 +59,8 @@ class Job:
     failed: list[str] = field(default_factory=list)
     started_tables: list[str] = field(default_factory=list)   # every table started, in order
     checked: int = 0                                          # relations measured on the data
+    phase: str | None = None                                  # index: "documents", then "values" (PHASES)
+    progress: list[int] | None = None                         # eval: [question, questions]
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -68,11 +76,19 @@ class Job:
         match = LOG_LINE.match(text)
         line  = match.groupdict() if match else {"time": None, "level": None, "message": text}
         message = line["message"]
-        if started := STARTED.search(message):
+        phase = next((name for marker, name in PHASES if marker in message), None)
+        if started := STARTED.search(message) or FETCHING.search(message):
             self.started_tables.append(started["table"])
             if self.current and self.current not in self.failed:
                 self.done.append(self.current)
             self.current, self.current_since = started["table"], time.time()
+        elif phase:
+            # The values are all read: the last table is done
+            if self.current and self.current not in self.failed:
+                self.done.append(self.current)
+            self.current, self.current_since, self.phase = None, None, phase
+        elif question := QUESTION.match(message):
+            self.progress = [int(question["n"]), int(question["total"])]
         elif failed := FAILED.search(message):
             self.failed.append(failed["table"])
         elif CHECKING in message:
@@ -101,7 +117,7 @@ class Job:
             "running": self.running, "returncode": self.returncode, "stopped": self.stopped,
             "stopped_at": self.stopped_at, "cancel": self.cancel,
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
-            "started_tables": self.started_tables, "checked": self.checked,
+            "started_tables": self.started_tables, "checked": self.checked, "phase": self.phase, "progress": self.progress,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 
@@ -114,6 +130,16 @@ def profile_command(db: str, tables: list[str] | None, missing: bool) -> list[st
     elif missing:
         command.append("--missing")
     return command
+
+
+def index_command(db: str) -> list[str]:
+    """The CLI command of `make index`: the documents of the tables and the value index, written again."""
+    return [sys.executable, "-m", "offline.cli", "index", "--db", db]
+
+
+def eval_command(db: str) -> list[str]:
+    """The command of `make eval`: the questions of offline/eval/datasets/<db>.yaml asked to the agent."""
+    return [sys.executable, "-m", "offline.eval.run", "--db", db]
 
 
 def metrics_command(db: str) -> list[str]:

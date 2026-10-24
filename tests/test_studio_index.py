@@ -1,0 +1,224 @@
+"""Index screen of the studio (offline/studio/index.py): the trace of the index against the files today, the metrics
+checked against the documents, the progress of an index and of an eval, the routes."""
+
+import json
+from datetime import date
+from types import SimpleNamespace
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+import lib.metrics
+import lib.semantics
+from offline.indexer import trace as trace_module
+from offline.semantic_gen import utils
+from offline.studio import app as studio_app
+from offline.studio.index import (
+    CHANGED,
+    FRESH,
+    MISSING,
+    UNKNOWN,
+    changes,
+    document_view,
+    eval_run,
+    index_view,
+    metric_errors,
+)
+from offline.studio.jobs import Job
+
+INVOICE = {
+    "description": "One row per purchase.",
+    "data_as_of": date(2024, 7, 10),
+    "columns": {"invoiceid": "Invoice id.", "total": "Amount.", "city": "Billing city.", "email": "Email."},
+    "formats": {"total": "decimal"},
+    "exclude_columns": ["email"],
+    "categorical_columns": ["city", "country"],
+}
+RELATIONS = [("invoice.customerid", "customer.customerid"), ("album.artistid", "artist.artistid")]
+DB_COLUMNS = {
+    "invoice":  ["invoiceid", "customerid", "total", "city", "country", "email"],
+    "customer": ["customerid", "name"],
+}
+
+
+def make_trace(semantics: dict | None = None) -> dict:
+    """The trace an index writes, read back from its JSON (a date becomes a string)."""
+    trace = {
+        "built_at": 1000.0, "sample_rows": 3,
+        "tables": {
+            "invoice": {
+                "semantics": semantics or INVOICE,
+                "relations": [["invoice.customerid", "customer.customerid"]],
+                "columns": {"invoiceid": "INT", "customerid": "INT", "total": "STRING", "city": "STRING", "country": "STRING"},
+                "chars": 900,
+                "values": {"city": {"count": 53, "inline": False}},   # country: no value read
+            },
+            "customer": {"semantics": None, "relations": [], "columns": {"customerid": "INT", "name": "STRING"},
+                         "chars": 120, "values": {}},
+            "legacy": {"semantics": None, "relations": [], "columns": {"id": "INT"}, "chars": 40, "values": {}},
+        },
+    }
+    return json.loads(json.dumps(trace, default=str))
+
+
+# ------------------------------------------------------------
+# The trace of an index
+# ------------------------------------------------------------
+
+def test_the_trace_is_written_and_read_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(trace_module, "trace_path", lambda db: tmp_path / f"{db}.index.json")
+    assert trace_module.read_trace("shop") is None
+    trace_module.write_trace("shop", {"built_at": 1.0, "tables": {"invoice": {"semantics": INVOICE}}})
+    assert trace_module.read_trace("shop")["tables"]["invoice"]["semantics"]["data_as_of"] == "2024-07-10"
+    assert [p.name for p in tmp_path.iterdir()] == ["shop.index.json"]   # no temporary file left
+
+
+# ------------------------------------------------------------
+# What changed in a document since the index
+# ------------------------------------------------------------
+
+def test_nothing_changed_when_the_files_are_the_ones_indexed():
+    # A date read by YAML against its string in the trace; the relations in another order
+    assert changes(make_trace()["tables"]["invoice"], INVOICE, [["invoice.customerid", "customer.customerid"]],
+                   DB_COLUMNS["invoice"]) == []
+
+
+def test_each_change_of_the_semantic_layer_is_named():
+    indexed = make_trace()["tables"]["invoice"]
+    entry = {**INVOICE, "description": "Purchases.", "columns": {**INVOICE["columns"], "total": "Amount with taxes."},
+             "exclude_columns": ["email", "city"], "categorical_columns": ["city", "country", "total"],
+             "keep_as_text": ["invoiceid"]}   # an exception to the profile: not in the document
+    relations = [["invoice.customerid", "customer.customerid"], ["invoiceline.invoiceid", "invoice.invoiceid"]]
+    assert changes(indexed, entry, relations, DB_COLUMNS["invoice"]) == [
+        {"kind": "description"},
+        {"kind": "columns", "columns": ["total"]},   # city, hidden now, is not counted twice
+        {"kind": "hidden", "columns": ["city"]},
+        {"kind": "categorical", "added": ["total"], "removed": ["city"]},
+        {"kind": "relations", "added": [["invoiceline.invoiceid", "invoice.invoiceid"]], "removed": []},
+    ]
+
+
+def test_the_columns_of_the_database_against_the_document():
+    indexed = make_trace()["tables"]["invoice"]
+    # A column added to the table (email stays hidden), one the document lists is gone
+    db_columns = ["invoiceid", "customerid", "total", "city", "email", "channel"]
+    assert changes(indexed, INVOICE, [["invoice.customerid", "customer.customerid"]], db_columns) == [
+        {"kind": "db_columns", "added": ["channel"], "removed": ["country"]}]
+    # A raw DDL described since: its relations didn't count, now they do
+    raw = make_trace()["tables"]["customer"]
+    assert changes(raw, {"description": "Customers."}, [], ["customerid", "name"]) == [{"kind": "described"}]
+
+
+# ------------------------------------------------------------
+# The screen
+# ------------------------------------------------------------
+
+def test_the_index_of_a_database_against_its_files():
+    semantics = {"invoice": {**INVOICE, "data_as_of": "2024-08-01"}}
+    metrics = {"revenue": {"description": "Invoiced", "expr": "SUM(invoice.total)"},
+               "mails": {"description": "Mails", "expr": "COUNT(DISTINCT invoice.email)"}}
+    view = index_view(["invoice", "customer", "track"], DB_COLUMNS, semantics, RELATIONS, make_trace(), metrics,
+                      "hive", None)
+    assert [(r["name"], r["status"]) for r in view["tables"]] == [("invoice", CHANGED), ("customer", FRESH), ("track", MISSING)]
+    assert view["tables"][0]["changes"] == [{"kind": "data_as_of"}]
+    assert view["gone"] == ["legacy"] and view["raw"] == ["customer", "legacy"] and view["documents"] == 3
+    assert view["searched"] == {"columns": 1, "values": 53} and view["inline"] == {"columns": 0, "values": 0}
+    assert view["dropped"] == ["invoice.country"]
+    # email is hidden: not in the document, the agent would refuse the metric at startup
+    assert view["metrics"] == {"total": 2, "errors": [{"name": "mails", "detail": "unknown column 'invoice.email'"}]}
+
+    # Never indexed since the traces exist: nothing is known of the tables
+    view = index_view(["invoice"], DB_COLUMNS, semantics, RELATIONS, None, metrics, "hive", None)
+    assert view["trace"] is False and view["tables"][0]["status"] == UNKNOWN and "metrics" not in view
+
+
+def test_the_metrics_are_checked_against_the_documents_as_the_agent_does():
+    trace = make_trace()
+    assert metric_errors({"ok": {"description": "d", "expr": "SUM(invoice.total)", "time_dimension": "invoice.total"}},
+                         trace, "hive") == []
+    assert metric_errors({"x": {"description": "d", "expr": "SUM(track.milliseconds)"}}, trace, "hive") == [
+        {"name": "x", "detail": "unknown table 'track'"}]
+
+
+def test_the_document_of_a_table_column_by_column():
+    db_columns = [{"name": c, "type": "VARCHAR"} for c in ["invoiceid", "customerid", "total", "city", "email", "channel"]]
+    view = document_view("invoice", make_trace(), INVOICE, RELATIONS, db_columns)
+    assert view["status"] == CHANGED and view["joins"] == 1 and view["data_as_of"] == "2024-07-10"
+    lines = {c["column"]: c for c in view["columns"]}
+    assert lines["total"]["format"] == "decimal" and lines["total"]["type"] == "STRING"   # the type the document shows
+    assert lines["city"]["values"] == {"count": 53, "inline": False}
+    assert lines["country"]["values"] == {"dropped": True} and lines["country"]["gone"] is True
+    assert lines["email"]["hidden"] is True and lines["channel"]["added"] is True
+    assert document_view("track", make_trace(), None, RELATIONS, None)["status"] == MISSING
+
+
+def test_the_last_eval_of_a_database():
+    results = {"meta": {"run_at": "2026-10-22T20:00"},
+               "results": [{"exec_exact": 1.0}, {"exec_exact": 0.0}, {"exec_exact": None}, {"exec_exact": 1.0}]}
+    run = eval_run(results, 5.0)
+    assert (run["questions"], run["scored"], run["exact"]) == (4, 3, 2) and run["at"] > 5.0
+    assert eval_run({"results": []}, 5.0)["at"] == 5.0 and eval_run(None, None) is None
+
+
+# ------------------------------------------------------------
+# The progress of an index and of an eval, read from their lines
+# ------------------------------------------------------------
+
+def line(message: str) -> str:
+    return f"2026-10-24 11:02:03 | INFO     | offline.indexer.schema_indexer:run:12 - {message}"
+
+
+def test_the_progress_of_an_index():
+    job = Job(id=1, db="Chinook", step="index", tables=None, command=["python"])
+    job.add_line(line("[Chinook] Fetching values: album (0 column(s))"))
+    job.add_line(line("[Chinook] Fetching values: customer (3 column(s))"))
+    assert job.current == "customer" and job.done == ["album"]
+    job.add_line(line("[Chinook] Built: album"))
+    assert (job.current, job.phase, job.done) == (None, "documents", ["album", "customer"])
+    job.add_line(line("[Chinook] Indexed 14 schemas to Chroma."))
+    assert job.phase == "values"
+
+
+def test_the_progress_of_an_eval():
+    job = Job(id=1, db="Chinook", step="eval", tables=None, command=["python"])
+    job.add_line(line("[3/23] How many customers per country?"))
+    assert job.progress == [3, 23] and job.to_dict()["progress"] == [3, 23]
+
+
+# ------------------------------------------------------------
+# The routes
+# ------------------------------------------------------------
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    for module in (lib.semantics, lib.metrics, studio_app):
+        monkeypatch.setattr(module, "SEMANTIC_LAYER_DIR", tmp_path)
+    monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(
+        exclude_personal_data=False, dialect="hive", sample_rows=0))
+    columns = {table: [{"name": c, "type": "STRING"} for c in names] for table, names in DB_COLUMNS.items()}
+    monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: {
+        "tables": list(DB_COLUMNS), "columns": columns, "source": "database", "error": None, "read_at": 0})
+    monkeypatch.setattr(studio_app, "read_trace", lambda db: make_trace())
+    monkeypatch.setattr(studio_app, "value_index_path", lambda db: tmp_path / "none.sqlite")
+    monkeypatch.setattr(studio_app, "RESULTS_DIR", tmp_path / "results")
+    monkeypatch.setattr(studio_app, "DATASETS_DIR", tmp_path / "datasets")
+    (tmp_path / "shop").mkdir()
+    (tmp_path / "shop" / "tables.yaml").write_text(yaml.safe_dump({"invoice": INVOICE}))
+    utils.write_metrics_file("shop", {"revenue": {"description": "Invoiced", "expr": "SUM(invoice.total)"}}, [])
+    return TestClient(studio_app.app)
+
+
+def test_the_index_screen_and_a_document(client, tmp_path):
+    view = client.get("/api/db/shop/index").json()
+    assert [(r["name"], r["status"]) for r in view["tables"]] == [("invoice", CHANGED), ("customer", FRESH)]
+    assert view["sample_rows"] == 3 and view["sample_rows_now"] == 0 and view["dataset"] is False
+    assert view["eval"] is None and view["values_at"] is None and "tables.yaml" in view["files"]
+
+    document = client.get("/api/db/shop/index/legacy").json()
+    assert document["gone"] is True and document["chars"] == 40
+    assert client.get("/api/db/shop/index/nothing").status_code == 404
+
+    # No questions: no eval to run, no dashboard to open
+    assert client.post("/api/db/shop/eval/run").status_code == 400
+    assert client.get("/eval/shop").status_code == 404
