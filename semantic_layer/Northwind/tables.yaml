@@ -5,18 +5,32 @@
 #                          whose values are read from the database at index time.
 #                          Remove a column from the list to reject it: it won't come back
 #   read_mode, key_columns, partition_column, version_column : Hive table layout
+#   formats              : (manual) columns whose values are stored as text,
+#                          {column: "date <pattern>" (e.g. date dd/MM/yyyy) or "decimal"}
+#   exclude_columns      : (manual) columns the agent never sees (empty, technical, personal data):
+#                          out of the documents, the sample rows and the LLM prompts
+#   keep_columns         : (manual) columns the profile proposed to exclude, kept visible on purpose
+#   keep_as_text         : (manual) columns the profile reads as dates or numbers, kept as text on purpose
+#   data_as_of          : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
+#   table_type           : (studio) the type of the table chosen by hand (events, entity, reference, bridge),
+#                          over the one the studio detects from the profile and the relations
+#   edited_description, edited_columns       : (studio) descriptions corrected by hand, kept when the
+#                          table is described again (--fresh), unless --replace-edited
+#   rewritten_description, rewritten_columns : descriptions the LLM wrote again over another text
+#                          (--fresh), to read again; the studio drops them once read
 
 categories:
-  description: One row per product category used to classify items in the inventory.
+  description: One row per product category.
   categorical_columns: [categoryname]
   columns:
-    categoryid: Unique identifier for the category.
-    categoryname: Name of the category.
-    description: Brief summary of the types of products included in the category.
+    categoryid: Unique category identifier.
+    categoryname: Name of the product category.
+    description: Brief summary of the category contents.
 
 customercustomerdemo:
   description: Mapping table linking customers to their specific demographic categories.
   categorical_columns: []
+  exclude_columns: [customertypeid, customerid]
   columns:
     customerid: Unique identifier for the customer.
     customertypeid: Identifier for the demographic category assigned to the customer.
@@ -24,13 +38,17 @@ customercustomerdemo:
 customerdemographics:
   description: One row per customer demographic category used to classify customers.
   categorical_columns: []
+  exclude_columns: [customertypeid, customerdesc]
   columns:
     customertypeid: Unique identifier for the customer demographic type.
     customerdesc: Detailed description of the customer demographic category.
+  edited_columns: [customertypeid]
 
 customers:
   description: One row per customer registered in the system.
   categorical_columns: [contacttitle, city, region, country]
+  exclude_columns: []
+  keep_columns: [address]
   columns:
     customerid: Unique five-character alphanumeric code identifying the customer.
     companyname: Name of the customer company.
@@ -47,6 +65,9 @@ customers:
 employees:
   description: One row per company employee, containing their personal details, contact information, and organizational hierarchy.
   categorical_columns: [title, titleofcourtesy, city, region, country]
+  formats:
+    extension: decimal
+  exclude_columns: [address]
   columns:
     employeeid: Unique identifier for the employee.
     lastname: Last name.

@@ -1,7 +1,8 @@
-# Data profile, measured by `make profile` (no LLM): overwritten at each run, never edited.
+# Data profile, measured by `make profile` (no LLM): the tables measured replace their entry, never edited.
 # Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
 #   rows, keys          : row count, and per identifier-like column its non-null and distinct values
 #   text_columns        : filled share and main value shapes (digits → 9, letters → a) on a sample
+#   filled              : filled share of the other columns (numbers, dates...), on every row
 #   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
 
 categories:
@@ -227,6 +228,10 @@ employees:
       filled: 1.0
       shapes:
         a://a/a/a.a: 1.0
+  filled:
+    birthdate: 1.0
+    hiredate: 1.0
+    reportsto: 0.889
   formats:
     extension: decimal
   exclude:
@@ -320,6 +325,12 @@ orders:
       filled: 1.0
       shapes:
         a: 1.0
+  filled:
+    orderdate: 0.949
+    requireddate: 0.949
+    shippeddate: 0.949
+    shipvia: 1.0
+    freight: 1.0
 products:
   rows: 77
   keys:

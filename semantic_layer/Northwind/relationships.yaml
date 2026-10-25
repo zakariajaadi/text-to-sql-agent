@@ -5,17 +5,17 @@
 # Table and column names must match the engine (lowercase for Hive).
 
 relations:
-- {from: customercustomerdemo.customerid, to: customers.customerid}
-- {from: customercustomerdemo.customertypeid, to: customerdemographics.customertypeid}
-- {from: employeeterritories.employeeid, to: employees.employeeid}
-- {from: employeeterritories.territoryid, to: territories.territoryid}
-- {from: employees.reportsto, to: employees.employeeid}
-- {from: order_details.orderid, to: orders.orderid}
-- {from: order_details.productid, to: products.productid}
-- {from: orders.customerid, to: customers.customerid}
-- {from: orders.employeeid, to: employees.employeeid}
-- {from: orders.shipvia, to: shippers.shipperid}
-- {from: products.supplierid, to: suppliers.supplierid}
-- {from: products.categoryid, to: categories.categoryid}
-- {from: territories.regionid, to: regions.regionid}
+- {from: customercustomerdemo.customerid, to: customers.customerid, found: null}
+- {from: customercustomerdemo.customertypeid, to: customerdemographics.customertypeid, found: null}
+- {from: employeeterritories.employeeid, to: employees.employeeid, found: 1.0}
+- {from: employeeterritories.territoryid, to: territories.territoryid, found: 1.0}
+- {from: employees.reportsto, to: employees.employeeid, found: 1.0}
+- {from: order_details.orderid, to: orders.orderid, found: 1.0}
+- {from: order_details.productid, to: products.productid, found: 1.0}
+- {from: orders.customerid, to: customers.customerid, found: 1.0}
+- {from: orders.employeeid, to: employees.employeeid, found: 1.0}
+- {from: orders.shipvia, to: shippers.shipperid, found: 1.0}
+- {from: products.supplierid, to: suppliers.supplierid, found: 1.0}
+- {from: products.categoryid, to: categories.categoryid, found: 1.0}
+- {from: territories.regionid, to: regions.regionid, found: 1.0}
 ignore: []

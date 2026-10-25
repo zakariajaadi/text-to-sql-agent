@@ -13,12 +13,6 @@ revenue:
   expr: SUM(order_details.unitprice * order_details.quantity * (1 - order_details.discount))
   time_dimension: orders.orderdate
 
-order_count:
-  description: Number of distinct orders.
-  synonyms: [number of orders, orders placed, nombre de commandes, commandes passées]
-  expr: COUNT(DISTINCT orders.orderid)
-  time_dimension: orders.orderdate
-
 average_order_value:
   description: Average revenue of an order (per order, not per order line), discounts applied.
   synonyms: [AOV, average basket, average order, panier moyen, commande moyenne]
@@ -31,4 +25,46 @@ freight_cost:
   expr: SUM(orders.freight)
   time_dimension: orders.orderdate
 
-ignore: []
+product_quantity:
+  description: Total number of product units sold across all orders.
+  synonyms: [units sold, items sold, product volume, quantité de produits vendus, volume de produits, articles vendus]
+  expr: SUM(order_details.quantity)
+  time_dimension: orders.orderdate
+
+average_discount_percentage:
+  description: The average discount percentage applied across all order line items.
+  synonyms: [avg discount, mean discount, taux de remise moyen, pourcentage de remise moyen]
+  expr: AVG(order_details.discount)
+  time_dimension: orders.orderdate
+
+active_products_sold:
+  description: The number of unique active products sold in orders.
+  synonyms: [active products, non-discontinued products sold, produits actifs vendus, produits non-arrêtés vendus]
+  expr: COUNT(DISTINCT CASE WHEN products.discontinued = '0' THEN order_details.productid END)
+  time_dimension: orders.orderdate
+
+average_product_unit_price:
+  description: The average unit price of products as recorded in order line items, before any discounts.
+  synonyms: [avg unit price, mean product price, prix unitaire moyen, prix moyen du produit]
+  expr: AVG(order_details.unitprice)
+  time_dimension: orders.orderdate
+
+average_quantity_per_line:
+  description: The average number of units per product line item in an order.
+  synonyms: [avg line quantity, quantity per line, quantité moyenne par ligne, moyenne quantité ligne]
+  expr: AVG(order_details.quantity)
+  time_dimension: orders.orderdate
+
+orders_with_freight:
+  description: The count of unique orders that have a recorded freight cost greater than zero.
+  synonyms: [freighted orders, orders with shipping, commandes avec frais de port, commandes expédiées]
+  expr: COUNT(DISTINCT CASE WHEN orders.freight > 0 THEN orders.orderid END)
+  time_dimension: orders.orderdate
+
+average_freight_per_order:
+  description: The average freight cost for orders that have a recorded freight cost greater than zero.
+  synonyms: [avg shipping cost per order, mean freight per order, frais de port moyen par commande, coût d'expédition moyen par commande]
+  expr: SUM(orders.freight) / COUNT(DISTINCT CASE WHEN orders.freight > 0 THEN orders.orderid END)
+  time_dimension: orders.orderdate
+
+ignore: [order_count]
