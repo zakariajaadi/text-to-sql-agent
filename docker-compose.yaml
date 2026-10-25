@@ -13,6 +13,7 @@ services:
   # Chainlit app
   app:
     build: .
+    image: text-to-sql-dev
     container_name: chainlit-app
     ports:
       - "8000:8000"
@@ -41,8 +42,33 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
-  
-  
+
+  # Studio of the semantic layer (offline/studio): the same image as the app, on its own port.
+  # It runs the pipeline steps in its container and writes semantic_layer/ like the CLI.
+  #   docker compose up -d studio             # studio on http://localhost:8100 (not with `make studio`: same port)
+  studio:
+    build: .
+    image: text-to-sql-dev
+    container_name: studio
+    command: ["python", "-m", "uvicorn", "offline.studio.app:app", "--host", "0.0.0.0", "--port", "8100",
+              "--reload", "--reload-dir", "offline/studio"]
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./semantic_layer:/app/semantic_layer  # written by the generators
+      - ./offline:/app/offline                # generators, indexer, eval (not in the image)
+    env_file:
+      - .env
+    environment:
+      HIVE_HOST: hive
+    depends_on:
+      hive:
+        condition: service_healthy
+
+
   # Hive (HiveServer2 + embedded metastore) for local dev
   hive:
     image: apache/hive:4.0.1
