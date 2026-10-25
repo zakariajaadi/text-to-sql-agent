@@ -8,8 +8,9 @@ with their evidence, the map of the tables they join, and the join path the agen
     when a relation is added in the studio), and the cardinality read from the keys of the profile;
     a relation added on purpose to a column that is not a key carries its fanout (rows of `to` each
     row of `from` joins, on average) and the cardinality measured then (links), and stays in amber
-  - map: the tables laid out in layers (grandalf, Sugiyama), the referenced tables under the ones
-    pointing to them; each group of joined tables side by side, the isolated tables on a last row
+  - map: the tables laid out in layers from left to right (grandalf, Sugiyama), the referenced tables on the
+    right of the ones pointing to them; each group of joined tables under the previous one, the isolated
+    tables on a last row
   - path: the tables the agent adds between two (lib/fk_graph.py, the same functions), and the
     number of joins, beyond MAX_BRIDGE_JOINS the agent does not bridge
 """
@@ -23,6 +24,8 @@ KEY_OVERLAP = 0.9    # under it a relation is shown in amber, for a human to kee
 NODE_HEIGHT = 26
 CHAR_WIDTH  = 7      # width of a character of the table names (monospace, 11px)
 GAP         = 40     # between two groups of joined tables, and around the map
+COLUMN_GAP  = 96     # between two columns of tables: room for the curves of the relations
+ROW_GAP     = 14     # between two tables of a column
 MAX_PATH    = 8      # joins the page looks for a path, beyond the agent's MAX_BRIDGE_JOINS
 
 
@@ -40,7 +43,9 @@ def side(ref: str, profile: dict) -> str:
 def relation_row(relation: dict, profile: dict) -> dict:
     """
     A relation as the page shows it: its tables, evidence, cardinality and origin. Weak (amber) when few of
-    its values are found, or when it joins several rows of `to` to a row of `from` (fanout).
+    its values are found, or when it joins several rows of `to` to a row of `from` (fanout). Empty when it was
+    measured but `from` holds no value (found: null in relationships.yaml): nothing to compare, unlike a
+    relation never measured (no found).
     """
     found, fanout = relation.get("found"), relation.get("fanout")
     return {
@@ -49,6 +54,7 @@ def relation_row(relation: dict, profile: dict) -> dict:
         "source": relation["from"].split(".")[0],
         "target": relation["to"].split(".")[0],
         "found":  found,
+        "empty":  "found" in relation and found is None,
         "fanout": fanout,
         "weak":   (found is not None and found < KEY_OVERLAP) or (fanout or 0) > 1,
         "links":  relation.get("links") or f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
@@ -82,10 +88,10 @@ def join_path(a: str, b: str, graph: dict[str, list[str]]) -> dict:
 
 
 class _View:
-    """Size of a node for grandalf, and the position it sets."""
+    """Size of a node for grandalf (w across a layer, h along the layers), and the position it sets."""
 
-    def __init__(self, width: int):
-        self.w, self.h, self.xy = width, NODE_HEIGHT, (0, 0)
+    def __init__(self, w: int, h: int):
+        self.w, self.h, self.xy = w, h, (0, 0)
 
 
 def node_width(table: str) -> int:
@@ -95,12 +101,14 @@ def node_width(table: str) -> int:
 def layout(tables: list[str], relations: list[dict]) -> dict:
     """
     Positions of the tables on the map: {"nodes": {table: {x, y, w, h}} (top-left corner), "width", "height"}.
-    The tables pointing to another one above it, each group of joined tables beside the previous one,
-    the isolated tables in a row under them all.
+    From left to right: a table pointing to another one on its left, the tables of a column aligned on their
+    left side; each group of joined tables under the previous one, the isolated tables in a row under them all.
+    grandalf lays its layers out from top to bottom: each table is given to it on its side (its width along
+    the layers), and its positions are turned a quarter.
     """
     vertices = {table: Vertex(table) for table in tables}
     for table, vertex in vertices.items():
-        vertex.view = _View(node_width(table))
+        vertex.view = _View(NODE_HEIGHT, node_width(table))
     edges = []
     for r in relations:
         source, target = r["from"].split(".")[0], r["to"].split(".")[0]
@@ -108,36 +116,40 @@ def layout(tables: list[str], relations: list[dict]) -> dict:
             edges.append(Edge(vertices[source], vertices[target]))
     graph = Graph(list(vertices.values()), edges)
 
-    nodes, x, height = {}, GAP, GAP
+    nodes, y, width = {}, GAP, 600
     groups = sorted((c for c in graph.C if len(c.sV) > 1), key=lambda c: -len(c.sV))
     for group in groups:
         sugiyama = SugiyamaLayout(group)
+        sugiyama.xspace, sugiyama.yspace = ROW_GAP, COLUMN_GAP
         sugiyama.init_all()
         sugiyama.draw()
-        left = min(v.view.xy[0] - v.view.w / 2 for v in group.sV)
-        top  = min(v.view.xy[1] - v.view.h / 2 for v in group.sV)
-        right = 0
+        # A layer of grandalf is a column of the map, its tables aligned on the left side of the widest
+        column = {}
         for v in group.sV:
-            nx = x + v.view.xy[0] - v.view.w / 2 - left
-            ny = GAP + v.view.xy[1] - v.view.h / 2 - top
-            nodes[v.data] = {"x": round(nx), "y": round(ny), "w": v.view.w, "h": NODE_HEIGHT}
-            right  = max(right, nx + v.view.w)
-            height = max(height, ny + NODE_HEIGHT)
-        x = right + GAP
+            center = round(v.view.xy[1])
+            column[center] = min(column.get(center, center), v.view.xy[1] - v.view.h / 2)
+        left = min(column.values())
+        top  = min(v.view.xy[0] - v.view.w / 2 for v in group.sV)
+        bottom = y
+        for v in group.sV:
+            nx = GAP + column[round(v.view.xy[1])] - left
+            ny = y + v.view.xy[0] - v.view.w / 2 - top
+            nodes[v.data] = {"x": round(nx), "y": round(ny), "w": v.view.h, "h": NODE_HEIGHT}
+            width  = max(width, nx + v.view.h + GAP)
+            bottom = max(bottom, ny + NODE_HEIGHT)
+        y = bottom + GAP
 
     # The isolated tables: a row under the groups, wrapped at the width of the map
-    width = max(x, 600)
     isolated = [t for t in tables if t not in nodes]
-    row_x, row_y = GAP, height + (GAP if nodes else 0)
+    row_x, row_y = GAP, y
     for table in isolated:
         w = node_width(table)
         if row_x + w > width - GAP and row_x > GAP:
-            row_x, row_y = GAP, row_y + NODE_HEIGHT + 14
+            row_x, row_y = GAP, row_y + NODE_HEIGHT + ROW_GAP
         nodes[table] = {"x": row_x, "y": row_y, "w": w, "h": NODE_HEIGHT}
-        row_x += w + 14
-    if isolated:
-        height = row_y + NODE_HEIGHT
-    return {"nodes": nodes, "width": round(width), "height": round(height + GAP)}
+        row_x += w + ROW_GAP
+    height = row_y + NODE_HEIGHT + GAP if isolated else y
+    return {"nodes": nodes, "width": round(width), "height": round(height)}
 
 
 def relations_view(tables: list[str], entry: dict, profile: dict) -> dict:
@@ -155,7 +167,7 @@ def relations_view(tables: list[str], entry: dict, profile: dict) -> dict:
         "counts":    counts,
         "isolated":  [t for t, n in counts.items() if not n],
         "weak":      sum(r["weak"] for r in relations),
-        "unchecked": sum(r["found"] is None for r in relations),
+        "unchecked": sum(r["found"] is None and not r["empty"] for r in relations),   # an empty one: nothing to measure
         "layout":    layout(tables, entry.get("relations") or []),
     }
 
@@ -191,7 +203,8 @@ def ignore_relation(entry: dict, source: str, target: str, ignore: bool = True) 
     take, put = ("relations", "ignore") if ignore else ("ignore", "relations")
     moved = [r for r in entry[take] if (r["from"], r["to"]) == (source, target)]
     if not moved:
-        raise ValueError(f"No relation {source} -> {target} in {take}")
+        where = "dans les relations" if ignore else "parmi les relations retirées"
+        raise ValueError(f"Pas de relation {source} → {target} {where}")
     entry[take] = [r for r in entry[take] if (r["from"], r["to"]) != (source, target)]
     entry[put].extend(moved)
     return entry

@@ -79,6 +79,8 @@ SEMANTICS_HEADER = """\
 #   keep_columns         : (manual) columns the profile proposed to exclude, kept visible on purpose
 #   keep_as_text         : (manual) columns the profile reads as dates or numbers, kept as text on purpose
 #   data_as_of          : (manual) date the data stops (YYYY-MM-DD), reference of relative periods
+#   table_type           : (studio) the type of the table chosen by hand (events, entity, reference, bridge),
+#                          over the one the studio detects from the profile and the relations
 #   edited_description, edited_columns       : (studio) descriptions corrected by hand, kept when the
 #                          table is described again (--fresh), unless --replace-edited
 #   rewritten_description, rewritten_columns : descriptions the LLM wrote again over another text
@@ -88,7 +90,7 @@ SEMANTICS_HEADER = """\
 
 # Key order of a table block in the YAML (unknown keys last)
 SEMANTICS_KEY_ORDER = [
-    "description", "data_as_of", "read_mode", "key_columns", "partition_column", "version_column",
+    "description", "data_as_of", "table_type", "read_mode", "key_columns", "partition_column", "version_column",
     "categorical_columns", "formats", "keep_as_text", "exclude_columns", "keep_columns", "columns",
     "edited_description", "edited_columns", "rewritten_description", "rewritten_columns",
 ]

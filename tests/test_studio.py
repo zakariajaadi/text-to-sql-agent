@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 import lib.semantics
 from offline.studio import app as studio_app
-from offline.studio.jobs import Job, profile_command, semantics_command
+from offline.studio.jobs import Job, JobRunner, profile_command, semantics_command
 from offline.studio.state import (
     edit_semantics,
     hide_personal,
@@ -169,8 +169,8 @@ def test_table_detail_one_line_per_column_of_the_database():
     assert (lines["id_client"]["filled"], lines["id_client"]["distinct"]) == (0.8, 40)
     assert lines["id_client"]["excluded"] and not lines["id_dossier"]["excluded"]
     assert lines["date_deblocage"] == {"column": "date_deblocage", "type": "STRING", "kind": "text", "filled": 0.99,
-                                       "distinct": None, "key": None, "format": None, "ambiguous": False,
-                                       "excluded": False, "personal": None, "proposals": []}
+                                       "distinct": None, "sampled": False, "key": None, "format": None,
+                                       "ambiguous": False, "excluded": False, "personal": None, "proposals": []}
     # without the database (unreachable): the columns the profile knows, a text column still said so
     lines = {c["column"]: c for c in table_detail("dossier", facts, entry, personal=False)["column_facts"]}
     assert list(lines)[:4] == ["id_dossier", "id_client", "date_deblocage", "montant"]
@@ -181,6 +181,30 @@ def test_table_detail_one_line_per_column_of_the_database():
     assert detail["detected"] == 1
     assert table_detail("agence", None, None, personal=False) == {"name": "agence", "profiled": False, "detected": 0,
                                                                   "unique_key": None, "column_facts": []}
+
+
+def test_table_detail_distinct_values_of_the_sample_and_an_older_profile():
+    facts = {"rows": 100, "keys": {"id_dossier": {"non_null": 100, "distinct": 100}},
+             "text_columns": {"id_dossier": {"filled": 1.0, "distinct": 98}, "statut": {"filled": 1.0, "distinct": 3}},
+             "filled": {"montant": 1.0}}
+    columns = [{"name": "id_dossier", "type": "STRING"}, {"name": "statut", "type": "STRING"},
+               {"name": "montant", "type": "DECIMAL(18, 2)"}]
+    detail = table_detail("dossier", facts, None, personal=False, db_columns=columns)
+    lines = {c["column"]: c for c in detail["column_facts"]}
+    # a key counted on the whole table, a text column on the sample, the same counts as the Semantics screen
+    assert (lines["id_dossier"]["distinct"], lines["id_dossier"]["sampled"]) == (100, False)
+    assert (lines["statut"]["distinct"], lines["statut"]["sampled"]) == (3, True)
+    assert (lines["montant"]["distinct"], lines["montant"]["sampled"]) == (None, False)
+    assert detail["outdated"] == []
+    # an older profiler: text columns without their distinct values, no filled share of the other columns, or both
+    older = {**facts, "text_columns": {"statut": {"filled": 1.0}}}
+    assert table_detail("dossier", older, None, False, columns)["outdated"] == ["distinct"]
+    unfilled = {key: value for key, value in facts.items() if key != "filled"}
+    assert table_detail("dossier", unfilled, None, False, columns)["outdated"] == ["filled"]
+    assert table_detail("dossier", {**unfilled, "text_columns": older["text_columns"]}, None, False, columns)["outdated"] \
+        == ["filled", "distinct"]
+    # keys and text columns only: no other column to fill
+    assert table_detail("dossier", unfilled, None, False, columns[:2])["outdated"] == []
 
 
 def test_format_share_and_unique_key():
@@ -244,6 +268,50 @@ def test_job_follows_the_progress_of_the_cli():
     assert [line["message"] for line in job.to_dict(since=4)["lines"]] == ["a raw traceback line"]
 
 
+def test_job_sums_what_the_profile_detected():
+    job = Job(id=1, db="awb", step="profile", tables=None, command=[])
+    assert job.to_dict()["detected"] == {"formats": 0, "empty": 0, "personal": 0}
+    for table, (formats, empty, personal) in (("dossier", (2, 1, 3)), ("client", (0, 0, 4))):
+        job.add_line(f"2026-10-24 10:00:01 | INFO     | offline.semantic_gen.profiling:profile_database:126 - "
+                     f"[awb] Detected in {table}: {formats} format(s), {empty} empty column(s), "
+                     f"{personal} personal data column(s)")
+    assert job.to_dict()["detected"] == {"formats": 2, "empty": 1, "personal": 7}
+
+
+def relations_line(message: str, level: str = "INFO") -> str:
+    return f"2026-10-24 13:39:02 | {level:<8} | offline.semantic_gen.relationships:infer_fk_relations:80 - {message}"
+
+
+def test_job_follows_a_search_of_relations():
+    job = Job(id=1, db="awb", step="relations", tables=None, command=[])
+    job.add_line(relations_line("[awb] Asking the LLM for the other relations"))
+    assert (job.phase, job.to_check, job.added) == ("llm", None, None)
+    job.add_line(relations_line("[awb] 2 relation(s) to check"))
+    job.add_line(relations_line("[awb] Checking: carte.code_agence -> agence.code"))
+    job.add_line(relations_line("[awb] To check: carte.code_agence -> agence.code (40% of the values found), "
+                                "kept for review", "WARNING"))
+    assert (job.phase, job.to_check, job.checked) == ("check", 2, 1)
+    job.add_line(relations_line("[awb] 0 new relation(s) added to relationships.yaml — review them."))
+    assert {key: job.to_dict()[key] for key in ("phase", "to_check", "checked", "added")} == {
+        "phase": "check", "to_check": 2, "checked": 1, "added": 0}
+
+
+def test_job_follows_a_check_of_the_relations():
+    job = Job(id=1, db="awb", step="relations", tables=None, command=[])
+    job.add_line(relations_line("[awb] 3 relation(s) to check"))
+    for _ in range(3):
+        job.add_line(relations_line("[awb] Checking: carte.id_client -> client.id_client"))
+    job.add_line(relations_line("[awb] 3 relation(s) checked on the data"))
+    assert (job.phase, job.to_check, job.checked, job.added) == ("check", 3, 3, None)
+
+
+def test_a_second_job_is_refused_in_french():
+    runner = JobRunner()
+    runner.job = Job(id=1, db="awb", step="relations", tables=None, command=[])
+    with pytest.raises(RuntimeError, match="^Un job tourne déjà : relations sur awb$"):
+        runner.start("awb", "profile", [])
+
+
 def test_job_tells_whether_a_stop_cancelled_the_query():
     job = Job(id=1, db="awb", step="profile", tables=None, command=[])
     job.add_line("2026-10-23 10:00:01 | WARNING  | offline.query_cancel:_cancel:120 - "
@@ -262,7 +330,7 @@ def test_job_tells_whether_a_stop_cancelled_the_query():
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(lib.semantics, "SEMANTIC_LAYER_DIR", tmp_path)
     monkeypatch.setattr(studio_app, "SEMANTIC_LAYER_DIR", tmp_path)
-    monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(exclude_personal_data=False))
+    monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(exclude_personal_data=False, dialect="hive"))
     monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: {
         "tables": ["dossier"], "columns": {"dossier": DB_COLUMNS}, "source": "database", "error": None, "read_at": 0})
     (tmp_path / "awb").mkdir()
@@ -291,15 +359,17 @@ def test_a_click_on_a_pill_writes_the_exception(client, tmp_path):
 
 
 def test_a_change_over_a_newer_tables_yaml_is_refused(client):
-    assert change(client, "encours", "text", "1").status_code == 409
+    response = change(client, "encours", "text", "1")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "tables.yaml a changé depuis l'ouverture de la page : rouvre la table"
 
 
 def test_personal_data_hidden_everywhere_then_one_kept_visible(client, tmp_path):
     home = client.get("/api/db/awb/tables").json()
-    assert home["personal"] == {"hidden": 0, "kept": 0, "visible": 1}
+    assert home["personal"] == {"hidden": 0, "kept": 0, "visible": 1, "hidden_tables": 0}
 
     home = client.post("/api/db/awb/personal", json={"hide": True, "version": home["version"]}).json()
-    assert home["personal"] == {"hidden": 1, "kept": 0, "visible": 0}
+    assert home["personal"] == {"hidden": 1, "kept": 0, "visible": 0, "hidden_tables": 1}   # the tables "Tout montrer" opens
     written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())
     assert written["dossier"]["exclude_columns"] == ["nom_client"]
 
@@ -386,8 +456,38 @@ def test_a_description_edited_from_the_page(client, tmp_path):
     written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())
     assert written["dossier"]["columns"] == {"date_deblocage": "Date de déblocage du prêt."}
     assert written["dossier"]["categorical_columns"] == ["date_deblocage"]
-    assert edit("data_as_of", "demain").status_code == 400
     assert edit("column", "x", "inconnue").status_code == 400
+
+
+def test_the_type_and_the_date_chosen_in_the_contenu_card(client, tmp_path):
+    detail = client.get("/api/db/awb/tables/dossier").json()
+    assert detail["table_type"]["edited"] is False and detail["data_as_of"] == ""
+
+    choose = lambda field, value: client.post("/api/db/awb/tables/dossier/properties",  # noqa: E731
+                                              json={"field": field, "value": value, "version": detail["version"]})
+    detail = choose("table_type", "events").json()
+    assert (detail["table_type"]["type"], detail["table_type"]["edited"]) == ("events", True)
+    detail = choose("data_as_of", "2026-06-30").json()
+    assert detail["data_as_of"] == "2026-06-30"
+    written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]
+    assert (written["table_type"], str(written["data_as_of"])) == ("events", "2026-06-30")
+    assert choose("data_as_of", "demain").status_code == 400
+    assert choose("table_type", "fact").status_code == 400
+
+
+def test_a_read_mode_chosen_from_the_page(client, tmp_path):
+    detail = client.get("/api/db/awb/tables/dossier").json()   # the Contenu card
+    assert detail["reading"]["mode"] is None and detail["reading"]["unread"]   # a profile older than the partitions
+
+    choose = lambda **body: client.post("/api/db/awb/tables/dossier/read-mode", json={**body, "version": detail["version"]})  # noqa: E731
+    detail = choose(mode="live", key_columns=["id_dossier"], version_column="date_cloture").json()
+    assert detail["reading"]["mode"] == "live" and detail["reading"]["problems"] == []
+    written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())
+    assert written["dossier"] == {"description": "Dossiers", "read_mode": "live", "key_columns": ["id_dossier"],
+                                  "version_column": "date_cloture"}
+    assert choose(mode="last", partition_column="dt").status_code == 400   # not a column of the table
+    assert choose(mode=None).json()["reading"]["mode"] is None
+    assert yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"] == {"description": "Dossiers"}
 
 
 def test_describe_again_needs_tables(client):

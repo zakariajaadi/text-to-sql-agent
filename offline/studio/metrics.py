@@ -34,6 +34,8 @@ ROWS_KEPT = 0.99   # the joins keeping fewer rows of a summed table: amber
 
 # The reasons of skip_reason, as codes the page says in French
 REASONS = {KNOWN_NAME: "known", SAME_EXPRESSION: "same", DISTINCT_SUM: "distinct", COUNT_ONLY: "count"}
+# The fields of a metric that can't be empty, as a message names them
+FIELDS = {"description": "La description", "expr": "La formule"}
 
 # Lines of a run of the generator (offline/semantic_gen/metrics.py)
 SKIPPED  = re.compile(r"\] Skipped metric '(?P<name>[^']+)': (?P<reason>.*)$")
@@ -219,7 +221,7 @@ def last_run(lines: list[dict]) -> dict:
 def edit_metric(entries: dict[str, dict], name: str, field: str, value) -> dict[str, dict]:
     """metrics.yaml with one field of a metric corrected in the studio (synonyms: a comma-separated list)."""
     if name not in entries:
-        raise ValueError(f"Unknown metric: {name}")
+        raise ValueError(f"Métrique inconnue : {name}")
     entry = dict(entries[name])
     text  = str(value or "").strip()
     if field == "synonyms":
@@ -229,7 +231,7 @@ def edit_metric(entries: dict[str, dict], name: str, field: str, value) -> dict[
         if not text:
             del entry["time_dimension"]
     elif not text:
-        raise ValueError(f"The {field} of a metric can't be empty")
+        raise ValueError(f"{FIELDS.get(field, field)} d'une métrique ne peut pas être vide")
     else:
         entry[field] = text
     return {**entries, name: entry}
@@ -243,8 +245,8 @@ def ignore_metric(entries: dict[str, dict], ignored: list[str], name: str,
     """
     if ignore:
         if name not in entries:
-            raise ValueError(f"Unknown metric: {name}")
+            raise ValueError(f"Métrique inconnue : {name}")
         return {n: e for n, e in entries.items() if n != name}, [*ignored, name] if name not in ignored else ignored
     if name not in ignored:
-        raise ValueError(f"{name} is not in ignore")
+        raise ValueError(f"{name} n'est pas parmi les métriques retirées")
     return entries, [n for n in ignored if n != name]

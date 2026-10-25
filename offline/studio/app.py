@@ -2,7 +2,9 @@
 
 """
 Studio of the semantic layer: a web page to run the pipeline steps and see what they write, instead
-of patch scripts (Profiling, Semantics, Relations, Metrics, then Index: what the agent reads, and its eval). Step 1, profiling: the tables and their status at each step, profile the ones chosen
+of patch scripts (Profiling, Semantics, Relations, Metrics, then Index: what the agent reads, and its eval).
+The home shows every database at once from its files (what the agent reads, the step to do next) and
+searches through their semantic layer. Step 1, profiling: the tables and their status at each step, profile the ones chosen
 or missing, read the profile of a table (declared type against what the data holds), make an exception
 to what it detects, hide the personal data of the whole database.
 
@@ -11,7 +13,8 @@ to what it detects, hide the personal data of the whole database.
 The YAML files of semantic_layer/<db>/ stay the source of truth: the CLI and the Makefile keep working,
 the studio reads the files at each request and writes tables.yaml only on a click of the page.
 It shows shapes and counts of the data, never a value. The database is read to list the tables, to
-measure a relation added and to test a metric (counts only).
+measure a relation added and to test a metric (counts only). Its messages are in French, for the page
+to show as they are.
 """
 
 import json
@@ -37,7 +40,7 @@ from lib.semantics import excluded_columns, load_fk_relations, load_profile, loa
 from lib.value_index import value_index_path
 from offline.eval.dashboard import DATASETS_DIR, RESULTS_DIR, build_dashboard
 from offline.indexer.trace import read_trace
-from offline.semantic_gen.profiling import key_overlap, key_spread
+from offline.semantic_gen.profiling import PARTITIONED, key_overlap, key_spread
 from offline.semantic_gen.utils import (
     dump_table_semantics,
     load_relations_file,
@@ -46,7 +49,10 @@ from offline.semantic_gen.utils import (
     write_relations_file,
 )
 from offline.studio import state
-from offline.studio.index import document_view, eval_run, index_view
+from offline.studio.home import search_layer
+from offline.studio.index import document_text, document_view, eval_run, index_view
+from offline.studio.reading import edit_read_mode, reading
+from offline.studio.table_types import table_types
 from offline.studio.jobs import (
     JobRunner,
     eval_command,
@@ -100,7 +106,7 @@ _lock = threading.Lock()
 
 def _db_config(db: str):
     if db not in {d.name for d in cfg.databases}:
-        raise HTTPException(404, f"Unknown database: {db}")
+        raise HTTPException(404, f"Base inconnue : {db}")
     return cfg.get_db(db)
 
 
@@ -150,6 +156,29 @@ def _version(db: str) -> str:
     return str(path.stat().st_mtime_ns if path.exists() else 0)
 
 
+def _known_listing(db: str) -> dict:
+    """
+    The tables of a database without asking it (the home screen reads every database at once, and Impala
+    can be slow or unreachable): the last listing read, else the tables the files and the last index know.
+    """
+    with _lock:
+        if db in _listings:
+            return _listings[db]
+    indexed = (read_trace(db) or {}).get("tables", {})
+    known   = list(dict.fromkeys([*load_profile(db), *load_semantics(db), *indexed]))
+    return {"tables": known, "columns": {}, "source": "files", "error": None}
+
+
+def _table_types(db: str, listing: dict, profile: dict, semantics: dict, relations) -> dict[str, dict]:
+    """The type of each table, its columns typed as the database lists them, else as the last index read them."""
+    columns = {table: {c["name"]: c["type"] for c in cols} for table, cols in listing["columns"].items()}
+    indexed = (read_trace(db) or {}).get("tables", {})
+    for table in listing["tables"]:
+        if not columns.get(table) and table in indexed:
+            columns[table] = indexed[table]["columns"]
+    return table_types(listing["tables"], columns, profile, semantics, relations)
+
+
 def _load_metrics(db: str) -> dict:
     path = SEMANTIC_LAYER_DIR / db / "metrics.yaml"
     return (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
@@ -166,7 +195,34 @@ def index():
 
 @app.get("/api/databases")
 def databases():
-    return [{"name": d.name, "dialect": d.dialect, "personal": d.exclude_personal_data} for d in cfg.databases]
+    return [{"name": d.name, "dialect": d.dialect, "personal": d.exclude_personal_data, "tagline": d.tagline}
+            for d in cfg.databases]
+
+
+@app.get("/api/overview")
+def overview():
+    """
+    The home screen: for each database, the counts of each step and what the agent reads (the Index screen),
+    from the files only: no database is asked, the page opens even when one of them is unreachable.
+    """
+    bases = []
+    for db in [d.name for d in cfg.databases]:
+        db_cfg    = _db_config(db)
+        listing   = _known_listing(db)
+        relations = load_fk_relations(db)
+        metrics   = _load_metrics(db)
+        names = {table: [c["name"] for c in columns] for table, columns in listing["columns"].items()}
+        rows  = state.table_rows(listing["tables"], names, load_profile(db), load_semantics(db), relations, metrics,
+                                 db_cfg.exclude_personal_data)
+        bases.append({"name": db, "dialect": db_cfg.dialect, "source": listing["source"],
+                      "summary": state.summary(rows, relations, metrics), "index": _index_payload(db, listing)})
+    return bases
+
+
+@app.get("/api/search")
+def search(q: str = ""):
+    """The tables and columns of every database whose name or description holds `q` (the home screen)."""
+    return search_layer(q, {d.name: (load_semantics(d.name), read_trace(d.name)) for d in cfg.databases})
 
 
 @app.get("/api/db/{db}/tables")
@@ -181,50 +237,63 @@ def tables(db: str, refresh: bool = False):
     names = {table: [c["name"] for c in columns] for table, columns in listing["columns"].items()}
     rows = state.table_rows(listing["tables"], names, profile, semantics, relations, metrics,
                             db_cfg.exclude_personal_data)
-    count = lambda step, status: sum(r["status"][step] == status for r in rows)  # noqa: E731
-    personal = [s for columns in state.personal_columns(profile, semantics).values() for s in columns.values()]
+    types = _table_types(db, listing, profile, semantics, relations)
+    for row in rows:
+        row["type"], row["type_edited"] = types[row["name"]]["type"], types[row["name"]]["edited"]
+        row["read_warn"] = reading(semantics.get(row["name"]), profile.get(row["name"]))["warn"]
+    found    = state.personal_columns(profile, semantics)
+    personal = [s for columns in found.values() for s in columns.values()]
     return {
         "db": db, "source": listing["source"], "error": listing["error"], "read_at": listing["read_at"],
         "version": _version(db), "tables": rows,
-        "personal": {visibility: personal.count(visibility) for visibility in ("hidden", "kept", "visible")},
-        "summary": {
-            "tables":    len(rows),
-            "profiled":  len(rows) - count("profile", state.NONE),
-            "described": len(rows) - count("semantics", state.NONE),
-            "partial":   count("semantics", state.PARTIAL),
-            "relations": len(relations),
-            "metrics":   len([name for name in metrics if name != "ignore"]),
-        },
+        "personal": {**{visibility: personal.count(visibility) for visibility in ("hidden", "kept", "visible")},
+                     "hidden_tables": sum("hidden" in columns.values() for columns in found.values())},
+        "summary": state.summary(rows, relations, metrics),
     }
 
 
 @app.get("/api/db/{db}/tables/{table}")
 def table_detail(db: str, table: str):
-    """The profile of a table and its proposals, for the detail panel."""
+    """The profile of a table and its proposals, for the Contenu card, with the properties of the table (_properties)."""
     db_cfg  = _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
-        raise HTTPException(404, f"Unknown table: {table}")
+        raise HTTPException(404, f"Table inconnue : {table}")
     db_columns = listing["columns"].get(table)
-    detail = state.table_detail(table, load_profile(db).get(table), load_semantics(db).get(table),
-                                db_cfg.exclude_personal_data, db_columns)
-    return {**detail, "columns": len(db_columns) if db_columns else None, "version": _version(db)}
+    profile, semantics = load_profile(db), load_semantics(db)
+    detail = state.table_detail(table, profile.get(table), semantics.get(table), db_cfg.exclude_personal_data, db_columns)
+    return {**detail, "columns": len(db_columns) if db_columns else None, **_properties(db, table), "version": _version(db)}
+
+
+def _properties(db: str, table: str) -> dict:
+    """
+    What a table is and how to read it, shown and chosen in the Contenu card: its type (detected or corrected,
+    offline/studio/table_types.py), its read mode checked against its columns (offline/studio/reading.py) and
+    the date its data stops.
+    """
+    listing, profile, semantics = _listing(db), load_profile(db), load_semantics(db)
+    columns = [c["name"] for c in listing["columns"].get(table) or []]
+    return {
+        "table_type": _table_types(db, listing, profile, semantics, load_fk_relations(db))[table],
+        "reading":    reading(semantics.get(table), profile.get(table), columns, _db_config(db).dialect in PARTITIONED),
+        "data_as_of": str((semantics.get(table) or {}).get("data_as_of") or ""),
+    }
 
 
 @app.get("/api/db/{db}/tables/{table}/semantics")
 def table_semantics(db: str, table: str):
-    """A table as the Semantics screen shows it: descriptions, data_as_of, categorical columns."""
+    """A table as the Descriptions screen shows it: the descriptions of the table and of its columns, categorical columns."""
     _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
-        raise HTTPException(404, f"Unknown table: {table}")
-    detail = state.semantics_detail(table, load_semantics(db).get(table), load_profile(db).get(table),
-                                    listing["columns"].get(table))
+        raise HTTPException(404, f"Table inconnue : {table}")
+    semantics, profile = load_semantics(db), load_profile(db)
+    detail = state.semantics_detail(table, semantics.get(table), profile.get(table), listing["columns"].get(table))
     return {**detail, "version": _version(db)}
 
 
 class SemanticsEdit(BaseModel):
-    field: Literal["description", "data_as_of", "column", "categorical", "read"]
+    field: Literal["description", "column", "categorical", "read"]
     value: str | bool | None = None
     column: str | None = None
     version: str
@@ -233,16 +302,16 @@ class SemanticsEdit(BaseModel):
 @app.post("/api/db/{db}/tables/{table}/semantics")
 def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
     """
-    One field corrected in the studio (the description of the table or of a column, data_as_of, categorical),
+    One field corrected in the Descriptions tab (the description of the table or of a column, categorical),
     or the descriptions the LLM rewrote marked read.
     """
     _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
-        raise HTTPException(404, f"Unknown table: {table}")
+        raise HTTPException(404, f"Table inconnue : {table}")
     order = [c["name"] for c in listing["columns"].get(table) or []]
     if request.field in ("column", "categorical") and order and request.column not in order:
-        raise HTTPException(400, f"Unknown column: {table}.{request.column}")
+        raise HTTPException(400, f"Colonne inconnue : {table}.{request.column}")
     try:
         _update_semantics(db, request.version, lambda semantics: {
             **semantics, table: state.edit_semantics(semantics.get(table), request.field, request.value,
@@ -253,9 +322,62 @@ def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
     return table_semantics(db, table)
 
 
+class PropertyEdit(BaseModel):
+    field: Literal["table_type", "data_as_of"]
+    value: str | None = None
+    version: str
+
+
+@app.post("/api/db/{db}/tables/{table}/properties")
+def edit_table_property(db: str, table: str, request: PropertyEdit):
+    """
+    The type of a table (empty: the detection again) or the date its data stops (YYYY-MM-DD, empty: none), chosen
+    in the Contenu card. Returns the properties of the table and the version of tables.yaml.
+    """
+    _db_config(db)
+    if table not in _listing(db)["tables"]:
+        raise HTTPException(404, f"Table inconnue : {table}")
+    try:
+        _update_semantics(db, request.version, lambda semantics: {
+            **semantics, table: state.edit_semantics(semantics.get(table), request.field, request.value)})
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(f"[studio] {db}.{table}: {request.field} edited")
+    return {**_properties(db, table), "version": _version(db)}
+
+
+class ReadModeEdit(BaseModel):
+    mode: Literal["last", "all", "live"] | None = None
+    partition_column: str | None = None
+    key_columns: list[str] = []
+    version_column: str | None = None
+    version: str
+
+
+@app.post("/api/db/{db}/tables/{table}/read-mode")
+def edit_table_read_mode(db: str, table: str, request: ReadModeEdit):
+    """
+    The read mode of a table chosen in the Contenu tab (offline/studio/reading.py), None: the table read as it is.
+    Returns the properties of the table (the type follows the mode) and the version of tables.yaml.
+    """
+    _db_config(db)
+    listing = _listing(db)
+    if table not in listing["tables"]:
+        raise HTTPException(404, f"Table inconnue : {table}")
+    columns = [c["name"] for c in listing["columns"].get(table) or []]
+    try:
+        _update_semantics(db, request.version, lambda semantics: {
+            **semantics, table: edit_read_mode(semantics.get(table), request.mode, request.partition_column,
+                                               request.key_columns, request.version_column, columns)})
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(f"[studio] {db}.{table}: read mode {request.mode or 'none'}")
+    return {**_properties(db, table), "version": _version(db)}
+
+
 def _start(db: str, step: str, command: list[str], tables: list[str] | None):
     if unknown := sorted(set(tables or []) - set(_listing(db)["tables"])):
-        raise HTTPException(400, f"Unknown table(s): {', '.join(unknown)}")
+        raise HTTPException(400, f"{'Tables inconnues' if len(unknown) > 1 else 'Table inconnue'} : {', '.join(unknown)}")
     try:
         return runner.start(db, step, command, tables).to_dict()
     except RuntimeError as e:
@@ -272,7 +394,7 @@ def profile(db: str, request: ProfileRequest):
     """Profile the tables chosen, or the ones missing from the profile (make profile ARGS=...)."""
     _db_config(db)
     if not request.tables and not request.missing:
-        raise HTTPException(400, "Choose tables, or the missing ones")
+        raise HTTPException(400, "Coche des tables, ou choisis les manquantes")
     return _start(db, "profile", profile_command(db, request.tables, request.missing), request.tables)
 
 
@@ -290,7 +412,7 @@ def describe(db: str, request: SemanticsRequest):
     """
     _db_config(db)
     if request.fresh and not request.tables:
-        raise HTTPException(400, "Choose the tables to describe again")
+        raise HTTPException(400, "Coche les tables à redécrire")
     command = semantics_command(db, request.tables, request.fresh, request.replace_edited)
     return _start(db, "semantics", command, request.tables)
 
@@ -302,7 +424,7 @@ def _update_semantics(db: str, version: str, change) -> None:
     """
     with _lock:
         if version != _version(db):
-            raise HTTPException(409, "tables.yaml changed since the page read it: reload the table")
+            raise HTTPException(409, "tables.yaml a changé depuis l'ouverture de la page : rouvre la table")
         semantics = change(load_semantics(db))
         path = tables_path(db)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -314,7 +436,7 @@ def _update_semantics(db: str, version: str, change) -> None:
 def _profiled(db: str, table: str) -> dict:
     _db_config(db)
     if not (facts := load_profile(db).get(table)):
-        raise HTTPException(404, f"{table} is not profiled")
+        raise HTTPException(404, f"{table} n'est pas encore profilée")
     return facts
 
 
@@ -334,11 +456,11 @@ def column_change(db: str, table: str, request: ColumnChange):
     column = request.column
     if request.action in ("format", "text"):
         if not (value := (facts.get("formats") or {}).get(column)):
-            raise HTTPException(400, f"The profile detects no format in {table}.{column}")
+            raise HTTPException(400, f"Le profil ne détecte aucun format dans {table}.{column}")
         change = lambda entry: state.set_format(entry, column, value if request.action == "format" else None)  # noqa: E731
     else:
         if column not in (facts.get("exclude") or {}):
-            raise HTTPException(400, f"The profile proposes no exclusion of {table}.{column}")
+            raise HTTPException(400, f"Le profil ne propose pas de cacher {table}.{column}")
         change = lambda entry: state.set_excluded(entry, [column], request.action == "hide")  # noqa: E731
     _update_semantics(db, request.version, lambda semantics: {**semantics, table: change(semantics.get(table))})
     logger.info(f"[studio] {db}.{table}.{column}: {request.action}")
@@ -386,7 +508,7 @@ def _update_relations(db: str, version: str, change) -> None:
     """Rewrite relationships.yaml with change(entry), unless it changed since the page read it."""
     with _lock:
         if version != _relations_version(db):
-            raise HTTPException(409, "relationships.yaml changed since the page read it: reload the page")
+            raise HTTPException(409, "relationships.yaml a changé depuis l'ouverture de la page : recharge la page")
         write_relations_file(db, change(load_relations_file(db)))
 
 
@@ -406,7 +528,7 @@ def relations_path_between(db: str, a: str, b: str):
     _db_config(db)
     tables = _listing(db)["tables"]
     if a not in tables or b not in tables:
-        raise HTTPException(404, f"Unknown table: {a if a not in tables else b}")
+        raise HTTPException(404, f"Table inconnue : {a if a not in tables else b}")
     return join_path(a, b, fk_graph(load_relations_file(db)["relations"], tables))
 
 
@@ -415,7 +537,7 @@ def _column_ref(db: str, ref: str) -> str:
     table, _, column = ref.partition(".")
     columns = [c["name"] for c in _listing(db)["columns"].get(table) or []]
     if column not in columns:
-        raise HTTPException(400, f"Unknown column: {ref}")
+        raise HTTPException(400, f"Colonne inconnue : {ref}")
     return ref
 
 
@@ -436,14 +558,14 @@ def add(db: str, request: RelationRequest):
     _db_config(db)
     source, target = _column_ref(db, request.source), _column_ref(db, request.target)
     if source.split(".")[0] == target.split(".")[0]:
-        raise HTTPException(400, "Two columns of two different tables")
+        raise HTTPException(400, "Choisis deux colonnes de deux tables différentes")
     if db not in _databases:
-        raise HTTPException(503, "The database does not answer: the relation can't be checked")
+        raise HTTPException(503, "La base ne répond pas : la relation ne peut pas être vérifiée")
     try:
         found  = key_overlap(_databases[db], source, target)
         spread = key_spread(_databases[db], source, target)
     except Exception as e:
-        raise HTTPException(502, f"The check of the relation failed: {str(e).splitlines()[0][:200]}") from e
+        raise HTTPException(502, f"La vérification de la relation a échoué : {str(e).splitlines()[0][:200]}") from e
     found = None if found is None else round(found, 3)
     check = {"source": source, "target": target, "found": found, **spread}
     if spread["per_value"][1] > 1 and not request.force:
@@ -496,7 +618,7 @@ def _update_metrics(db: str, version: str, change) -> None:
     """Rewrite metrics.yaml with change(entries, ignored), unless it changed since the page read it."""
     with _lock:
         if version != _metrics_version(db):
-            raise HTTPException(409, "metrics.yaml changed since the page read it: reload the page")
+            raise HTTPException(409, "metrics.yaml a changé depuis l'ouverture de la page : recharge la page")
         write_metrics_file(db, *change(*read_metrics_file(db)))
 
 
@@ -525,13 +647,13 @@ def _last_run(db: str) -> dict:
 
 def _metric(db: str, name: str, entries: dict, ignored: list[str], context: dict) -> dict:
     if name not in entries:
-        raise HTTPException(404, f"Unknown metric: {name}")
+        raise HTTPException(404, f"Métrique inconnue : {name}")
     return metric_row(name, entries[name], entries, ignored, **context)
 
 
 def _database(db: str):
     if db not in _databases:
-        raise HTTPException(503, "The database does not answer: the metric can't be checked")
+        raise HTTPException(503, "La base ne répond pas : la métrique ne peut pas être vérifiée")
     return _databases[db]
 
 
@@ -564,7 +686,7 @@ def test_one_metric(db: str, name: str):
     context = _metrics_context(db)
     row = _metric(db, name, *read_metrics_file(db), context)
     if not row["sql"]:
-        raise HTTPException(400, f"The metric can't be computed: {row['error']['detail']}")
+        raise HTTPException(400, f"La métrique ne peut pas être calculée : {row['error']['detail']}")
     database = _database(db)
     plan     = measure_queries(row, context["column_types"], context["fk_relations"], context["dialect"])
     started  = time.time()
@@ -604,13 +726,13 @@ def edit_one_metric(db: str, name: str, request: MetricEdit):
         row = _metric(db, name, edited, ignored, context)
         if row["error"]:
             detail = row["error"]["detail"]
-            raise HTTPException(400, f"reads a column hidden from the agent: {detail}" if row["error"]["kind"] == "hidden" else detail)
+            raise HTTPException(400, f"La métrique lit une colonne cachée à l'agent : {detail}" if row["error"]["kind"] == "hidden" else detail)
         database = _database(db)
         try:
             with database._engine.connect() as conn:
                 conn.execute(text(f"{row['sql']}\nWHERE 1 = 0"))
         except Exception as e:
-            raise HTTPException(400, f"The database refuses it: {_first_line(e)}") from e
+            raise HTTPException(400, f"La base refuse la métrique : {_first_line(e)}") from e
     _update_metrics(db, request.version, change)
     logger.info(f"[studio] {db}: metric {name} {request.field} edited")
     return metrics_screen(db)
@@ -637,6 +759,16 @@ def ignore_one_metric(db: str, name: str, request: MetricVersion, back: bool = F
 # Index: what the agent reads of each table against the files today, and the eval of the agent
 # ------------------------------------------------------------
 
+def _questions(db: str) -> int | None:
+    """The number of eval questions of the database (offline/eval/datasets/<db>.yaml), None without a dataset."""
+    try:
+        dataset = yaml.safe_load((DATASETS_DIR / f"{db.lower()}.yaml").read_text())
+        questions = dataset["questions"] if isinstance(dataset, dict) else dataset
+        return len(questions) if isinstance(questions, list) else None
+    except Exception:
+        return None
+
+
 def _eval_results(db: str) -> tuple[dict | None, float | None]:
     """The results of the last eval of the database (make eval) and the time of their file, or (None, None)."""
     path = RESULTS_DIR / f"{db.lower()}.json"
@@ -645,14 +777,13 @@ def _eval_results(db: str) -> tuple[dict | None, float | None]:
     return json.loads(path.read_text()), path.stat().st_mtime
 
 
-@app.get("/api/db/{db}/index")
-def index_screen(db: str):
+def _index_payload(db: str, listing: dict) -> dict:
     """
-    The Index screen: each table with its status in the index, what the agent receives, the last eval.
-    The dates of the files and of the value index tell how old an index built before its trace is.
+    What the Index screen shows of a database, its tables as `listing` gives them: each table with its status
+    in the index, what the agent receives, the last eval and the questions of the next one. The dates of the
+    files and of the value index tell how old an index built before its trace is.
     """
     db_cfg  = _db_config(db)
-    listing = _listing(db)
     columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
     view    = index_view(listing["tables"], columns, load_semantics(db), load_fk_relations(db), read_trace(db),
                          read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db)))
@@ -660,18 +791,27 @@ def index_screen(db: str):
                                                              ("relationships.yaml", relations_path(db))) if path.exists()}
     values  = value_index_path(db)
     return {**view, "files": files, "values_at": values.stat().st_mtime if values.exists() else None,
-            "sample_rows_now": db_cfg.sample_rows, "dataset": (DATASETS_DIR / f"{db.lower()}.yaml").exists()}
+            "sample_rows_now": db_cfg.sample_rows, "dataset": (DATASETS_DIR / f"{db.lower()}.yaml").exists(),
+            "questions": _questions(db)}
+
+
+@app.get("/api/db/{db}/index")
+def index_screen(db: str):
+    """The Index screen of a database, its tables read in the database."""
+    _db_config(db)
+    return _index_payload(db, _listing(db))
 
 
 @app.get("/api/db/{db}/index/{table}")
 def index_document(db: str, table: str):
-    """The document of a table as the agent reads it, and what changed since the index."""
-    _db_config(db)
+    """The document of a table as the agent reads it (its columns, its text, the data masked), and what changed since the index."""
+    db_cfg = _db_config(db)
     listing, trace = _listing(db), read_trace(db)
     if table not in listing["tables"] and table not in (trace or {}).get("tables", {}):
-        raise HTTPException(404, f"Unknown table: {table}")
+        raise HTTPException(404, f"Table inconnue : {table}")
     view = document_view(table, trace, load_semantics(db).get(table), load_fk_relations(db), listing["columns"].get(table))
-    return {**view, "gone": listing["source"] == "database" and table not in listing["tables"]}
+    return {**view, "text": document_text(table, trace, db_cfg.dialect),
+            "gone": listing["source"] == "database" and table not in listing["tables"]}
 
 
 @app.post("/api/db/{db}/index/run")
@@ -686,7 +826,7 @@ def run_eval(db: str):
     """Ask the questions of the eval to the agent (make eval): offline/eval/results/<db>.json."""
     _db_config(db)
     if not (DATASETS_DIR / f"{db.lower()}.yaml").exists():
-        raise HTTPException(400, f"No eval questions for {db}: offline/eval/datasets/{db.lower()}.yaml")
+        raise HTTPException(400, f"Pas de questions d'évaluation pour {db} (offline/eval/datasets/{db.lower()}.yaml)")
     return _start(db, "eval", eval_command(db), None)
 
 
@@ -699,7 +839,7 @@ def eval_dashboard(db: str):
     _db_config(db)
     path = RESULTS_DIR / f"{db.lower()}.json"
     if not path.exists():
-        raise HTTPException(404, f"{db} was never evaluated: make eval DB={db}")
+        raise HTTPException(404, f"{db} n'a jamais été évaluée : lance l'évaluation depuis l'écran Index")
     with tempfile.TemporaryDirectory() as folder:
         html = build_dashboard([path], Path(folder) / "dashboard.html").read_text()
     return HTMLResponse(html)

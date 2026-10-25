@@ -22,6 +22,7 @@ from offline.semantic_gen.profiling import DATE_SHAPES, NUMBER_SHAPE
 
 # Status of a table at a step
 NONE, PARTIAL, DONE = "none", "partial", "done"
+TABLE_TYPES = ("events", "entity", "reference", "bridge")   # the types a human may choose (offline/studio/table_types.py)
 PERSONAL = "personal data"
 
 
@@ -207,15 +208,35 @@ def table_rows(tables: list[str], columns: dict[str, list[str]], profile: dict, 
     return rows
 
 
+def summary(rows: list[dict], relations: list[tuple[str, str]], metrics: dict) -> dict:
+    """
+    The counts of each step over the rows of table_rows: the filters of the tables screen, the pipeline of
+    a database on the home screen. rewritten: tables with a description the LLM rewrote, to read again;
+    isolated: tables no relation reads.
+    """
+    count = lambda step, status: sum(r["status"][step] == status for r in rows)  # noqa: E731
+    return {
+        "tables":    len(rows),
+        "profiled":  len(rows) - count("profile", NONE),
+        "described": len(rows) - count("semantics", NONE),
+        "partial":   count("semantics", PARTIAL),
+        "rewritten": sum(bool(r["rewritten"]) for r in rows),
+        "isolated":  count("relations", NONE),
+        "relations": len(relations),
+        "metrics":   len([name for name in metrics if name != "ignore"]),
+    }
+
+
 def table_detail(table: str, facts: dict | None, entry: dict | None, personal: bool,
                  db_columns: list[dict] | None = None) -> dict:
     """
     The profile of a table as the detail panel shows it, one line per column of the database
     (`db_columns`: name and type, in DDL order; without them, the columns the profile knows):
-    its type, filled share, distinct values of a key, how tables.yaml reads it (format, excluded),
-    what the profile detects (a format with the share of the values written in it, a date whose day
-    and month order no value tells, an empty column) and, for personal data, whether it is hidden,
-    kept visible on purpose or visible. Counts only, never a value.
+    its type, filled share, distinct values (of the whole table for a key, of the sample for a text
+    column: `sampled`), how tables.yaml reads it (format, excluded), what the profile detects (a format
+    with the share of the values written in it, a date whose day and month order no value tells, an
+    empty column) and, for personal data, whether it is hidden, kept visible on purpose or visible.
+    `outdated`: what an older profiler did not measure (filled, distinct). Counts only, never a value.
     """
     if not facts:
         return {"name": table, "profiled": False, "detected": 0, "unique_key": None, "column_facts": []}
@@ -238,19 +259,22 @@ def table_detail(table: str, facts: dict | None, entry: dict | None, personal: b
         by_column.setdefault(proposal["column"], []).append(proposal)
 
     column_facts = []
-    for column in dict.fromkeys([*types, *keys, *texts, *others, *by_column, *personal_data]):
+    columns = list(dict.fromkeys([*types, *keys, *texts, *others, *by_column, *personal_data]))
+    for column in columns:
         counts = keys.get(column)
         if counts:
             filled = round(counts["non_null"] / rows, 3) if rows else None
         else:
             filled = (texts.get(column) or {}).get("filled", others.get(column))
         type_name = types.get(column)
+        on_sample = None if counts else (texts.get(column) or {}).get("distinct")
         column_facts.append({
             "column":   column,
             "type":     type_name,
             "kind":     column_kind(type_name) or ("text" if column in texts else None),
             "filled":   filled,
-            "distinct": counts["distinct"] if counts else None,
+            "distinct": counts["distinct"] if counts else on_sample,
+            "sampled":  on_sample is not None,
             "key":      None if not counts else "unique" if rows and counts["distinct"] == counts["non_null"] == rows else "key",
             "format":   formats.get(column),
             "ambiguous": column in ambiguous,
@@ -265,8 +289,24 @@ def table_detail(table: str, facts: dict | None, entry: dict | None, personal: b
         "rows":         rows,
         "detected":     sum(p["kind"] == "format" for column in by_column.values() for p in column),
         "unique_key":   next((c["column"] for c in column_facts if c["key"] == "unique"), None),
+        "outdated":     outdated(facts, columns),
         "column_facts": column_facts,
     }
+
+
+def outdated(facts: dict, columns: list[str]) -> list[str]:
+    """
+    What an older profiler did not measure in a table ([] when nothing): "distinct", the distinct values of
+    its text columns; "filled", the filled share of the other columns (numbers, dates) the table has.
+    The two came at different times: a profile may lack one only.
+    """
+    keys, texts = facts.get("keys") or {}, facts.get("text_columns") or {}
+    missing = []
+    if "filled" not in facts and any(c not in keys and c not in texts for c in columns):
+        missing.append("filled")
+    if any("distinct" not in (text or {}) for text in texts.values()):
+        missing.append("distinct")
+    return missing
 
 
 # ------------------------------------------------------------
@@ -337,10 +377,20 @@ def edit_semantics(entry: dict | None, field: str, value, column: str | None = N
       - column: the description of `column`, removed when empty (make semantics then writes it again)
       - categorical: `column` in categorical_columns or not, kept in the DDL `order`
       - read: the descriptions the LLM rewrote are read (no longer rewritten_*)
+      - table_type: the type of the table chosen by hand (events, entity, reference, bridge), over the one
+        detected (offline/studio/table_types.py); empty, the detection again
     A description corrected is marked edited (kept when the table is described again), and read;
-    emptied, it is no longer edited. ValueError on a date that is not one.
+    emptied, it is no longer edited. ValueError on a date that is not one, or a type that is none.
     """
     entry = dict(entry or {})
+    if field == "table_type":
+        if value and value not in TABLE_TYPES:
+            raise ValueError(f"Type inconnu : {value}")
+        if value:
+            entry["table_type"] = value
+        else:
+            entry.pop("table_type", None)
+        return entry
     if field == "description":
         _mark(entry, "description", None, bool(str(value or "").strip()))
     elif field == "column":
@@ -353,7 +403,7 @@ def edit_semantics(entry: dict | None, field: str, value, column: str | None = N
         text = str(value or "").strip()
         if field == "data_as_of" and text:
             if not DATE.match(text):
-                raise ValueError(f"Not a date (YYYY-MM-DD): {text}")
+                raise ValueError(f"Ce n'est pas une date (AAAA-MM-JJ) : {text}")
             text = date.fromisoformat(text)   # a YAML date, unquoted as written by hand
         if text:
             entry[field] = text
@@ -373,7 +423,7 @@ def edit_semantics(entry: dict | None, field: str, value, column: str | None = N
         rank = {name: i for i, name in enumerate(order or [])}
         entry["categorical_columns"] = sorted(current, key=lambda c: rank.get(c, len(rank)))
     else:
-        raise ValueError(f"Unknown field: {field}")
+        raise ValueError(f"Champ inconnu : {field}")
     return entry
 
 

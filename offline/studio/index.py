@@ -15,13 +15,16 @@ as the agent does at startup (lib/metrics.load_metrics). Counts and shapes, neve
 from datetime import datetime
 
 from lib.metrics import validate_metric
-from lib.semantics import excluded_columns
+from lib.semantics import excluded_columns, render_table
 
 # Status of a table in the index
 FRESH, CHANGED, MISSING, UNKNOWN = "fresh", "changed", "missing", "unknown"
 
 # Keys of a table block that write its "-- Read mode" line (lib/semantics._render_read_mode)
 READ_MODE_KEYS = ("read_mode", "partition_column", "key_columns", "version_column")
+
+# What the text of a document shows in place of the data: ‹...› marks it, the page draws it apart
+MASK = "‹{}›"
 
 
 def table_relations(table: str, relations) -> list[list[str]]:
@@ -117,6 +120,31 @@ def table_status(table: str, trace: dict | None, entry: dict | None, relations,
     return (CHANGED if found else FRESH), found
 
 
+def document_text(table: str, trace: dict, dialect: str) -> str | None:
+    """
+    The text of the document of a table as the last index wrote it, rendered by the function of the agent
+    (lib/semantics.render_table) from the trace, the data masked: the values of a categorical column listed in
+    the document become ‹24 valeurs›, its sample rows ‹3 lignes d'exemple›. The CREATE TABLE is rebuilt from the
+    columns and types of the trace (the database is not read): its layout may differ from the DDL of the
+    database by a space. None when the table is not in the trace.
+    """
+    indexed = (trace or {}).get("tables", {}).get(table)
+    if indexed is None:
+        return None
+    body = ",\n".join(f"\t`{column}` {column_type}" for column, column_type in indexed["columns"].items())
+    ddl  = f"CREATE TABLE `{table}` (\n{body}\n)"
+    if rows := trace.get("sample_rows"):
+        ddl += f"\n\n/*\n{MASK.format(f'{rows} ligne{"s" if rows > 1 else ""} d\'exemple')}\n*/"
+    entry = indexed["semantics"]
+    if not entry or not entry.get("description"):
+        return ddl
+    inline = {column: [MASK.format(f"{counts['count']} valeur{'s' if counts['count'] > 1 else ''}")]
+              for column, counts in indexed["values"].items() if counts.get("inline")}
+    types  = {f"{t}.{column}": column_type for t, other in trace["tables"].items() for column, column_type in other["columns"].items()}
+    text   = render_table(table, ddl, entry, [tuple(r) for r in indexed["relations"]], inline, types, dialect)
+    return text.replace(f"'{MASK[0]}", MASK[0]).replace(f"{MASK[-1]}'", MASK[-1])   # a mask is no quoted value
+
+
 def metric_errors(metrics: dict[str, dict], trace: dict, dialect: str) -> list[dict]:
     """
     The metrics the agent would refuse at startup: it checks metrics.yaml against the indexed documents
@@ -154,8 +182,9 @@ def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: d
                trace: dict | None, metrics: dict[str, dict], dialect: str, evaluation: dict | None) -> dict:
     """
     The Index screen: each table of the database with its status, the tables the index holds that the
-    database no longer has (dropped at the next index), what the agent receives (documents, values, sample
-    rows, metrics) and the last eval. Without a trace, the statuses are unknown.
+    database no longer has (dropped at the next index), what the agent receives (documents and the joins
+    between them, the columns they show or hide, values, sample rows, metrics) and the last eval. Without
+    a trace, the statuses are unknown.
     """
     rows = []
     for table in tables:
@@ -173,6 +202,9 @@ def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: d
         "sample_rows": trace["sample_rows"],
         "gone":        sorted(set(indexed) - set(tables)),
         "documents":   len(indexed),
+        "joins":       len({tuple(relation) for entry in indexed.values() for relation in entry["relations"]}),
+        "shown":       sum(len(entry["columns"]) for entry in indexed.values()),
+        "hidden":      sorted(f"{t}.{c}" for t, entry in indexed.items() for c in excluded_columns(entry["semantics"])),
         "raw":         sorted(t for t, entry in indexed.items() if entry["semantics"] is None),
         "inline":      {"columns": sum(v["inline"] for _, _, v in values),
                         "values":  sum(v["count"] for _, _, v in values if v["inline"])},
@@ -188,8 +220,10 @@ def document_view(table: str, trace: dict | None, entry: dict | None, relations,
                   db_columns: list[dict] | None) -> dict:
     """
     The document of a table as the agent reads it: its size, its header (description, date of the data,
-    joins), each column with its type, its format, its values (listed in the document, searched, none) or
-    hidden, and what changed since the index. db_columns: [{name, type}] of the database, None when unreachable.
+    joins), each column with its type (of the database, as the other screens show it), its format, its values
+    (listed in the document, searched, none) or hidden, and what changed since the index: a column hidden
+    since leaves the document at the next index, one shown since enters it. db_columns: [{name, type}] of the
+    database, None when unreachable.
     """
     names  = [c["name"] for c in db_columns] if db_columns is not None else None
     status, found = table_status(table, trace, entry, relations, names)
@@ -201,19 +235,23 @@ def document_view(table: str, trace: dict | None, entry: dict | None, relations,
     inputs  = document_inputs(indexed["semantics"], indexed["relations"])
     dropped = set(dropped_columns(indexed))
     hidden  = set(inputs.get("hidden", []))
+    now     = excluded_columns(entry)   # hidden today
     types   = {c["name"]: c["type"] for c in db_columns or []}
     order   = list(dict.fromkeys([*(names or []), *indexed["columns"]]))
 
     columns = []
     for column in order:
-        line = {"column": column, "type": indexed["columns"].get(column) or types.get(column)}
+        line = {"column": column, "type": types.get(column) or indexed["columns"].get(column)}
         if column in indexed["columns"]:
-            line["format"] = inputs.get("formats", {}).get(column)
-            line["values"] = indexed["values"].get(column) or ({"dropped": True} if column in dropped else None)
-            line["gone"]   = names is not None and column not in names
+            line["format"]  = inputs.get("formats", {}).get(column)
+            line["values"]  = indexed["values"].get(column) or ({"dropped": True} if column in dropped else None)
+            line["gone"]    = names is not None and column not in names
+            line["leaving"] = column in now
         else:
-            line["hidden"] = column in hidden
-            line["added"]  = column not in hidden   # in the database, not in the document: added since the index
+            # In the database, not in the document: hidden then (and maybe shown since), or added since the index
+            line["hidden"]   = column in hidden
+            line["entering"] = column in hidden and column not in now
+            line["added"]    = column not in hidden
         columns.append(line)
 
     view.update({

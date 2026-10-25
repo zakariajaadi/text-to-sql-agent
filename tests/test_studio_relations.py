@@ -39,7 +39,7 @@ def test_relation_row_says_its_evidence():
     rows = [relation_row(r, PROFILE) for r in RELATIONS]
     assert (rows[0]["links"], rows[0]["weak"], rows[0]["origin"]) == ("1 → 1", False, "profile")
     assert (rows[1]["weak"], rows[1]["links"]) == (True, "n → ?")    # under 90 %: for a human to keep or ignore
-    assert (rows[2]["found"], rows[2]["weak"], rows[2]["links"]) == (None, False, "n → 1")   # not checked yet
+    assert (rows[2]["found"], rows[2]["empty"], rows[2]["weak"], rows[2]["links"]) == (None, False, False, "n → 1")   # not checked yet
 
 
 # customer.country is no key: 24 values for 59 rows, up to 13 rows per value; invoice joins 5.7 rows on average
@@ -64,6 +64,15 @@ def test_relations_view_counts_and_isolated_tables():
     assert (view["isolated"], view["weak"], view["unchecked"]) == (["bilan"], 1, 1)
 
 
+def test_a_relation_from_an_empty_table_is_measured_with_nothing_to_compare():
+    empty = {"from": "bilan.id_client", "to": "client.id_client", "found": None}   # written by fk-relations --check
+    row = relation_row(empty, PROFILE)
+    assert (row["found"], row["empty"], row["weak"]) == (None, True, False)
+    # never counted as a relation to measure: checking again would not change it
+    view = relations_view(TABLES, {"relations": [*RELATIONS, empty], "ignore": []}, PROFILE)
+    assert view["unchecked"] == 1
+
+
 def test_layout_places_every_table_without_overlap():
     result = layout(TABLES, RELATIONS)
     nodes = result["nodes"]
@@ -72,8 +81,10 @@ def test_layout_places_every_table_without_overlap():
     for i, a in enumerate(boxes):
         for b in boxes[i + 1:]:
             assert a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"] or a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"]
-    # a table pointing to another one is above it; the isolated table on a last row
-    assert nodes["carte"]["y"] < nodes["client"]["y"]
+    # a table pointing to another one is on its left, the tables of a column aligned on their left side;
+    # the isolated table on a last row
+    assert nodes["carte"]["x"] + nodes["carte"]["w"] < nodes["client"]["x"]
+    assert nodes["carte"]["x"] == nodes["client_master"]["x"] and nodes["client"]["x"] == nodes["personne"]["x"]
     assert nodes["bilan"]["y"] > max(n["y"] for t, n in nodes.items() if t != "bilan")
     assert result["width"] >= max(n["x"] + n["w"] for n in boxes)
 

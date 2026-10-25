@@ -1,5 +1,6 @@
 """Index screen of the studio (offline/studio/index.py): the trace of the index against the files today, the metrics
-checked against the documents, the progress of an index and of an eval, the routes."""
+checked against the documents, the progress of an index and of an eval, the routes; and the home, which shows
+every database the same way and searches through them (offline/studio/home.py)."""
 
 import json
 from datetime import date
@@ -14,12 +15,14 @@ import lib.semantics
 from offline.indexer import trace as trace_module
 from offline.semantic_gen import utils
 from offline.studio import app as studio_app
+from offline.studio.home import search_layer
 from offline.studio.index import (
     CHANGED,
     FRESH,
     MISSING,
     UNKNOWN,
     changes,
+    document_text,
     document_view,
     eval_run,
     index_view,
@@ -123,6 +126,8 @@ def test_the_index_of_a_database_against_its_files():
     assert [(r["name"], r["status"]) for r in view["tables"]] == [("invoice", CHANGED), ("customer", FRESH), ("track", MISSING)]
     assert view["tables"][0]["changes"] == [{"kind": "data_as_of"}]
     assert view["gone"] == ["legacy"] and view["raw"] == ["customer", "legacy"] and view["documents"] == 3
+    # One join (written in the trace of each table it links), email hidden from the 9 columns
+    assert view["joins"] == 1 and view["shown"] == 8 and view["hidden"] == ["invoice.email"]
     assert view["searched"] == {"columns": 1, "values": 53} and view["inline"] == {"columns": 0, "values": 0}
     assert view["dropped"] == ["invoice.country"]
     # email is hidden: not in the document, the agent would refuse the metric at startup
@@ -146,11 +151,23 @@ def test_the_document_of_a_table_column_by_column():
     view = document_view("invoice", make_trace(), INVOICE, RELATIONS, db_columns)
     assert view["status"] == CHANGED and view["joins"] == 1 and view["data_as_of"] == "2024-07-10"
     lines = {c["column"]: c for c in view["columns"]}
-    assert lines["total"]["format"] == "decimal" and lines["total"]["type"] == "STRING"   # the type the document shows
+    # the type of the database, as the other screens show it
+    assert lines["total"]["format"] == "decimal" and lines["total"]["type"] == "VARCHAR"
     assert lines["city"]["values"] == {"count": 53, "inline": False}
     assert lines["country"]["values"] == {"dropped": True} and lines["country"]["gone"] is True
     assert lines["email"]["hidden"] is True and lines["channel"]["added"] is True
     assert document_view("track", make_trace(), None, RELATIONS, None)["status"] == MISSING
+
+
+def test_the_columns_leaving_and_entering_the_document_at_the_next_index():
+    db_columns = [{"name": c, "type": "STRING"} for c in ["invoiceid", "customerid", "total", "city", "country", "email"]]
+    entry = {**INVOICE, "exclude_columns": ["city"]}   # city hidden since the index, email shown since
+    lines = {c["column"]: c for c in document_view("invoice", make_trace(), entry, RELATIONS, db_columns)["columns"]}
+    assert lines["city"]["leaving"] is True and lines["total"]["leaving"] is False
+    assert (lines["email"]["hidden"], lines["email"]["entering"], lines["email"]["added"]) == (True, True, False)
+    # the files as indexed: nothing leaves, nothing enters
+    lines = document_view("invoice", make_trace(), INVOICE, RELATIONS, db_columns)["columns"]
+    assert not any(c.get("leaving") or c.get("entering") for c in lines)
 
 
 def test_the_last_eval_of_a_database():
@@ -220,5 +237,66 @@ def test_the_index_screen_and_a_document(client, tmp_path):
     assert client.get("/api/db/shop/index/nothing").status_code == 404
 
     # No questions: no eval to run, no dashboard to open
+    assert view["questions"] is None
     assert client.post("/api/db/shop/eval/run").status_code == 400
     assert client.get("/eval/shop").status_code == 404
+
+
+def test_the_questions_of_the_next_eval(client, tmp_path):
+    (tmp_path / "datasets").mkdir()
+    dataset = tmp_path / "datasets" / "shop.yaml"
+    dataset.write_text(yaml.safe_dump([{"question": "a"}, {"question": "b"}]))
+    assert client.get("/api/db/shop/index").json()["questions"] == 2
+    dataset.write_text(yaml.safe_dump({"questions": [{"question": "a"}]}))
+    assert client.get("/api/db/shop/index").json()["questions"] == 1
+    # a file the eval can't read either: no count
+    dataset.write_text("questions: [a")
+    view = client.get("/api/db/shop/index").json()
+    assert view["questions"] is None and view["dataset"] is True
+
+
+# ------------------------------------------------------------
+# The home
+# ------------------------------------------------------------
+
+def test_the_search_finds_the_names_first_whatever_the_accents_and_case():
+    semantics = {"invoice":  {**INVOICE, "columns": {**INVOICE["columns"], "total": "Montant de la facture."}},
+                 "factures": {"description": "Une ligne par facture."}}
+    found = search_layer("FACTURÉ", {"shop": (semantics, make_trace())})
+    # The table named so first (its description says it too: one result), then the column whose description says it
+    assert [(r["table"], r["column"]) for r in found["results"]] == [("factures", None), ("invoice", "total")]
+    assert found["total"] == 2 and found["bases"] == 1
+    assert search_layer("factur", {"shop": (semantics, make_trace())}, limit=1)["results"] == found["results"][:1]
+    assert search_layer("  ", {"shop": (semantics, make_trace())}) == {"total": 0, "bases": 0, "results": []}
+
+
+def test_the_home_asks_no_database(client, monkeypatch):
+    monkeypatch.setattr(studio_app, "cfg", SimpleNamespace(databases=[
+        SimpleNamespace(name="shop", dialect="hive", exclude_personal_data=False)]))
+    monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: pytest.fail("the home reads the files only"))
+    [base] = client.get("/api/overview").json()
+    assert base["name"] == "shop" and base["dialect"] == "hive" and base["source"] == "files"
+    # The tables the files and the last index know: none is gone, the database was not read
+    assert base["summary"]["tables"] == 3 and base["summary"]["described"] == 1 and base["summary"]["isolated"] == 3
+    assert base["index"]["gone"] == [] and base["index"]["joins"] == 1 and base["index"]["hidden"] == ["invoice.email"]
+
+    # The search goes through the semantic layer of every database: email is hidden from the agent
+    found = client.get("/api/search", params={"q": "EMAIL"}).json()
+    assert found == {"total": 1, "bases": 1, "results": [{"db": "shop", "table": "invoice", "column": "email",
+                                                          "description": "Email.", "hidden": True, "categorical": False}]}
+
+
+def test_the_text_of_a_document_masks_the_data():
+    trace = make_trace()
+    trace["tables"]["invoice"]["values"]["country"] = {"count": 12, "inline": True}
+    text = document_text("invoice", trace, "hive")
+    # what the agent reads, rendered by its own function
+    assert text.splitlines()[:4] == ["-- Table: invoice", "-- Description: One row per purchase.", "-- Data as of: 2024-07-10",
+                                     "-- Joins: invoice.customerid = customer.customerid"]
+    assert "\t`total` STRING,  -- Amount. [stored as text: decimal number]" in text
+    # the values listed in the document and the sample rows masked; the values searched only are not in it
+    assert "\t`country` STRING  -- Values: ‹12 valeurs›" in text and "Values" not in text.split("`city`")[1].split("\n")[0]
+    assert text.endswith("/*\n‹3 lignes d'exemple›\n*/")
+    # a table without description: its raw DDL; a table the index does not hold: nothing
+    assert document_text("customer", trace, "hive").startswith("CREATE TABLE `customer` (\n\t`customerid` INT,\n\t`name` STRING\n)")
+    assert document_text("unknown", trace, "hive") is None

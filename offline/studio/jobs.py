@@ -6,7 +6,8 @@ Makefile runs, one job at a time (a Hive or Impala job at a time, and one writer
 The studio process stays light (no model, no Chroma) and a job can be stopped.
 
 The output is kept line by line, its colors stripped; the lines of the CLI give the progress
-("Profiling: <table>", "Not profiled: <table>", "Fetching values: <table>", "[3/23] <question>").
+("Profiling: <table>", "Not profiled: <table>", "Fetching values: <table>", "[3/23] <question>")
+and what a job found (what the profile detected, the relations added).
 """
 
 import os
@@ -28,7 +29,15 @@ LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\d (?P<time>\d\d:\d\d:\d\d) \| (?P<level>\
 # A table started: profiled one at a time, described up to 8 at a time (offline/semantic_gen/tables.py)
 STARTED  = re.compile(r"\] (?:Profiling|Describing): (?P<table>\S+)$")
 FAILED   = re.compile(r"\] Not profiled: (?P<table>\S+) ")
-CHECKING = "] Checking: "   # a relation measured on the data (offline/semantic_gen/relationships.py)
+# What the profile detected in a table measured (offline/semantic_gen/profiling.py)
+DETECTED = re.compile(r"\] Detected in \S+: (?P<formats>\d+) format\(s\), (?P<empty>\d+) empty column\(s\), "
+                      r"(?P<personal>\d+) personal data column\(s\)$")
+# A search of relations (offline/semantic_gen/relationships.py): the LLM asked, then the relations measured
+# on the data one by one, then the new ones added
+ASKING_LLM    = "] Asking the LLM for the other relations"
+TO_CHECK      = re.compile(r"\] (?P<n>\d+) relation\(s\) to check$")
+CHECKING      = "] Checking: "
+NEW_RELATIONS = re.compile(r"\] (?P<n>\d+) new relation\(s\) added to relationships\.yaml")
 # The index (offline/indexer/schema_indexer.py): the values read table after table, then the documents
 # built and written into Chroma, then the value index
 FETCHING = re.compile(r"\] Fetching values: (?P<table>\S+) \(")
@@ -40,6 +49,10 @@ REWRITTEN = re.compile(r"\] \S+: (?P<rewritten>\d+) description\(s\) rewritten, 
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
 NOT_CANCELLED = "the running query could not be cancelled"
+
+# The steps, as the message of a job already running names them
+STEP_NAMES = {"profile": "profilage", "semantics": "description", "relations": "relations",
+              "metrics": "métriques", "index": "index", "eval": "évaluation"}
 
 
 @dataclass
@@ -61,10 +74,14 @@ class Job:
     failed: list[str] = field(default_factory=list)
     started_tables: list[str] = field(default_factory=list)   # every table started, in order
     checked: int = 0                                          # relations measured on the data
-    phase: str | None = None                                  # index: "documents", then "values" (PHASES)
+    to_check: int | None = None                               # ... out of the relations to measure
+    added: int | None = None                                  # relations: the new ones the search added
+    phase: str | None = None                                  # index: "documents", then "values" (PHASES);
+                                                              # relations: "llm", then "check"
     progress: list[int] | None = None                         # eval: [question, questions]
     rewritten: int = 0                                        # semantics --fresh: descriptions the LLM changed
     kept: int = 0                                             # ... and the ones corrected by hand it kept
+    detected: dict = field(default_factory=lambda: {"formats": 0, "empty": 0, "personal": 0})   # profile: summed
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -100,6 +117,15 @@ class Job:
             self.failed.append(failed["table"])
         elif CHECKING in message:
             self.checked += 1
+        elif detected := DETECTED.search(message):
+            for kind in self.detected:
+                self.detected[kind] += int(detected[kind])
+        elif ASKING_LLM in message:
+            self.phase = "llm"
+        elif to_check := TO_CHECK.search(message):
+            self.phase, self.to_check = "check", int(to_check["n"])
+        elif added := NEW_RELATIONS.search(message):
+            self.added = int(added["n"])
         elif CANCELLED in message or NOT_CANCELLED in message:
             self.cancel = "cancelled" if CANCELLED in message else "failed"
         self.lines.append(line)
@@ -126,6 +152,7 @@ class Job:
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
             "started_tables": self.started_tables, "checked": self.checked, "phase": self.phase, "progress": self.progress,
             "rewritten": self.rewritten, "kept": self.kept,
+            "detected": self.detected, "to_check": self.to_check, "added": self.added,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 
@@ -188,7 +215,8 @@ class JobRunner:
         """Start a job; RuntimeError while another one runs."""
         with self._lock:
             if self.job and self.job.running:
-                raise RuntimeError(f"A job is running: {self.job.step} on {self.job.db}")
+                running = STEP_NAMES.get(self.job.step, self.job.step)
+                raise RuntimeError(f"Un job tourne déjà : {running} sur {self.job.db}")
             env = dict(os.environ, PYTHONUNBUFFERED="1",
                        PYTHONPATH=os.pathsep.join(filter(None, [str(BASE_DIR / "src"), os.getenv("PYTHONPATH")])))
             self.job = Job(id=(self.job.id + 1 if self.job else 1), db=db, step=step, tables=tables, command=command)

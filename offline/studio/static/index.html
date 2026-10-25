@@ -9,56 +9,120 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/static/studio.css">
+<!-- The theme chosen before the page paints, not after its script: no flash of the other one -->
+<script>try { const t = localStorage.getItem("sql-agent-eval-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
 <div class="page">
 
   <!-- Three levels: the navigation (small), the title of the page with its actions (large), the content -->
   <header class="topbar">
-    <svg class="mark" width="22" height="22" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"/><path d="M8 9.5h10M8 13h6M8 16.5h8" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>
-    <span class="brand-name">Studio sémantique</span>
-    <span class="db-picker">
-      <select id="db-select" aria-label="Base de données"></select>
-      <button class="icon-btn" id="refresh" title="Relire la liste des tables dans la base" aria-label="Relire la base">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2m-.5-5v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 5v-5h-5"/></svg>
-      </button>
-    </span>
+    <a class="brand" href="#accueil" title="Accueil : toutes les bases">
+      <svg class="mark" width="22" height="22" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"/><path d="M8 9.5h10M8 13h6M8 16.5h8" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <span class="brand-name">Studio sémantique</span>
+    </a>
+    <!-- Where the page is: the home, the base (its picker), the tab -->
+    <nav class="crumbs" aria-label="Fil d'Ariane">
+      <span class="crumb-sep" aria-hidden="true">/</span>
+      <a href="#accueil">Accueil</a>
+      <span class="crumb-sep" aria-hidden="true">/</span>
+      <span class="db-picker">
+        <select id="db-select" aria-label="Base de données"></select>
+        <button class="icon-btn" id="refresh" title="Relire la liste des tables dans la base" aria-label="Relire la base">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2m-.5-5v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 5v-5h-5"/></svg>
+        </button>
+      </span>
+      <span class="crumb-sep" aria-hidden="true">/</span>
+      <span class="crumb-current" id="crumb-tab" aria-current="page"></span>
+    </nav>
+    <span class="wizard-title" id="wizard-title"></span>
     <span class="grow"></span>
-    <ol class="stepper" id="stepper" aria-label="Étapes du pipeline">
-      <li data-step="profile"><button>Profiling</button></li>
-      <li data-step="semantics"><button>Semantics</button></li>
-      <li data-step="relations"><button>Relations</button></li>
-      <li data-step="metrics"><button>Metrics</button></li>
-      <li data-step="index"><button>Index</button></li>
-    </ol>
+    <span class="home-mark">Accueil</span>
+    <button class="btn" id="wizard-quit" type="button">Quitter l'assistant</button>
+    <!-- The theme, as on the eval dashboard: light, the system's, dark -->
+    <div class="seg theme-seg" id="theme-switch" role="group" aria-label="Thème">
+      <button type="button" data-theme-mode="light" aria-label="Thème clair" title="Clair"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+      <button type="button" data-theme-mode="system" aria-label="Thème du système" title="Système"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
+      <button type="button" data-theme-mode="dark" aria-label="Thème sombre" title="Sombre"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    </div>
   </header>
 
-  <!-- Filled by studio.js from STEPS: the title, the sentence and the actions of the current step -->
-  <section class="page-head">
+  <!-- The home: the search through every database, then one card each (what the agent reads, its pipeline) -->
+  <section class="home" id="home" hidden>
     <div class="page-title">
-      <div class="eyebrow" id="step-number"></div>
-      <h1 id="step-title"></h1>
-      <p id="step-text"></p>
+      <div class="eyebrow">Accueil</div>
+      <h1>Ce que l'agent sait de vos bases</h1>
+      <p>Pour chaque base : ce qu'il lit, s'il est prêt, et l'étape qui le fera progresser.</p>
     </div>
-    <div class="page-actions">
-      <button class="btn" id="run-secondary"></button>
-      <button class="btn primary" id="run-primary"></button>
+    <div class="home-search">
+      <label for="home-search">Chercher dans les index</label>
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="home-search" type="search" autocomplete="off" placeholder="Chercher une table, une colonne ou un mot des descriptions, dans toutes les bases">
+      </div>
+      <p class="home-hint">Noms et descriptions des tables de toutes les bases, jamais leurs valeurs.</p>
+      <div class="search-results" id="search-results" aria-live="polite" hidden></div>
+    </div>
+    <div class="home-bases">
+      <div class="home-bases-head"><h2>Bases</h2><span class="muted-text" id="bases-count"></span></div>
+      <div class="bases" id="bases"><p class="placeholder">Lecture des bases…</p></div>
     </div>
   </section>
 
+  <!-- A base: its name and the actions on all of it, then its tabs (filled by studio.js from STEPS); the sentence
+       and the actions of the current tab in a bar of their own -->
+  <section class="page-head base-head">
+    <div class="page-title">
+      <div class="base-name"><h1 id="base-name"></h1><span class="pill kept" id="base-dialect"></span></div>
+      <p id="base-tagline"></p>
+      <span class="figures" id="base-meta"></span>
+    </div>
+    <div class="page-actions">
+      <button class="btn" id="base-eval" type="button" data-job>Évaluer l'agent</button>
+      <button class="btn" id="base-reindex" type="button" data-job>Réindexer</button>
+      <span class="menu-wrap">
+        <button class="btn icon" id="base-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Plus d'actions sur la base">
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+        </button>
+        <span class="menu" id="base-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="menu-wizard">Mise en place guidée</button>
+          <a role="menuitem" id="menu-eval" target="_blank" rel="noopener">Tableau d'évaluation ↗</a>
+        </span>
+      </span>
+    </div>
+  </section>
+  <nav class="tabs" id="tabs" aria-label="Onglets de la base"></nav>
+  <div class="tab-bar" id="tab-bar">
+    <p id="step-text"></p>
+    <div class="page-actions">
+      <button class="btn" id="run-secondary"></button>
+      <button class="btn primary" id="run-primary" data-job></button>
+    </div>
+  </div>
+
   <div class="banner" id="banner" hidden></div>
-  <div class="confirm page-confirm" id="confirm" role="group" aria-label="Redécrire la sélection" hidden></div>
+  <div class="confirm page-confirm" id="confirm" role="group" aria-label="Confirmer l'action" hidden></div>
 
   <section class="panel job" id="job" hidden>
     <div class="job-head">
       <span class="halo" id="job-halo"></span>
-      <span id="job-title"></span>
-      <span class="grow"></span>
-      <button class="btn ghost small" id="job-toggle">Masquer les logs</button>
+      <span class="job-title" id="job-title"></span>
+      <button class="btn ghost small" id="job-toggle">Détails</button>
       <button class="btn small" id="job-stop">Arrêter</button>
     </div>
-    <pre class="log" id="job-log"></pre>
+    <pre class="log" id="job-log" hidden></pre>
   </section>
+
+  <!-- The guided setup of a base, opened on purpose: its five steps on the left, the current one on the right -->
+  <section class="wizard" id="wizard" hidden>
+    <nav class="wizard-rail" aria-label="Étapes de la mise en place">
+      <ol class="panel" id="wizard-steps"></ol>
+      <p class="muted-text">Tu peux quitter à tout moment : ce qui est fait reste, et la carte de la base sur l'accueil propose de reprendre ici.</p>
+    </nav>
+    <section class="panel wizard-panel" id="wizard-panel" aria-live="polite"></section>
+  </section>
+
+  <button class="btn ghost small back-to-list" id="back-to-list" type="button">← Tables</button>
 
   <div class="main">
     <section class="panel list" aria-label="Tables">
@@ -69,16 +133,26 @@
           <button class="chip on" data-filter="all">Toutes</button>
           <button class="chip" data-filter="todo"></button>
           <button class="chip" data-filter="review" hidden></button>
+          <button class="chip" data-filter="noread" hidden></button>
         </div>
+        <label class="type-filter" id="type-filter-wrap" hidden>Type
+          <select id="type-filter" aria-label="Type de table">
+            <option value="">tous les types</option><option value="events"></option><option value="entity"></option>
+            <option value="reference"></option><option value="bridge"></option><option value="none"></option>
+          </select>
+        </label>
       </div>
       <div class="row head">
         <input type="checkbox" id="select-all" aria-label="Tout sélectionner">
         <span id="list-name">Table</span>
         <span id="list-status">Statut</span>
       </div>
-      <div id="rows"></div>
-      <div class="empty" id="empty" hidden>Aucune table ne correspond.</div>
-      <div id="list-extra"></div>
+      <!-- The rows scroll inside the list when it is taller than the screen: its search and filters stay above them -->
+      <div class="list-scroll" id="list-scroll">
+        <div id="rows"></div>
+        <div class="empty" id="empty" hidden>Aucune table ne correspond.</div>
+        <div id="list-extra"></div>
+      </div>
     </section>
 
     <section class="panel detail" id="detail" aria-live="polite">
