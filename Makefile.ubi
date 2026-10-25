@@ -40,7 +40,7 @@ build:  ## Rebuild the image (after a change of the code, the dependencies or pu
 check:  ## Show the settings of DB as the app reads them, then connect and list its tables
 	@$(RUN_T) python -c "from config import cfg; db = cfg.get_db('$(DB)'); \
 	print('dialect:', db.dialect, '| uri:', db.uri); \
-	print('sample_rows:', db.sample_rows, '| semantic_language:', db.semantic_language, '| query limits:', db.query_options); \
+	print('sample_rows:', db.sample_rows, '| user_language:', db.user_language, '| query limits:', db.query_options); \
 	print('include_tables:', len(db.include_tables) or 'all'); \
 	from resources import db_registry; tables = sorted(db_registry['$(DB)'].get_usable_table_names()); \
 	print(len(tables), 'tables visible:', ', '.join(tables))"
