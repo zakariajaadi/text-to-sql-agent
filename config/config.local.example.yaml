@@ -17,7 +17,7 @@ databases:
     dialect: "impala"
     max_rows: 100
     sample_rows: 0              # no data row under the DDLs (indexed, sent to the LLM); 3 by default
-    semantic_language: French   # language of the generated descriptions (make semantics); English by default
+    user_language: French       # language users ask in: descriptions and metric synonyms (make semantics), judge reasonings (make eval); English by default
     exclude_personal_data: true # make semantics excludes the columns make profile flags as personal data
     tagline: "One line presenting the data."
     include_tables:              # the agent only sees these tables (all of them if omitted)

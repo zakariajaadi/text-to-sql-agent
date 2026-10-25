@@ -322,6 +322,7 @@ class EvaluationRunner:
                 schema=self.schema,
                 ground_truth=gt_text,
                 generated_sql=generated_sql,
+                language=cfg.get_db(self.db).user_language,
             )),
         ])
 

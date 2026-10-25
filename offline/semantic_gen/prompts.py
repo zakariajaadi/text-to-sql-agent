@@ -122,7 +122,7 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    total_ or sales_ (revenue, not total_revenue or sales_revenue).
    Never propose a metric listed in EXISTING METRICS or REJECTED METRICS, nor another name
    for one of their expressions.
-9. Synonyms: 3 to 8 words users may use for the metric, in English and in {languages}.
+9. Synonyms: 3 to 8 words users may use for the metric, in {languages}.
 10. Write the descriptions in {language}, the language users ask their questions in.
 
 ## COLUMN ROLES

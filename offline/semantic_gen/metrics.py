@@ -27,9 +27,6 @@ from resources import db_registry, model
 # Constants
 # ------------------------------------------------------------
 
-# Languages of the metric synonyms, besides English: the languages users ask in
-SYNONYM_LANGUAGES = "French"
-
 # Column types, from the type name reported by SQLAlchemy (Hive types don't subclass the generic ones)
 NUMERIC_TYPES  = ("int", "decimal", "numeric", "float", "double", "real")
 TEMPORAL_TYPES = ("date", "time")
@@ -88,11 +85,13 @@ def generate_metrics(db_name: str):
     entries, ignored = read_metrics_file(db_name)
 
     # ---  2. LLM proposals
+    # Synonyms in English (the words of the schema) and in the language users ask in
+    language  = cfg.get_db(db_name).user_language
     proposals = metrics_chain.invoke({
         "db_name":   db_name,
         "dialect":   dialect,
-        "languages": SYNONYM_LANGUAGES,
-        "language":  cfg.get_db(db_name).semantic_language,
+        "languages": "English" if language == "English" else f"English and {language}",
+        "language":  language,
         "roles":     _render_roles(roles, measure_tables, fact_tables),
         "existing":  "\n".join(f"- {name}: {entry.get('expr')}" for name, entry in entries.items()) or "None",
         "rejected":  ", ".join(ignored) or "None",

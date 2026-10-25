@@ -56,9 +56,9 @@ def test_sample_rows_default_and_override():
     assert DatabaseConfig(name="Sales", dialect="impala", sample_rows=0).sample_rows == 0
 
 
-def test_semantic_language_defaults_to_english():
-    assert DatabaseConfig(name="Chinook", dialect="hive").semantic_language == "English"
-    assert DatabaseConfig(name="Sales", dialect="impala", semantic_language="French").semantic_language == "French"
+def test_user_language_defaults_to_english():
+    assert DatabaseConfig(name="Chinook", dialect="hive").user_language == "English"
+    assert DatabaseConfig(name="Sales", dialect="impala", user_language="French").user_language == "French"
 
 
 def test_manual_semantics_drops_only_the_generated_keys():

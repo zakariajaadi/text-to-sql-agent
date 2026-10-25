@@ -97,6 +97,9 @@ JUDGE_USER_PROMPT = """
 
 ## GENERATED QUERY TO EVALUATE
 {generated_sql}
+
+## REASONING LANGUAGE
+Write each reasoning in {language}.
 """
 
 

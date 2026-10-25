@@ -84,7 +84,7 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     """
     Generates a semantic layer via LLM into semantic_layer/<db>/tables.yaml: missing table
     and column descriptions, and which columns are categorical, written in the database's
-    `semantic_language` (the language users ask in).
+    `user_language` (the language users ask in).
 
     Compares current DB tables and columns against `semantic_layer/<db>/tables.yaml`.
     Only missing tables, tables with undocumented columns, or tables without
@@ -109,7 +109,7 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
         before   = {table: entry for table, entry in existing.items() if not tables or table in tables}
         existing = {table: kept_on_fresh(entry, replace_edited) if table in before else entry
                     for table, entry in existing.items()}
-    language   = cfg.get_db(db_name).semantic_language
+    language   = cfg.get_db(db_name).user_language
     profile    = load_profile(db_name)
     personal   = cfg.get_db(db_name).exclude_personal_data
 

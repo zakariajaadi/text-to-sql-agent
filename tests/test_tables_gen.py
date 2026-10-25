@@ -36,7 +36,7 @@ def llm(tmp_path, monkeypatch):
     monkeypatch.setattr(lib.semantics, "SEMANTIC_LAYER_DIR", tmp_path)
     monkeypatch.setattr(tables, "db_registry", {"shop": SQLDatabase.from_uri(f"sqlite:///{tmp_path / 'shop.sqlite'}")})
     monkeypatch.setattr(tables, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(
-        semantic_language="French", exclude_personal_data=False)))
+        user_language="French", exclude_personal_data=False)))
     fake = FakeLLM()
     monkeypatch.setattr(tables, "semantics_chain", fake)
     return fake
