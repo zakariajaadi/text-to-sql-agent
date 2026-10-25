@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 from langchain_community.utilities import SQLDatabase
+from loguru import logger
 
 import lib.semantics
 from offline.semantic_gen import relationships, utils
@@ -66,3 +67,21 @@ def test_check_measures_again_without_the_llm(bank, monkeypatch):
     relationships.check_relations("bank")
     assert yaml.safe_load(bank.read_text())["relations"] == [{"from": "compte.id_client", "to": "client.id_client",
                                                               "found": 0.5}]
+
+
+def test_the_progress_of_a_search_is_logged(bank):
+    messages = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        relationships.infer_fk_relations("bank")
+        relationships.check_relations("bank")
+    finally:
+        logger.remove(sink)
+    # read by the studio (offline/studio/jobs.py): the LLM asked, the relations to measure, the ones added
+    assert [m.strip() for m in messages if "LLM" in m or "relation(s)" in m] == [
+        "[bank] Asking the LLM for the other relations",
+        "[bank] 2 relation(s) to check",   # the one written before and the LLM's, the profile's is measured
+        "[bank] 2 new relation(s) added to relationships.yaml — review them.",
+        "[bank] 3 relation(s) to check",
+        "[bank] 3 relation(s) checked on the data",
+    ]

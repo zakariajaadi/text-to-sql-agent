@@ -76,6 +76,7 @@ def infer_fk_relations(db_name: str):
             logger.info(f"[{db_name}] Not a relation: {source} -> {target} ({overlap:.0%} of the values found)")
 
     # 2. Infer the other relations from the schemas (DDL + reviewed semantics)
+    logger.info(f"[{db_name}] Asking the LLM for the other relations")
     inferred = fk_relations_chain.invoke({
         "db_name": db_name,
         "schemas": render_schemas(db, db_name),
@@ -102,12 +103,13 @@ def infer_fk_relations(db_name: str):
     entry["relations"].extend(added)
 
     # 5. The evidence of every relation that has none: the LLM's, and the ones written before
-    for relation in entry["relations"]:
-        if "found" not in relation:
-            measure(db, db_name, relation)
-            if relation.get("origin") == "llm" and (relation["found"] or 0) < KEY_OVERLAP:
-                logger.warning(f"[{db_name}] To check: {relation['from']} -> {relation['to']} "
-                               f"({relation['found'] or 0:.0%} of the values found), kept for review")
+    unchecked = [relation for relation in entry["relations"] if "found" not in relation]
+    logger.info(f"[{db_name}] {len(unchecked)} relation(s) to check")
+    for relation in unchecked:
+        measure(db, db_name, relation)
+        if relation.get("origin") == "llm" and (relation["found"] or 0) < KEY_OVERLAP:
+            logger.warning(f"[{db_name}] To check: {relation['from']} -> {relation['to']} "
+                           f"({relation['found'] or 0:.0%} of the values found), kept for review")
 
     write_relations_file(db_name, entry)
     logger.info(f"[{db_name}] {len(added)} new relation(s) added to relationships.yaml — review them.")
@@ -117,6 +119,7 @@ def check_relations(db_name: str):
     """Measure again the evidence (found) of every declared relation, no LLM (`fk-relations --check`)."""
     db    = db_registry[db_name]
     entry = load_relations_file(db_name)
+    logger.info(f"[{db_name}] {len(entry['relations'])} relation(s) to check")
     for relation in entry["relations"]:
         measure(db, db_name, relation)
     write_relations_file(db_name, entry)

@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 import yaml
 from langchain_community.utilities import SQLDatabase
+from loguru import logger
 
 import lib.semantics
 from offline.eval.eval_lib.execution import _normalize_row
@@ -257,6 +258,20 @@ def test_profile_every_table_keeps_the_entry_of_a_failing_one(bank, monkeypatch)
     profile = lib.semantics.load_profile("bank")
     assert profile["client"] == {"rows": 999}
     assert profile["compte"]["rows"] == 3
+
+
+def test_profile_logs_what_it_detected_in_each_table(bank):
+    messages = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        profiling.profile_database(bank, "bank")
+    finally:
+        logger.remove(sink)
+    # read by the studio (offline/studio/jobs.py), to tell what a profile found
+    assert [m.strip() for m in messages if "Detected in" in m] == [
+        "[bank] Detected in client: 0 format(s), 1 empty column(s), 0 personal data column(s)",
+        "[bank] Detected in compte: 0 format(s), 0 empty column(s), 0 personal data column(s)",
+    ]
 
 
 def test_distinct_values_counted_on_the_sample_a_few_columns_per_query(bank, monkeypatch):

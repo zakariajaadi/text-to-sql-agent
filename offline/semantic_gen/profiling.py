@@ -13,6 +13,9 @@ Read by the generators so the semantic layer states facts instead of guesses:
       facts, giving the empty ones.
     - personal data: columns whose name says so (names, ids, contacts, free text, authors),
       or whose values look like logins or emails.
+    - partitions (Hive, Impala): the columns a table is partitioned by and its number of partitions,
+      read from the metastore without a scan. The studio tells from them how the agent must read
+      the table (read_mode, offline/studio/reading.py).
 
 Formats and empty columns are data-driven: each table measured gets them in tables.yaml at once,
 when it has none yet (apply_profile), the studio making the exceptions. Each run replaces the
@@ -37,6 +40,7 @@ PROFILE_HEADER = """\
 # Data profile, measured by `make profile` (no LLM): the tables measured replace their entry, never edited.
 # Read by `make semantics` (row facts, proposed formats and exclusions) and `make relations`.
 #   rows, keys          : row count, and per identifier-like column its non-null and distinct values
+#   partitions          : Hive, Impala: number of partitions (0: not partitioned), partitioned_by their columns
 #   text_columns        : filled share, main value shapes (digits → 9, letters → a) and distinct values, on a sample
 #   filled              : filled share of the other columns (numbers, dates...), on every row
 #   formats, exclude    : what the profile proposes for tables.yaml, with the reason of each exclusion
@@ -49,6 +53,7 @@ MAX_SHAPES        = 6         # shapes kept per column in the profile
 DISTINCT_BATCH    = 10        # text columns whose distinct values one query counts (a small Hive runs out of memory)
 EMPTY_FILL        = 0.01      # a column filled below this share is proposed for exclusion
 FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share of the filled values
+PARTITIONED       = ("hive", "impala")   # the engines whose tables have partitions (DESCRIBE FORMATTED)
 
 # Identifier-like column names: numero_x, id_x, x_id, xid, x_host...
 KEY_NAME  = re.compile(r"^(numero|num|nr|id|n)_|(id|_host)$")
@@ -122,6 +127,11 @@ def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = N
         except Exception as e:
             logger.warning(f"[{db_name}] Not profiled: {table} — {str(e).splitlines()[0][:200]}")
             continue
+        # What it detected, for the studio to tell (offline/studio/jobs.py)
+        formats = len(measured[table].get("formats") or {})
+        reasons = list((measured[table].get("exclude") or {}).values())
+        logger.info(f"[{db_name}] Detected in {table}: {formats} format(s), {reasons.count('empty')} empty column(s), "
+                    f"{reasons.count('personal data')} personal data column(s)")
         # Written after each table: a run stopped or failing on a later table keeps the ones measured
         _write_profile(path, merge_profiles(usable, existing, measured))
         _apply_to_tables_yaml(db_name, measured, [table], personal)
@@ -215,7 +225,7 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
     shapes   = {column: _text_shapes(db, table, column, quote) for column in texts}
     distinct = _distinct_counts(db, table, texts, quote)
 
-    entry = {"rows": rows, "keys": key_counts, "text_columns": {}}
+    entry = {"rows": rows, **_partitions(db, table, quote), "keys": key_counts, "text_columns": {}}
     if other_counts:
         entry["filled"] = {column: round(n / rows, 3) if rows else 0.0 for column, n in other_counts.items()}
     formats, exclude = {}, {}
@@ -254,6 +264,48 @@ def profile_table(db: SQLDatabase, table: str, columns: list[dict], quote) -> di
 # ------------------------------------------------------------
 # Queries
 # ------------------------------------------------------------
+
+def _partitions(db: SQLDatabase, table: str, quote) -> dict:
+    """
+    {"partitions": n, "partitioned_by": [columns]} of a Hive or Impala table, read from the metastore
+    (DESCRIBE FORMATTED, SHOW PARTITIONS: no scan of the data); {"partitions": 0} when it is not partitioned.
+    Nothing for another engine, or when the metastore does not answer (a warning: the profile is an enrichment).
+    """
+    if db._engine.dialect.name not in PARTITIONED:
+        return {}
+    try:
+        with db._engine.connect() as conn:
+            columns = partition_columns(conn.execute(text(f"DESCRIBE FORMATTED {quote(table)}")).fetchall())
+            if not columns:
+                return {"partitions": 0}
+            listed = conn.execute(text(f"SHOW PARTITIONS {quote(table)}")).fetchall()
+    except Exception as e:
+        logger.warning(f"Partitions of {table} not read — {str(e).splitlines()[0][:200]}")
+        return {}
+    return {"partitions": partition_count(listed), "partitioned_by": columns}
+
+
+def partition_columns(rows) -> list[str]:
+    """
+    The partition columns in the rows of DESCRIBE FORMATTED: the names under "# Partition Information",
+    after its "# col_name" header (and the blank line Impala adds), up to the next blank line.
+    """
+    names, inside = [], False
+    for row in rows:
+        name = str(row[0] or "").strip()
+        if name == "# Partition Information":
+            inside = True
+        elif inside and name and not name.startswith("#"):
+            names.append(name)
+        elif inside and names:
+            break
+    return names
+
+
+def partition_count(rows) -> int:
+    """The partitions SHOW PARTITIONS lists: one row each (date=2024-01-31 on Hive), Impala adding a Total row."""
+    return sum(str(row[0]).strip() != "Total" for row in rows)
+
 
 def _count_rows(db: SQLDatabase, table: str, keys: list[str], quote,
                 others: list[str] = ()) -> tuple[int, dict, dict]:
