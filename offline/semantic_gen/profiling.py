@@ -54,6 +54,7 @@ DISTINCT_BATCH    = 10        # text columns whose distinct values one query cou
 EMPTY_FILL        = 0.01      # a column filled below this share is proposed for exclusion
 FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share of the filled values
 PARTITIONED       = ("hive", "impala")   # the engines whose tables have partitions (DESCRIBE FORMATTED)
+PARTITION_SECTIONS = ("# Partition Information", "# Partition Transform Information")   # Hive tables, Iceberg
 
 # Identifier-like column names: numero_x, id_x, x_id, xid, x_host...
 KEY_NAME  = re.compile(r"^(numero|num|nr|id|n)_|(id|_host)$")
@@ -287,13 +288,14 @@ def _partitions(db: SQLDatabase, table: str, quote) -> dict:
 
 def partition_columns(rows) -> list[str]:
     """
-    The partition columns in the rows of DESCRIBE FORMATTED: the names under "# Partition Information",
-    after its "# col_name" header (and the blank line Impala adds), up to the next blank line.
+    The partition columns in the rows of DESCRIBE FORMATTED: the names under "# Partition Information"
+    ("# Partition Transform Information" on an Iceberg table of Impala: the source column of each
+    transform), after its "# col_name" header (and the blank line Impala adds), up to the next blank line.
     """
     names, inside = [], False
     for row in rows:
         name = str(row[0] or "").strip()
-        if name == "# Partition Information":
+        if name in PARTITION_SECTIONS:
             inside = True
         elif inside and name and not name.startswith("#"):
             names.append(name)

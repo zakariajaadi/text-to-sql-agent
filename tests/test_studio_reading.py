@@ -75,8 +75,12 @@ def test_the_partition_columns_read_from_describe_formatted():
     impala = [("# col_name            ", "data_type", "comment"), ("", None, None), ("id", "int", None), ("", None, None),
               ("# Partition Information", None, None), ("# col_name            ", "data_type", "comment"), ("", None, None),
               ("annee", "int", None), ("mois", "int", None), ("", None, None), ("# Detailed Table Information", None, None)]
+    iceberg = [("id", "int", None), ("", None, None), ("# Partition Transform Information", None, None),
+               ("# col_name            ", "transform_type", None), ("", None, None), ("date_arrete", "DAY", None),
+               ("", None, None), ("# Detailed Table Information", None, None)]
     assert partition_columns(hive) == ["date_technique"]
     assert partition_columns(impala) == ["annee", "mois"]
+    assert partition_columns(iceberg) == ["date_arrete"]
     assert partition_columns(hive[:3] + hive[6:]) == []
     assert partition_count([("date_technique=2026-09-25",), ("date_technique=2026-09-26",)]) == 2
     assert partition_count([("2026", "1", 120), ("2026", "2", 98), ("Total", "", 218)]) == 2   # Impala adds a total
