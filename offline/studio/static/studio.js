@@ -653,10 +653,12 @@ function renderProfile(d, el, message) {
     return;
   }
 
-  // Figures of the profile, one line under the name (the key is said by its pill in the table)
-  const parts = d.reading?.partitioned_by || [];
-  const figures = [plural(d.rows, "ligne"), plural(d.columns ?? d.column_facts.length, "colonne"),
-    parts.length ? `${d.reading.partitions ? plural(d.reading.partitions, "partition") : "partitionnée"} par ${esc(parts.join(", "))}` : null,
+  // Figures of the profile, one line under the name (the key is said by its pill in the table); the partitions
+  // said in the three cases, just above the read mode they explain (nothing on an engine without partitions)
+  const r = d.reading, parts = r?.partitioned_by || [];
+  const partitions = parts.length ? `partitionnée par ${esc(parts.join(", "))}${r.partitions ? ` (${plural(r.partitions, "partition")})` : ""}`
+    : r?.partitions === 0 ? "non partitionnée" : r?.unread ? "partitions non lues" : null;
+  const figures = [plural(d.rows, "ligne"), plural(d.columns ?? d.column_facts.length, "colonne"), partitions,
     d.detected ? `${plural(d.detected, "format")} ${d.detected > 1 ? "détectés" : "détecté"}` : "aucun format détecté"].filter(Boolean);
   const error = message ? `<p class="note error">${esc(message)}</p>` : "";
   // A profile of an older profiler: what it did not measure, completed without measuring the rest again

@@ -253,6 +253,9 @@ button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 
 /* Figures of the profile: one line next to the name */
 .figures { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); }
+/* The figures take the free room of the head (the spacer none): a long line wraps under itself, the actions stay on the right */
+.detail-head > .figures { flex: 1 1 0; min-width: 14em; }
+.detail-head > .figures ~ .grow { flex: 0; }
 
 /* Columns: declared type against what the profile found */
 .columns { border-top: 1px solid var(--line); }
@@ -894,6 +897,7 @@ body[data-view="home"] .home-mark { display: inline-flex; }
   /* a card: its actions on the line of its name, its figures under them */
   .detail-head { row-gap: 2px; }
   .detail-head > .figures { order: 3; flex-basis: 100%; }
+  .detail-head > .figures ~ .grow { flex: 1; }
   /* the menus of the properties open under their bar, not under their pill: they fit the screen; the band in a column */
   .prop-wrap { position: static; }
   .band { flex-direction: column; align-items: stretch; }
