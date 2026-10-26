@@ -496,6 +496,25 @@ $("rows").addEventListener("click", (e) => {
   openTable(name);
 });
 
+// ↓ and ↑ open the next or the previous row of the list as shown (filters and search applied), as a click would: a
+// table, its place on the map of Relations, a metric; ↓ opens the first one when none is. The arrows keep their own
+// use in a field, while a menu is open, with a modifier, and where there is no list (home, guided setup, overview)
+function stepRow(by) {
+  const rows = [...$("rows").querySelectorAll(":scope > .row")];
+  const at = rows.findIndex((row) => row.classList.contains("current"));
+  const next = at < 0 ? (by > 0 ? rows[0] : null) : rows[at + by];
+  if (!next) return false;
+  if (ui.step === "metrics") openMetric(next.dataset.metric, "metric");
+  else openTable(next.dataset.table);
+  return true;
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.target.closest?.("textarea, select, [contenteditable], input:not([type=checkbox])")) return;
+  if (document.querySelector(".type-menu:not([hidden]), .menu:not([hidden])") || !$("rows").offsetParent) return;
+  if (stepRow(e.key === "ArrowDown" ? 1 : -1)) e.preventDefault();
+});
+
 $("select-all").addEventListener("change", (e) => {
   visibleRows().forEach((t) => (e.target.checked ? ui.selected.add(t.name) : ui.selected.delete(t.name)));
   renderRows();
