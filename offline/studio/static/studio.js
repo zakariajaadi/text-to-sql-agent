@@ -171,6 +171,8 @@ function switchDb(db) {
 function renderStep() {
   const step = STEPS[ui.step];
   $("step-text").textContent = step.text || "";
+  $("origin-legend").innerHTML = ORIGIN_LEGEND;
+  $("origin-legend").hidden = !ORIGIN_STEPS.includes(ui.step);
   $("tab-bar").hidden = !step.text && !step.primary;
   $("crumb-tab").textContent = step.title;
   if (!ui.home && !ui.wizard) document.title = `${step.title} · ${ui.db} · Studio sémantique`;
@@ -380,7 +382,7 @@ function renderRows() {
   $("rows").innerHTML = rows.map((t) => `<div class="row${t.name === ui.current ? " current" : ""}" data-table="${esc(t.name)}">
       <input type="checkbox" ${ui.selected.has(t.name) ? "checked" : ""} aria-label="Sélectionner ${esc(t.name)}">
       ${ui.step === "profile" ? `<span class="cell named" title="${esc(t.name)}"><span>${esc(t.name)}</span>`
-        + `<small>${typeName(t.type).toLowerCase()}${t.type_edited ? " · corrigé à la main" : ""}</small></span>`
+        + `<small>${t.type_edited ? `${originMark("you", "Type corrigé par toi")} ` : ""}${typeName(t.type).toLowerCase()}</small></span>`
         : `<span class="cell" title="${esc(t.name)}">${esc(t.name)}</span>`}
       ${statusPill(t)}
     </div>`).join("");
@@ -580,41 +582,46 @@ const pillButton = (c, action, style, label, title, icon = "") =>
 const EYE = '<svg class="eye" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>';
 const EYE_OFF = '<svg class="eye" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><path d="M2.5 13.5l11-11"/></svg>';
 
-// A format the profile detects: applied, kept as text on purpose, or not applied (a table reviewed before)
+// A format the profile detects, its mark before it: applied, or not yet (the data); kept as text or read in another
+// format (you)
 function formatPill(c, p) {
   const label = formatLabel(p.value), share = p.share != null ? `${pct(p.share)} des valeurs` : "la plupart des valeurs";
-  if (p.state === "accepted") return pillButton(c, "text", "type", label, `Lue comme ${label} : ${share}. Cliquer pour la garder en texte.`);
-  if (p.current) return `<span class="pill type" title="Format revu à la main (le profil détecte ${esc(label)})">${esc(formatLabel(p.current))}</span>`;
-  if (p.state === "rejected") return pillButton(c, "format", "refused", label, `Détectée comme ${label} (${share}), gardée en texte. Cliquer pour la lire comme ${label}.`);
-  return pillButton(c, "format", "type pending", label, `Détectée comme ${label} (${share}), pas encore appliquée. Cliquer pour l'appliquer.`);
+  if (p.state === "accepted") return withOrigin("data", pillButton(c, "text", "type", label, `Lue comme ${label} : ${share}. Cliquer pour la garder en texte.`), "Détecté sur les données");
+  if (p.current) return withOrigin("you", `<span class="pill type" title="Format revu par toi (le profil détecte ${esc(label)})">${esc(formatLabel(p.current))}</span>`, "Revu par toi");
+  if (p.state === "rejected") return withOrigin("you", pillButton(c, "format", "refused", label, `Détectée comme ${label} (${share}), gardée en texte par toi. Cliquer pour la lire comme ${label}.`), "Gardée en texte par toi");
+  return withOrigin("data", pillButton(c, "format", "type pending", label, `Détectée comme ${label} (${share}), pas encore appliquée. Cliquer pour l'appliquer.`), "Détecté sur les données");
 }
 
-// An empty column: hidden, kept visible on purpose, or not hidden yet
+// An empty column, its mark before it: hidden, or not yet (the data); kept visible (you)
 function emptyPill(c, p) {
   const label = c.filled ? "quasi vide" : "vide", filled = c.filled ? `remplie à ${pct(c.filled)}` : "jamais remplie";
-  if (p.state === "accepted") return pillButton(c, "show", "off", `${label} · cachée`, `Cachée à l'agent : ${filled}. Cliquer pour la laisser visible.`, EYE_OFF);
-  if (p.state === "rejected") return pillButton(c, "hide", "refused", label, `${filled}, gardée visible exprès. Cliquer pour la cacher.`);
-  return pillButton(c, "hide", "decide pending", label, `${filled}, pas encore cachée. Cliquer pour la cacher.`);
+  if (p.state === "accepted") return withOrigin("data", pillButton(c, "show", "off", `${label} · cachée`, `Cachée à l'agent : ${filled}. Cliquer pour la laisser visible.`, EYE_OFF), "Détecté sur les données");
+  if (p.state === "rejected") return withOrigin("you", pillButton(c, "hide", "refused", label, `${filled}, gardée visible par toi. Cliquer pour la cacher.`), "Gardée visible par toi");
+  return withOrigin("data", pillButton(c, "hide", "decide pending", label, `${filled}, pas encore cachée. Cliquer pour la cacher.`), "Détecté sur les données");
 }
 
 // Personal data, hidden in the whole database at once (personal bar): the pill says its state and makes the exception.
-// Grey once hidden (the result wanted), an outline when kept visible on purpose, amber while the agent sees it (to decide)
+// Grey once hidden (the result wanted), an outline when kept visible on purpose, amber while the agent sees it (to decide);
+// its origin: the data (detected by its name or its values), you for the exception
 const PERSONAL_PILLS = {
-  hidden:  ["show", "off", "personnelle · cachée", "Cachée à l'agent. Cliquer pour la laisser visible.", EYE_OFF],
-  kept:    ["hide", "kept", "personnelle · visible exprès", "Gardée visible exprès. Cliquer pour la cacher.", EYE],
-  visible: ["hide", "decide", "personnelle · visible par l'agent", "Visible par l'agent, à décider. Cliquer pour la cacher.", EYE],
+  hidden:  ["data", "show", "off", "personnelle · cachée", "Cachée à l'agent. Cliquer pour la laisser visible.", EYE_OFF],
+  kept:    ["you", "hide", "kept", "personnelle · visible exprès", "Gardée visible par toi. Cliquer pour la cacher.", EYE],
+  visible: ["data", "hide", "decide", "personnelle · visible par l'agent", "Visible par l'agent, à décider. Cliquer pour la cacher.", EYE],
 };
 
-// "Contenu détecté": what the data holds when it differs from the declared type, each pill an exception
+// "Contenu détecté": what the data holds when it differs from the declared type, each pill an exception, its origin before it
 function detected(c) {
   const parts = [];
   const format = c.proposals.find((p) => p.kind === "format");
   if (format) parts.push(formatPill(c, format));
-  else if (c.format) parts.push(`<span class="pill type" title="Format écrit à la main dans tables.yaml">${esc(formatLabel(c.format))}</span>`);
+  else if (c.format) parts.push(withOrigin("you", `<span class="pill type" title="Format écrit par toi dans tables.yaml">${esc(formatLabel(c.format))}</span>`, "Écrit par toi"));
   if (c.ambiguous) parts.push('<span class="muted-text" title="Aucune valeur ne dit si le jour vient avant le mois : lue en jj/mm, la convention des données vues jusqu\'ici.">jour/mois ?</span>');
   const empty = c.proposals.find((p) => p.kind === "exclude");
   if (empty) parts.push(emptyPill(c, empty));
-  if (c.personal) parts.push(pillButton(c, ...PERSONAL_PILLS[c.personal]));
+  if (c.personal) {
+    const [origin, ...pill] = PERSONAL_PILLS[c.personal];
+    parts.push(withOrigin(origin, pillButton(c, ...pill), origin === "you" ? "Gardée visible par toi" : "Détectée sur les données"));
+  }
   return parts.join(" ");
 }
 
@@ -668,7 +675,7 @@ function renderProfile(d, el, message) {
 
   // Columns: declared type against what the profile found (distinct values of a text column: on the sample of the profile)
   const lines = d.column_facts.map((c) => `<div class="line${c.excluded ? " hidden-col" : ""}">
-      <span class="cell">${esc(c.column)}${c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : ""}${hiddenByHand(c) ? ' <span class="pill off">cachée</span>' : ""}</span>
+      <span class="cell">${esc(c.column)}${c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : ""}${hiddenByHand(c) ? ` ${withOrigin("you", '<span class="pill off">cachée</span>', "Cachée par toi")}` : ""}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
       ${found(c)}
       <span class="fill">${fillBar(c.filled, d.outdated?.includes("filled") ? "Pas mesuré par ce profil" : "")}</span>
@@ -715,14 +722,39 @@ function semanticsFigures(d) {
     hidden ? `${fmt.format(hidden)} cachée${hidden > 1 ? "s" : ""}` : null,
     c.rewritten ? `${fmt.format(c.rewritten)} à relire` : null,
     c.categorical ? `${fmt.format(c.categorical)} catégorielle${c.categorical > 1 ? "s" : ""}` : "aucune catégorielle",
-    c.edited ? `${fmt.format(c.edited)} corrigée${c.edited > 1 ? "s" : ""} à la main` : null].filter(Boolean).join(" · ");
+    c.edited ? `${fmt.format(c.edited)} corrigée${c.edited > 1 ? "s" : ""} par toi` : null].filter(Boolean).join(" · ");
 }
 
-// The marks of a description (column: its name, "" for the table): rewritten by the LLM (an amber dot, to read
-// again), corrected by hand (a pencil, kept when the table is described again); hidden when they don't apply
+// ── Where a value comes from, the same marks and words on every tab: measured on the data (the profile, the rules,
+// the measure of a relation), proposed by the IA (both grey), decided by you (ink); an amber dot, rewritten by the
+// IA over a text: to read again; "— avant le suivi", written before the studio kept the origin ──
+
 const PENCIL = '<path d="M10.5 2.5l3 3L6 13l-3.5.5L3 10z"/>';
-const rewrittenDot = (column, on) => `<span class="todo-dot" data-dot="${esc(column)}" title="Réécrite par l'IA : à relire" ${on ? "" : "hidden"}></span>`;
-const handMark = (column, on) => `<svg class="hand" data-hand="${esc(column)}" viewBox="0 0 16 16" role="img" aria-label="Corrigée à la main" ${on ? "" : "hidden"}><title>Corrigée à la main : gardée quand l'IA redécrit</title>${PENCIL}</svg>`;
+const ORIGIN = {
+  data: { word: "données", says: "mesuré sur les données", path: '<path d="M3.5 13V9M8 13V3.5M12.5 13V7"/>' },
+  ai:   { word: "IA", says: "proposé par l'IA", path: '<path d="M8 1.8l1.45 4.2 4.25 1.5-4.25 1.5L8 13.2 6.55 9 2.3 7.5 6.55 6z"/>' },
+  you:  { word: "toi", says: "décidé par toi", path: PENCIL },
+};
+const BEFORE_TRACKING = "Écrite avant que le studio note l'origine";
+
+// The mark of an origin (attrs: data attributes, hidden), its title said on hover
+const originMark = (kind, title = ORIGIN[kind].says, attrs = "") =>
+  `<svg class="origin ${kind}" viewBox="0 0 16 16" role="img" aria-label="${esc(title)}" ${attrs}><title>${esc(title)}</title>${ORIGIN[kind].path}</svg>`;
+// A mark before what it qualifies (a pill)
+const withOrigin = (kind, html, title) => `<span class="origin-item">${originMark(kind, title)}${html}</span>`;
+
+// The legend of the tabs that show origins, one line under their sentence
+const ORIGIN_LEGEND = `<span>Origine :</span>${["data", "ai", "you"].map((kind) =>
+  `<span class="${kind}">${originMark(kind)}${ORIGIN[kind].says}</span>`).join("")}`
+  + '<span class="review"><span class="todo-dot"></span>à relire</span><span>— avant le suivi</span>';
+const ORIGIN_STEPS = ["profile", "semantics", "relations"];
+
+// The marks of a description (column: its name, "" for the table): rewritten by the IA (an amber dot, to read
+// again), written by the IA or corrected by you (kept when the table is described again), toggled as it is saved
+const rewrittenDot = (column, on) => `<span class="todo-dot" data-dot="${esc(column)}" title="Réécrite par l'IA par-dessus ton texte : à relire" ${on ? "" : "hidden"}></span>`;
+const descriptionMarks = (column, rewritten, edited) => rewrittenDot(column, rewritten)
+  + originMark("ai", "Rédigée par l'IA", `data-ai="${esc(column)}" ${edited ? "hidden" : ""}`)
+  + originMark("you", "Corrigée par toi : gardée quand l'IA redécrit", `data-hand="${esc(column)}" ${edited ? "" : "hidden"}`);
 
 function renderSemantics(d, el, message) {
   if (!d.described) {
@@ -741,9 +773,9 @@ function renderSemantics(d, el, message) {
     }
     const values = c.distinct == null ? "" : `<span class="values" title="${c.sampled ? "Valeurs distinctes sur l'échantillon du profil" : "Valeurs distinctes de la table"}">${plural(c.distinct, "valeur")}</span>`;
     return `<div class="sline">
-      <span class="cell">${rewrittenDot(c.column, c.rewritten)}${esc(c.column)}${key}${handMark(c.column, c.edited)}</span>
+      <span class="cell">${esc(c.column)}${key}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
-      <textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea>
+      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited)}<textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea></span>
       <label class="switch-cell">${values}<input type="checkbox" class="switch" data-field="categorical" data-column="${esc(c.column)}" ${c.categorical ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
     </div>`;
   }).join("");
@@ -751,13 +783,12 @@ function renderSemantics(d, el, message) {
   el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2><span class="figures" id="sem-figures">${semanticsFigures(d)}</span>
       <span class="grow"></span><span class="save-state" id="save-state"></span>
       <button class="btn ghost small" id="mark-read" title="Les descriptions réécrites par l'IA sortent de « à relire »" ${d.counts.rewritten ? "" : "hidden"}>Tout marquer relu</button>
-      <button class="btn ghost small" id="describe-again" data-job title="L'IA réécrit les descriptions de cette table ; celles corrigées à la main sont gardées">Redécrire</button></div>
+      <button class="btn ghost small" id="describe-again" data-job title="L'IA réécrit les descriptions de cette table ; celles corrigées par toi sont gardées">Redécrire</button></div>
     <div class="confirm" id="sem-confirm" role="group" aria-label="Redécrire ${esc(d.name)}" hidden></div>
-    <p class="legend muted-text" id="sem-legend" ${d.counts.rewritten ? "" : "hidden"}><span><span class="todo-dot"></span>réécrite par l'IA, à relire : le point part quand tu la modifies</span><span><svg class="hand" viewBox="0 0 16 16" aria-hidden="true">${PENCIL}</svg>corrigée à la main, gardée</span></p>
     ${message ? `<p class="note error">${esc(message)}</p>` : ""}
     <div class="table-text">
-      <label class="field-label" for="sem-description">${rewrittenDot("", d.description_rewritten)}Description de la table${handMark("", d.description_edited)}</label>
-      <textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea>
+      <label class="field-label" for="sem-description">Description de la table</label>
+      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited)}<textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea></span>
     </div>
     <div class="columns">
       <div class="sline head"><span>Colonne</span><span>Type</span><span>Description</span><span class="num">Catégorielle</span></div>
@@ -788,10 +819,11 @@ function plainText(html) {
   return div.textContent;
 }
 
-function propPill(name, key, value, { tone = "", title = "", hand = false } = {}) {
+// origin: the mark before the value (data, you; none when nothing was detected nor chosen)
+function propPill(name, key, value, { tone = "", title = "", origin = null } = {}) {
   return `<button type="button" class="prop${tone ? ` ${tone}` : ""}" id="${name}-pill" aria-haspopup="true" aria-expanded="false" title="${esc(title)}">
-    <span class="prop-key">${key}</span>${tone === "warn" ? '<span class="prop-dot" aria-hidden="true"></span>' : ""}<span class="prop-value">${value}</span>`
-    + `${hand ? `<svg class="hand" viewBox="0 0 16 16" role="img" aria-label="corrigé à la main">${PENCIL}</svg>` : ""}${CARET}</button>`;
+    <span class="prop-key">${key}</span>${tone === "warn" ? '<span class="prop-dot" aria-hidden="true"></span>' : ""}`
+    + `${origin ? originMark(origin) : ""}<span class="prop-value">${value}</span>${CARET}</button>`;
 }
 
 // One menu open at a time (name: null closes them all); open alone toggles it. While one is open, the card lets it
@@ -814,12 +846,12 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleProp
 // The type of the table: the one shown, why the rules gave theirs at the top of its menu; another one, or the detection again
 function typeProp(t) {
   if (!t) return "";
-  const why = t.edited ? `Corrigé à la main · la détection dit : ${typeName(t.detected).toLowerCase()} (${t.reason})` : `Détecté : ${t.reason}`;
+  const why = t.edited ? `Corrigé par toi · la détection dit : ${typeName(t.detected).toLowerCase()} (${t.reason})` : `Détecté sur les données : ${t.reason}`;
   const option = (type, [name, holds]) => `<button type="button" role="option" class="type-option${t.type === type ? " on" : ""}" data-type="${type}"
       aria-selected="${t.type === type}"><span class="type-check">${t.type === type ? CHECK : ""}</span>
       <span><b>${name}</b><small>${holds}</small></span><span class="type-tag">${t.detected === type ? "détecté" : ""}</span></button>`;
   return `<span class="prop-wrap" id="type-wrap">
-      ${propPill("type", "Type", typeName(t.type), { tone: t.type ? "" : "none", title: why, hand: t.edited })}
+      ${propPill("type", "Type", typeName(t.type), { tone: t.type ? "" : "none", title: why, origin: t.edited ? "you" : t.type ? "data" : null })}
       <div class="type-menu" id="type-menu" role="listbox" aria-label="Type de la table" hidden>
         <div class="menu-head">${esc(why)}${ui.data?.summary.relations ? ""
           : '<span class="menu-fact">Les relations ne sont pas encore trouvées (onglet Relations) : le type peut encore changer.</span>'}</div>
@@ -908,7 +940,8 @@ function readProp(r) {
       <span class="type-tag">${r.suggested === mode ? "proposé" : ""}</span></button>`;
   };
   return `<span class="prop-wrap" id="read-wrap">
-      ${propPill("read", "Mode de lecture", modeName(r.mode), { tone: r.problems.length ? "bad" : r.warn ? "warn" : "", title: plainText(sentence) })}
+      ${propPill("read", "Mode de lecture", modeName(r.mode), { tone: r.problems.length ? "bad" : r.warn ? "warn" : "", title: plainText(sentence),
+        origin: r.mode ? "you" : null })}
       <div class="type-menu" id="read-menu" role="listbox" aria-label="Mode de lecture de la table" hidden>
         <div class="menu-head"><b>${modeName(r.mode)}</b> : ${sentence}.${readingFacts(r)}</div>
         ${Object.entries(READ_MODES).map(([mode, words]) => option(mode, words)).join("")}
@@ -1049,11 +1082,14 @@ function updateMarks(d) {
   $("detail").querySelectorAll("[data-dot]").forEach((dot) => {
     dot.hidden = dot.dataset.dot ? !rewritten.has(dot.dataset.dot) : !d.description_rewritten;
   });
-  $("detail").querySelectorAll("[data-hand]").forEach((hand) => {
-    hand.toggleAttribute("hidden", hand.dataset.hand ? !edited.has(hand.dataset.hand) : !d.description_edited);
+  // written by the IA until corrected by you: one mark or the other
+  $("detail").querySelectorAll("[data-hand], [data-ai]").forEach((mark) => {
+    const column = mark.dataset.hand ?? mark.dataset.ai;
+    const yours = column ? edited.has(column) : d.description_edited;
+    mark.toggleAttribute("hidden", mark.dataset.hand !== undefined ? !yours : yours);
   });
   $("sem-figures").textContent = semanticsFigures(d);
-  $("sem-legend").hidden = $("mark-read").hidden = !d.counts.rewritten;
+  $("mark-read").hidden = !d.counts.rewritten;
 }
 
 // Describe a table again: straight away, unless it holds corrections made by hand (kept, or replaced on a click)
@@ -1163,9 +1199,10 @@ async function saveSemantics(input, value) {
 
 const KEY_OVERLAP = 0.9;   // values found under it: the relation is in amber (offline/studio/relations.py)
 
-const ORIGINS = { profile: ["mesurée", "Clé de même nom dont les valeurs se retrouvent (profil)"],
-  llm: ["IA", "Proposée par l'IA à partir des noms et des descriptions"],
-  manual: ["à la main", "Ajoutée dans le studio"] };
+// The origin of a relation (relationships.yaml) as the marks of the studio say it: its kind, its words, its title
+const ORIGINS = { profile: ["data", "mesurée sur les données", "Clé de même nom dont les valeurs se retrouvent (profil)"],
+  llm: ["ai", "proposée par l'IA", "Proposée par l'IA à partir des noms et des descriptions"],
+  manual: ["you", "ajoutée par toi", "Ajoutée par toi dans le studio"] };
 
 async function loadRelations() {
   const db = ui.db;
@@ -1283,7 +1320,7 @@ function relationTip(r) {
   const measured = r.fanout ? `chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois`
     : r.empty ? `${esc(r.source)} est vide : rien à mesurer`
     : r.found == null ? "pas encore mesurée" : `${pct(r.found)} des valeurs trouvées${r.weak ? ", peu" : ""}`;
-  const origin = ORIGINS[r.origin] ? ` · ${ORIGINS[r.origin][0] === "IA" ? "proposée par l'IA" : ORIGINS[r.origin][0]}` : "";
+  const origin = ` · ${ORIGINS[r.origin]?.[1] || "origine d'avant le suivi"}`;
   return `<span class="mono">${esc(r.from)}</span> → <span class="mono">${esc(r.to)}</span><br>${esc(r.links)} · ${measured}${origin}`;
 }
 
@@ -1430,7 +1467,7 @@ function pathText() {
 }
 
 function relationLine(r) {
-  const [origin, title] = ORIGINS[r.origin] || [null, "Écrite avant que le studio note l'origine"];
+  const [origin, , title] = ORIGINS[r.origin] || [null, null, BEFORE_TRACKING];
   // measured with nothing to compare (its table empty), or never measured
   const found = r.empty ? `<span class="muted-text" title="${esc(r.source)} n'a aucune ligne : rien à comparer, la vérifier à nouveau n'y change rien">table vide</span>`
     : r.found == null ? '<span class="muted-text" title="Pas encore mesurée sur les données">—</span>'
@@ -1441,7 +1478,8 @@ function relationLine(r) {
     <span class="fill">${found}</span>
     ${r.fanout ? `<span><span class="pill decide mono" title="${esc(r.to)} n'est pas une clé : chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois en moyenne">${esc(r.links)}</span></span>`
       : `<span><span class="pill links mono" title="Combien de lignes d'un côté pour une ligne de l'autre">${esc(r.links)}</span></span>`}
-    <span class="cell" title="${title}">${origin ? `<span class="pill kept">${origin}</span>` : '<span class="muted">—</span>'}</span>
+    <span class="cell" title="${title}">${origin ? `<span class="origin-word ${origin}">${originMark(origin, title)}${ORIGIN[origin].word}</span>`
+      : '<span class="muted-text">— avant le suivi</span>'}</span>
     <button class="icon-btn small" data-ignore="${esc(r.from)}|${esc(r.to)}" title="Retirer : la relation sort de la liste et ne reviendra pas" aria-label="Retirer ${esc(r.from)} vers ${esc(r.to)}">✕</button>
   </div>`;
 }
@@ -1613,7 +1651,7 @@ async function addRelation(force = false) {
   ui.current = source.split(".")[0];
   loadTables();
   renderDetail();
-  const [state, warn] = added?.fanout ? [`Ajoutée à la main : chaque ligne de ${added.source} comptée ${decimal(added.fanout)} fois en moyenne`, true]
+  const [state, warn] = added?.fanout ? [`Ajoutée par toi : chaque ligne de ${added.source} comptée ${decimal(added.fanout)} fois en moyenne`, true]
     : added?.found == null ? ["Ajoutée, mais aucune valeur à vérifier", false]
     : [`Ajoutée : ${pct(added.found)} des valeurs trouvées${added.weak ? " — peu, à vérifier" : ""}`, added.weak];
   $("rel-state").textContent = state;
@@ -2642,7 +2680,7 @@ function guideStep(key, base, p) {
     const todo = rows.filter((t) => t.status.semantics !== "done"), n = undescribed(s);
     body = progress(s.described - s.partial, s.tables, "tables décrites") + done
       + (n ? `<div class="guide-action">${action(n > 1 ? `Décrire les ${fmt.format(n)} manquantes` : "Décrire la manquante", "semantics",
-        "Quelques secondes d'IA par table. Les descriptions corrigées à la main ne sont pas touchées.")}</div>` : "")
+        "Quelques secondes d'IA par table. Les descriptions corrigées par toi ne sont pas touchées.")}</div>` : "")
       + (s.rewritten ? `<p class="guide-note">${plural(s.rewritten, "table")} ${s.rewritten > 1 ? "ont" : "a"} des descriptions réécrites par l'IA, à relire dans l'onglet Descriptions.</p>` : "")
       + list("À décrire", todo.map((t) => ({ name: t.name, size: size(t),
         pill: t.status.semantics === "none" ? '<span class="pill todo">à décrire</span>' : '<span class="pill decide">à compléter</span>' })));
