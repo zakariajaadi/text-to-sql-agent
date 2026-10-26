@@ -252,13 +252,14 @@ function goTo(step, force = false) {
   const tables = ui.data?.db !== ui.db ? loadTables() : null;
   const index = !ui.idx && !indexScreen() ? loadIndex() : null;   // the head of the database tells its index
   if (step === "relations" || step === "metrics" || indexScreen()) {
-    if (step === "index" && !force) ui.current = null;   // the Fiches tab opens on no table
+    if (step === "index" && !force) ui.current = null;   // the Fiches tab opens on its own first row (openFirstRow)
+    if (step === "relations" && ui.autoOpened) ui.current = null;   // the whole map, unless a table was chosen
     if (ui.data) { renderHeader(); renderRows(); }
     renderDetail();
     return Promise.all([tables, index, loadScreen()]);
   }
   if (ui.data) { renderHeader(); renderRows(); }
-  if (ui.current) openTable(ui.current); else renderDetail();
+  if (ui.current) openTable(ui.current, { again: true }); else renderDetail();
   return Promise.all([tables, index]);
 }
 
@@ -372,10 +373,24 @@ function visibleRows() {
     && (!type || (t.type || "none") === type));
 }
 
+// On arrival on a tab with nothing open, its first row opened, as a click would (Contenu, Descriptions, Fiches,
+// Métriques): never on Relations, whose screen without a table is the whole map, nor on a phone, where the card would
+// take the place of the list. Once a row is open, the list drawn again leaves it be. A table opened so (ui.autoOpened,
+// until one is opened by hand) does not follow on Relations, which keeps its whole map
+const OPEN_FIRST = ["profile", "semantics", "index", "metrics"];
+function openFirstRow() {
+  if (!OPEN_FIRST.includes(ui.step) || ui.home || ui.wizard || window.matchMedia("(max-width: 560px)").matches) return;
+  if (ui.step === "metrics" ? ui.metric : ui.current) return;
+  const row = $("rows").querySelector(":scope > .row");
+  if (!row) return;
+  if (ui.step === "metrics") openMetric(row.dataset.metric, "metric");
+  else { ui.autoOpened = true; openTable(row.dataset.table, { again: true }); }
+}
+
 function renderRows() {
   renderPersonal();   // the bars of the personal data and of an older profile: on the Contenu tab only
   renderOutdated();
-  if (ui.step === "metrics") { renderMetricRows(); return; }
+  if (ui.step === "metrics") { renderMetricRows(); openFirstRow(); return; }
   $("list-extra").innerHTML = "";
   $("empty").textContent = "Aucune table ne correspond.";
   const rows = visibleRows();
@@ -390,6 +405,7 @@ function renderRows() {
   $("select-all").checked = rows.length > 0 && rows.every((t) => ui.selected.has(t.name));
   if (indexScreen()) renderGone();
   renderActions();
+  openFirstRow();
 }
 
 // The actions of the current tab, in its bar (the Vue d'ensemble and the Fiches have none: the actions on all the
@@ -479,7 +495,7 @@ async function hidePersonal(hide) {
     return;
   }
   renderHeader(); renderRows();
-  if (ui.current) openTable(ui.current);
+  if (ui.current) openTable(ui.current, { again: true });
 }
 
 $("rows").addEventListener("click", (e) => {
@@ -532,8 +548,10 @@ $("refresh").addEventListener("click", () => loadTables(true));
 
 // ── Columns of a table ───────────────────────────────────
 
-async function openTable(name) {
+// again: the table open drawn again (a tab, a job, a change), or opened by openFirstRow, not a choice of yours
+async function openTable(name, { again = false } = {}) {
   const fromList = !document.body.classList.contains("card-open");   // on a phone: the card comes in view, once
+  if (!again) ui.autoOpened = false;   // chosen by you: it follows on Relations
   if (ui.step === "relations") { selectOnMap(name); renderRows(); showCurrentRow(); if (fromList) showCard(); return; }
   ui.current = name;
   renderRows(); showCurrentRow();
@@ -2019,7 +2037,7 @@ async function loadIndex() {
   renderBase(); renderTabs(); renderWizard();   // the head of the database, the count of the Fiches, the setup
   if (ui.home || ui.wizard || !indexScreen()) return;
   if (ui.data) { renderHeader(); renderRows(); }
-  if (ui.current) openTable(ui.current); else renderDetail();
+  if (ui.current) openTable(ui.current, { again: true }); else renderDetail();
 }
 
 const indexStatus = (name) => ui.idx?.tables.find((t) => t.name === name)?.status;
@@ -2843,8 +2861,8 @@ async function pollJob() {
     const wasDone = before?.id === job.id && before.done.includes(ui.current);
     const ended = before?.id === job.id && before.running && !job.running;
     if (ui.current && job.step === ui.step) {
-      if (job.step === "profile" && job.done.includes(ui.current) && !wasDone) openTable(ui.current);
-      if (job.step === "semantics" && ended && job.started_tables.includes(ui.current)) openTable(ui.current);
+      if (job.step === "profile" && job.done.includes(ui.current) && !wasDone) openTable(ui.current, { again: true });
+      if (job.step === "semantics" && ended && job.started_tables.includes(ui.current)) openTable(ui.current, { again: true });
     }
     // Its title counts the relations now known
     if (job.step === "relations" && ended) { await loadRelations(); renderJob(); }
