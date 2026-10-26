@@ -77,8 +77,8 @@ relations:  ## Generate FK relations, each checked on the data (ARGS="--check": 
 metrics:  ## Propose business metrics (review metrics.yaml)
 	$(RUN) python -m offline.cli metrics --db $(DB)
 
-index:  ## Index the tables into Chroma and the categorical values (GROUP BY on the cluster, one at a time)
-	$(RUN) python -m offline.cli index --db $(DB)
+index:  ## Index the tables into Chroma and the categorical values (GROUP BY on the cluster, only the tables whose data changed; ARGS="--full": all)
+	$(RUN) python -m offline.cli index --db $(DB) $(ARGS)
 
 schema:  ## Show the indexed document of a table (TABLE=client [DB=awb_silver])
 	$(if $(TABLE),,$(error TABLE is required, e.g. make -f Makefile.ubi schema TABLE=client))

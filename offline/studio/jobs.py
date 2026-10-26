@@ -39,9 +39,12 @@ ASKING_LLM    = "] Asking the LLM for the other relations"
 TO_CHECK      = re.compile(r"\] (?P<n>\d+) relation\(s\) to check$")
 CHECKING      = "] Checking: "
 NEW_RELATIONS = re.compile(r"\] (?P<n>\d+) new relation\(s\) added to relationships\.yaml")
-# The index (offline/indexer/schema_indexer.py): the values read table after table, then the documents
-# built and written into Chroma, then the value index
-FETCHING = re.compile(r"\] Fetching values: (?P<table>\S+) \(")
+# The index (offline/indexer/schema_indexer.py): the values read table after table (or kept, the data of the table
+# unchanged since the last index), then the documents built and written into Chroma (the ones that changed), then
+# the value index
+FETCHING    = re.compile(r"\] (?:Fetching values|Values kept): (?P<table>\S+) \(")
+VALUES_KEPT = re.compile(r"\] Values kept: \S+ \(")
+EMBEDDED    = re.compile(r"\] Embedded (?P<n>\d+) of (?P<total>\d+) schemas")
 PHASES   = (("] Built: ", "documents"), (" schemas to Chroma.", "values"))
 # A question of the eval asked to the agent (offline/eval/run.py)
 QUESTION = re.compile(r"^\[(?P<n>\d+)/(?P<total>\d+)\] ")
@@ -83,6 +86,8 @@ class Job:
     rewritten: int = 0                                        # semantics --fresh: descriptions the LLM changed
     kept: int = 0                                             # ... and the ones corrected by hand it kept
     detected: dict = field(default_factory=lambda: {"formats": 0, "empty": 0, "personal": 0})   # profile: summed
+    values_kept: int = 0                                      # index: tables whose values were kept (data unchanged)
+    embedded: list[int] | None = None                         # index: [documents embedded, documents], when not all
     lines: list[dict] = field(default_factory=list)
     first_line: int = 0   # number of the first line kept
 
@@ -101,6 +106,7 @@ class Job:
         phase = next((name for marker, name in PHASES if marker in message), None)
         if started := STARTED.search(message) or FETCHING.search(message):
             self.started_tables.append(started["table"])
+            self.values_kept += bool(VALUES_KEPT.search(message))
             if self.current and self.current not in self.failed:
                 self.done.append(self.current)
             self.current, self.current_since = started["table"], time.time()
@@ -109,6 +115,8 @@ class Job:
             if self.current and self.current not in self.failed:
                 self.done.append(self.current)
             self.current, self.current_since, self.phase = None, None, phase
+        elif embedded := EMBEDDED.search(message):
+            self.embedded = [int(embedded["n"]), int(embedded["total"])]
         elif question := QUESTION.match(message):
             self.progress = [int(question["n"]), int(question["total"])]
         elif described := REWRITTEN.search(message):
@@ -154,6 +162,7 @@ class Job:
             "started_tables": self.started_tables, "checked": self.checked, "phase": self.phase, "progress": self.progress,
             "rewritten": self.rewritten, "kept": self.kept,
             "detected": self.detected, "to_check": self.to_check, "added": self.added,
+            "values_kept": self.values_kept, "embedded": self.embedded,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),
         }
 

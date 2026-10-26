@@ -16,7 +16,9 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
                     of its values found (--check: only measure that again, no LLM)
     metrics       → semantic_layer/<db>/metrics.yaml        business metrics
     (review the YAML files)
-    index         → Chroma schema index + value index data/values/<db>.sqlite (default command)
+    index         → Chroma schema index + value index data/values/<db>.sqlite (default command): the values
+                    of a table whose data changed since the last index, the documents whose text changed
+                    (--full: every value read and every document embedded again)
 
 Without --db, the command runs on every configured database.
 """
@@ -54,12 +56,15 @@ def main():
                              "distinct values), nothing measured again, tables.yaml left as it is")
     parser.add_argument("--check", action="store_true",
                         help="fk-relations: measure the share of values found of every relation, no LLM")
+    parser.add_argument("--full", action="store_true",
+                        help="index: read every categorical value and embed every document again, not only "
+                             "the tables whose data changed and the documents whose text changed")
     args = parser.parse_args()
     if args.complete and args.missing:
         parser.error("--complete completes the tables already profiled, --missing measures the others: one at a time")
 
     commands = {
-        "index":        lambda name: SchemaIndexer(name).run(),
+        "index":        lambda name: SchemaIndexer(name).run(full=args.full),
         "profile":      lambda name: profiling.complete_profile(db_registry[name], name, tables=args.tables)
                         if args.complete else profiling.profile_database(
                             db_registry[name], name, tables=args.tables, missing=args.missing,

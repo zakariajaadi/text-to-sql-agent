@@ -2979,7 +2979,12 @@ function indexJobTitle(job, now) {
   if (job.returncode) return [`Échec de l'index · ${job.phase ? "" : "rien n'est écrit · "}voir les logs`, "failed"];
   const idx = job.db === ui.db ? ui.idx : null;
   const counts = idx?.trace ? ` · ${plural(idx.documents, "fiche")} · ${plural(idx.inline.values + idx.searched.values, "valeur")}` : "";
-  return [`Index terminé${counts} · l'agent le lira à son prochain démarrage`, ""];
+  // what an incremental index spared: the values of the tables whose data did not change, the documents left as they were
+  const spared = [job.values_kept ? `valeurs reprises pour ${plural(job.values_kept, "table")} (données inchangées)` : null,
+    job.embedded ? (job.embedded[0] ? `${plural(job.embedded[0], "fiche")} sur ${fmt.format(job.embedded[1])} ${job.embedded[0] > 1 ? "recalculées" : "recalculée"}`
+      : "aucune fiche recalculée (textes inchangés)") : null]
+    .filter(Boolean).map((s) => ` · ${s}`).join("");
+  return [`Index terminé${counts}${spared} · l'agent le lira à son prochain démarrage`, ""];
 }
 
 // An eval: the questions of the dataset asked to the agent, the results written once at the end

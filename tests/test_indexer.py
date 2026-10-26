@@ -1,5 +1,7 @@
-"""Offline indexer (offline/indexer/): Chroma refresh order, and retries of the categorical values queries."""
+"""Offline indexer (offline/indexer/): Chroma refresh order, retries of the categorical values queries, and the
+incremental index (values kept for a table whose data did not change, documents embedded when their text did)."""
 
+import json
 import sys
 import types
 
@@ -9,11 +11,12 @@ from langchain_core.documents import Document
 # schema_indexer imports the runtime resources (API keys, databases, Chroma index): stubbed here
 sys.modules.setdefault("resources", types.SimpleNamespace(db_registry={}, vector_store=None))
 
-from offline.indexer import categorical_values, schema_indexer  # noqa: E402
+from offline.indexer import categorical_values, schema_indexer, value_cache  # noqa: E402
 from offline.indexer.categorical_values import (  # noqa: E402
     CategoricalValuesError,
     fetch_categorical_columns_values,
 )
+from offline.indexer.data_version import data_version, files_version, table_parameters  # noqa: E402
 from offline.indexer.schema_indexer import SchemaIndexer  # noqa: E402
 
 
@@ -27,9 +30,14 @@ class FakeStore:
     def add_documents(self, documents, ids):
         if self.fail_on_add:
             raise RuntimeError("402 RESOURCE_EXHAUSTED")
-        self.documents.update(zip(ids, documents))
+        self.embedded = list(ids)
+        self.documents.update(zip(ids, [Document(page_content=d.page_content, metadata=dict(d.metadata)) for d in documents]))
 
-    def get(self, where, include):
+    def get(self, ids=None, where=None, include=()):
+        if ids is not None:
+            found = [i for i in ids if i in self.documents]
+            return {"ids": found, "documents": [self.documents[i].page_content for i in found],
+                    "metadatas": [dict(self.documents[i].metadata) for i in found]}
         db_name = where["db_name"]["$eq"]
         return {"ids": [i for i, doc in self.documents.items() if doc.metadata["db_name"] == db_name]}
 
@@ -162,3 +170,152 @@ def test_fetch_values_reports_the_failed_columns_of_every_table(indexer, column_
         indexer.fetch_values()
     assert e.value.columns == ["customers.region", "orders.status"]
     assert "customers.region, orders.status" in str(e.value)
+
+
+# =============================================================================
+# Incremental index: the values of the tables whose data did not change, the documents whose text did
+# =============================================================================
+
+def test_only_the_documents_whose_text_changed_are_embedded_again(indexer):
+    store = indexer.vsm.get_store()
+    indexer.index([doc("test", "customers", "v1"), doc("test", "orders", "v1")])
+    assert store.embedded == ["test_customers", "test_orders"]   # "old", without the embedding model: embedded again
+
+    store.embedded = []
+    indexer.index([doc("test", "customers", "v1"), doc("test", "orders", "v2")])
+    assert store.embedded == ["test_orders"]
+    assert store.documents["test_orders"].page_content == "v2"
+
+    indexer.index([doc("test", "customers", "v1"), doc("test", "orders", "v2")], full=True)
+    assert store.embedded == ["test_customers", "test_orders"]
+
+
+@pytest.fixture
+def versions(indexer, column_values, monkeypatch, tmp_path):
+    """The data version of each table, set per test ({table: version}); the cache of the values in tmp_path."""
+    current = {}
+    monkeypatch.setattr(schema_indexer, "data_version", lambda db, table: current.get(table))
+    monkeypatch.setattr(value_cache, "value_cache_path", lambda db_name: tmp_path / f"{db_name}.values.json")
+    monkeypatch.setattr(schema_indexer, "load_semantics", lambda db_name: {
+        "customers": {"categorical_columns": ["country", "city"]},
+        "orders":    {"categorical_columns": ["status"]},
+    })
+    return current
+
+
+def index_values(indexer) -> dict:
+    """fetch_values, then the cache of the run written, as run() does."""
+    values = indexer.fetch_values()
+    value_cache.write_value_cache("test", indexer.cache)
+    return values
+
+
+def test_the_values_of_a_table_whose_data_did_not_change_are_kept(indexer, column_values, versions, monkeypatch):
+    versions.update(customers="iceberg:1", orders="files:a")
+    column_values.update({("customers", "country"): [{"USA": 13}], ("customers", "city"): [{"Paris": 2}],
+                          ("orders", "status"): [{"shipped": 5}]})
+    first = index_values(indexer)
+
+    # nothing changed: not one GROUP BY (column_values has no result left), the same values
+    assert index_values(indexer) == first
+
+    # the data of orders changed (a load): only orders is read again
+    versions["orders"] = "files:b"
+    column_values[("orders", "status")] = [{"shipped": 6}]
+    assert index_values(indexer)["orders"] == {"status": {"shipped": 6}}
+
+    # a column new to the categorical ones is read, the others kept
+    monkeypatch.setattr(schema_indexer, "load_semantics", lambda db_name: {
+        "customers": {"categorical_columns": ["country", "city", "segment"]},
+        "orders":    {"categorical_columns": ["status"]},
+    })
+    column_values[("customers", "segment")] = [{"B2B": 4}]
+    assert index_values(indexer)["customers"] == {"country": {"USA": 13}, "city": {"Paris": 2}, "segment": {"B2B": 4}}
+
+
+def test_without_a_version_or_with_full_every_value_is_read(indexer, column_values, versions):
+    versions.update(customers="iceberg:1")   # orders: no version (Hive, Kudu, the least doubt)
+    column_values.update({("customers", "country"): [{"USA": 13}] * 3, ("customers", "city"): [{"Paris": 2}] * 3,
+                          ("orders", "status"): [{"shipped": 5}] * 3})
+    index_values(indexer)
+    index_values(indexer)
+    assert column_values[("orders", "status")] == [{"shipped": 5}]        # read at each run
+    assert column_values[("customers", "country")] == [{"USA": 13}] * 2   # read once, then kept
+
+    indexer.fetch_values(full=True)
+    assert column_values[("customers", "country")] == [{"USA": 13}]       # read again
+
+
+def test_another_max_values_reads_every_value_again(indexer, column_values, versions, tmp_path):
+    versions.update(customers="iceberg:1", orders="iceberg:2")
+    column_values.update({("customers", "country"): [{"USA": 13}] * 2, ("customers", "city"): [{"Paris": 2}] * 2,
+                          ("orders", "status"): [{"shipped": 5}] * 2})
+    index_values(indexer)
+    cache = json.loads((tmp_path / "test.values.json").read_text())
+    cache["max_values"] += 1
+    (tmp_path / "test.values.json").write_text(json.dumps(cache))
+    index_values(indexer)
+    assert column_values[("orders", "status")] == []
+
+
+# =============================================================================
+# The version of the data of a table, from the metastore
+# =============================================================================
+
+class FakeEngine:
+    """An engine answering DESCRIBE FORMATTED and SHOW FILES with the rows given."""
+
+    def __init__(self, dialect: str, describe: list, files: list | Exception = ()):
+        self.dialect = types.SimpleNamespace(name=dialect, identifier_preparer=types.SimpleNamespace(quote=lambda x: f"`{x}`"))
+        self.describe, self.files = describe, files
+
+    def connect(self):
+        engine = self
+
+        class Connection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, query):
+                rows = engine.describe if str(query).startswith("DESCRIBE") else engine.files
+                if isinstance(rows, Exception):
+                    raise rows
+                return types.SimpleNamespace(fetchall=lambda: list(rows))
+
+        return Connection()
+
+
+# DESCRIBE FORMATTED of an Iceberg table of Impala, as Hue shows it (awb_silver.client, values made up)
+ICEBERG = [("# col_name", "data_type", "comment"), ("id", "int", None), ("", None, None),
+           ("# Detailed Table Information", None, None), ("Table Type:", "EXTERNAL_TABLE", None),
+           ("Table Parameters:", None, None), ("", "EXTERNAL", "TRUE"),
+           ("", "current-snapshot-id ", "5875541796799705853 "), ("", "table_type", "ICEBERG"), ("", None, None),
+           ("# Storage Information", None, None), ("", "current-snapshot-id", "a storage field, not read")]
+PARQUET = [("Table Parameters:", None, None), ("", "numFiles", "2"), ("# Storage Information", None, None)]
+FILES   = [("hdfs://warehouse/t/part-0001.parq", "12.30KB", ""), ("hdfs://warehouse/t/part-0002.parq", "8.10KB", "")]
+
+
+def database(dialect: str, describe: list, files=()):
+    return types.SimpleNamespace(_engine=FakeEngine(dialect, describe, files))
+
+
+def test_the_parameters_of_describe_formatted():
+    assert table_parameters(ICEBERG) == {"EXTERNAL": "TRUE", "current-snapshot-id": "5875541796799705853",
+                                         "table_type": "ICEBERG"}
+
+
+def test_the_data_version_of_a_table():
+    assert data_version(database("impala4", ICEBERG), "client") == "iceberg:5875541796799705853"
+    # another table on files: its files and their sizes, in any order; a load changes them
+    version = data_version(database("impala4", PARQUET, FILES), "t")
+    assert version.startswith("files:") and version == data_version(database("impala", PARQUET, FILES[::-1]), "t")
+    assert version != data_version(database("impala4", PARQUET, [FILES[0], ("hdfs://warehouse/t/part-0003.parq", "9.00KB", "")]), "t")
+    # Kudu, another engine, an error: None, the values are read again
+    kudu = [("Table Parameters:", None, None), ("", "storage_handler", "org.apache.hadoop.hive.kudu.KuduStorageHandler")]
+    assert data_version(database("impala4", kudu, FILES), "t") is None
+    assert data_version(database("hive", ICEBERG), "client") is None
+    assert data_version(database("impala4", PARQUET, RuntimeError("AuthorizationException")), "t") is None
+    assert files_version([]) == files_version([])

@@ -59,8 +59,8 @@ relations:  ## Generate FK relations, each checked on the data (ARGS="--check": 
 metrics:  ## Propose business metrics (review semantic_layer/<DB>/metrics.yaml)
 	$(RUN) -m offline.cli metrics --db $(DB)
 
-index:  ## Index the tables into Chroma and the categorical values into data/values/<DB>.sqlite (no LLM)
-	$(RUN) -m offline.cli index --db $(DB)
+index:  ## Index the tables into Chroma and the categorical values into data/values/<DB>.sqlite (no LLM; only what changed, ARGS="--full": everything)
+	$(RUN) -m offline.cli index --db $(DB) $(ARGS)
 
 schema:  ## Show the indexed document of a table (TABLE=invoice [DB=Chinook])
 	$(if $(TABLE),,$(error TABLE is required, e.g. make schema TABLE=invoice))

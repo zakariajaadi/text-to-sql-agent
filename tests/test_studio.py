@@ -288,6 +288,16 @@ def test_job_follows_a_profile_completed():
     assert (job.started_tables, job.done, job.failed) == (["a", "b"], ["a"], ["b"])
 
 
+def test_job_follows_an_incremental_index():
+    job = Job(id=1, db="awb", step="index", tables=None, command=[])
+    for message in ("[awb] Values kept: a (2 column(s), same data since the last index)",
+                    "[awb] Fetching values: b (1 column(s), 1 kept)", "[awb] Values kept: c (1 column(s), same data since the last index)",
+                    "[awb] Embedded 2 of 69 schemas, the 67 others unchanged since the last index"):
+        job.add_line(f"2026-10-26 10:00:01 | INFO     | offline.indexer.schema_indexer:fetch_values:90 - {message}")
+    assert job.started_tables == ["a", "b", "c"] and job.to_dict()["values_kept"] == 2
+    assert job.to_dict()["embedded"] == [2, 69]
+
+
 def test_job_sums_what_the_profile_detected():
     job = Job(id=1, db="awb", step="profile", tables=None, command=[])
     assert job.to_dict()["detected"] == {"formats": 0, "empty": 0, "personal": 0}
