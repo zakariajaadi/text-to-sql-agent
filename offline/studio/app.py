@@ -238,9 +238,15 @@ def tables(db: str, refresh: bool = False):
     rows = state.table_rows(listing["tables"], names, profile, semantics, relations, metrics,
                             db_cfg.exclude_personal_data)
     types = _table_types(db, listing, profile, semantics, relations)
+    partitioned = db_cfg.dialect in PARTITIONED
     for row in rows:
+        facts = profile.get(row["name"])
+        read  = reading(semantics.get(row["name"]), facts, partitioned_engine=partitioned)
         row["type"], row["type_edited"] = types[row["name"]]["type"], types[row["name"]]["edited"]
-        row["read_warn"] = reading(semantics.get(row["name"]), profile.get(row["name"]))["warn"]
+        row["read_warn"] = read["warn"]
+        # What an older profiler left out of the profile of the table, for "Compléter le profil"
+        row["outdated"] = [*state.outdated(facts, names.get(row["name"]) or []), *(["partitions"] if read["unread"] else [])] \
+            if facts else []
     found    = state.personal_columns(profile, semantics)
     personal = [s for columns in found.values() for s in columns.values()]
     return {
@@ -387,15 +393,19 @@ def _start(db: str, step: str, command: list[str], tables: list[str] | None):
 class ProfileRequest(BaseModel):
     tables: list[str] | None = None
     missing: bool = False
+    complete: bool = False   # only what an older profile lacks, of `tables` or of every table
 
 
 @app.post("/api/db/{db}/profile")
 def profile(db: str, request: ProfileRequest):
-    """Profile the tables chosen, or the ones missing from the profile (make profile ARGS=...)."""
+    """
+    Profile the tables chosen, or the ones missing from the profile; or complete an older profile of the
+    tables chosen, or of all of them (make profile ARGS=...).
+    """
     _db_config(db)
-    if not request.tables and not request.missing:
+    if not request.tables and not request.missing and not request.complete:
         raise HTTPException(400, "Coche des tables, ou choisis les manquantes")
-    return _start(db, "profile", profile_command(db, request.tables, request.missing), request.tables)
+    return _start(db, "profile", profile_command(db, request.tables, request.missing, request.complete), request.tables)
 
 
 class SemanticsRequest(BaseModel):

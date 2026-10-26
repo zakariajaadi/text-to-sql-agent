@@ -21,12 +21,14 @@ from offline.semantic_gen.profiling import (
     key_overlap_sql,
     target_spread_sql,
     key_relations,
+    missing_facts,
     month_first,
     personal_values,
     row_facts,
     text_format,
 )
 from offline.semantic_gen.prompts import TABLE_SEMANTICS_PROMPT
+from offline.studio.state import outdated
 
 
 # =============================================================================
@@ -278,6 +280,64 @@ def test_distinct_values_counted_on_the_sample_a_few_columns_per_query(bank, mon
     monkeypatch.setattr(profiling, "DISTINCT_BATCH", 1)
     quote = bank._engine.dialect.identifier_preparer.quote
     assert profiling._distinct_counts(bank, "compte", ["id_compte", "id_client"], quote) == {"id_compte": 3, "id_client": 2}
+
+
+def test_what_an_older_profile_lacks():
+    columns = [{"name": n} for n in ("id_client", "ville", "age")]
+    entry = {"rows": 2, "keys": {"id_client": {}}, "text_columns": {"ville": {"filled": 1.0}, "dropped": {"filled": 0.0}}}
+    assert missing_facts(entry, columns, partitioned=True) == {"partitions": True, "filled": ["age"], "distinct": ["ville"]}
+    assert missing_facts(entry, columns, partitioned=False)["partitions"] is False
+    complete = {**entry, "partitions": 0, "filled": {"age": 1.0}, "text_columns": {"ville": {"filled": 1.0, "distinct": 1}}}
+    assert missing_facts(complete, columns, partitioned=True) == {"partitions": False, "filled": [], "distinct": []}
+
+
+def test_complete_measures_only_what_an_older_profile_lacks(bank, tmp_path):
+    conn = sqlite3.connect(tmp_path / "bank.sqlite")
+    conn.executescript("ALTER TABLE client ADD COLUMN ville TEXT; UPDATE client SET ville = 'Rabat';")
+    conn.commit()
+    keys = {"id_client": {"non_null": 999, "distinct": 999}}
+    _write_profile({
+        "client": {"rows": 999, "keys": keys, "text_columns": {"ville": {"filled": 1.0}}},
+        "compte": {"rows": 999, "keys": {"id_compte": {}, "id_client": {}}},   # nothing lacks: no query
+    })
+    semantics = lib.semantics.tables_path("bank")
+    semantics.write_text("client:\n  description: Les clients.\n")
+    profiling.complete_profile(bank, "bank")
+    profile = lib.semantics.load_profile("bank")
+    # the rows and the keys not measured again, only what lacked
+    assert profile["client"]["rows"] == 999 and profile["client"]["keys"] == keys
+    assert profile["client"]["filled"] == {"age": 0.5, "date_cloture": 0.0}
+    assert profile["client"]["exclude"] == {"date_cloture": "empty"}   # proposed in the profile, the studio asks
+    assert profile["client"]["text_columns"]["ville"] == {"filled": 1.0, "distinct": 1}
+    assert profile["compte"] == {"rows": 999, "keys": {"id_compte": {}, "id_client": {}}}
+    # what the studio tells of an older profile is settled
+    assert outdated(profile["client"], ["id_client", "age", "date_cloture", "ville"]) == []
+    # tables.yaml as it was: the formats and the hidden columns stay the reviewed ones
+    assert semantics.read_text() == "client:\n  description: Les clients.\n"
+
+
+def test_complete_leaves_out_the_tables_not_profiled(bank):
+    _write_profile({"client": {"rows": 999, "keys": {}, "text_columns": {}}})
+    profiling.complete_profile(bank, "bank")
+    profile = lib.semantics.load_profile("bank")
+    assert list(profile) == ["client"]
+    assert profile["client"]["filled"] == {"id_client": 1.0, "age": 0.5, "date_cloture": 0.0}
+
+
+def test_complete_logs_each_table_for_the_studio(bank):
+    _write_profile({"client": {"rows": 999, "keys": {}, "text_columns": {}}, "compte": {"rows": 3, "filled": {}}})
+    messages = []
+    sink = logger.add(messages.append, format="{message}")
+    try:
+        profiling.complete_profile(bank, "bank")
+    finally:
+        logger.remove(sink)
+    # "Completing: <table>" is the progress of the job (offline/studio/jobs.py)
+    assert [m.strip() for m in messages if re.search("[Cc]omplet", m)] == [
+        "[bank] Completing: client",
+        "[bank] Completed client: filled share of 3 column(s)",
+        "[bank] 1 table(s) completed, 1 already complete → " + str(lib.semantics.profile_path("bank")),
+    ]
 
 
 def test_profile_an_unknown_table_stops(bank):

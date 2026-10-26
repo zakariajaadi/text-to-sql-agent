@@ -65,7 +65,7 @@ shell:  ## Open a bash shell in a container of the app image, with the project's
 
 ##@ Semantic layer
 
-profile:  ## Measure the data → profile.yaml (no LLM, one query at a time; ARGS="--tables a,b" or "--missing": only those, merged)
+profile:  ## Measure the data → profile.yaml (no LLM, one query at a time; ARGS="--tables a,b" or "--missing": only those, merged; "--complete": only what an older profile lacks)
 	$(RUN) python -m offline.cli profile --db $(DB) $(ARGS)
 
 semantics:  ## Generate the table descriptions and categorical columns (ARGS="--fresh" to redo them, "--tables a,b": only those)

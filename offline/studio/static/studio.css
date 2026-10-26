@@ -227,7 +227,7 @@ button.pill { font-family: inherit; line-height: inherit; border: 0; cursor: poi
 .eye path, .eye circle { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 
-/* Personal data: one rule for the whole database, on top of the list */
+/* On top of the list: personal data (one rule for the whole database), and the tables of an older profile */
 .personal-bar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px;
   background: var(--chip); color: var(--ink-2); font-size: var(--fs-sm); border-bottom: 1px solid var(--line);
@@ -247,6 +247,8 @@ button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 .detail-head h2 { font-size: var(--fs-lg); font-weight: 600; margin: 0; word-break: break-all; }
 .note { margin: 0 14px 10px; font-size: var(--fs-xs); color: var(--muted); }
 .note.error { color: var(--bad-ink); }
+.note.with-action { display: flex; align-items: center; gap: 10px; }   /* what the note says, and the action that settles it */
+.note.with-action span { flex: 1; min-width: 0; }
 .muted-text { color: var(--muted); font-size: var(--fs-sm); }
 
 /* Figures of the profile: one line next to the name */

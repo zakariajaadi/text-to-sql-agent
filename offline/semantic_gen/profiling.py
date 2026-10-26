@@ -20,10 +20,13 @@ Read by the generators so the semantic layer states facts instead of guesses:
 Formats and empty columns are data-driven: each table measured gets them in tables.yaml at once,
 when it has none yet (apply_profile), the studio making the exceptions. Each run replaces the
 entries of the tables it measures (every table, or the ones asked for) and keeps the others.
+A profile made by an older profiler is completed instead of measured again (complete_profile):
+only what it lacks, tables.yaml left as it is.
 
 Pipeline order: profile → semantics → relations → metrics → (review) → index   (see offline/cli.py)
 """
 
+import copy
 import re
 from pathlib import Path
 
@@ -143,6 +146,86 @@ def profile_database(db: SQLDatabase, db_name: str, tables: list[str] | None = N
     _write_profile(path, profile)
     logger.info(f"[{db_name}] {len(measured)} table(s) profiled, {len(profile)} in the profile → {path}")
     return profile
+
+
+def complete_profile(db: SQLDatabase, db_name: str, tables: list[str] | None = None) -> dict:
+    """
+    Complete the entries an older profiler wrote into profile.yaml (every table, or only `tables`): only
+    what they lack (missing_facts) is measured, the rest kept as it was. No COUNT(DISTINCT) of the keys, no
+    shapes of the text columns: the partitions (metastore), one pass of COUNT on the numbers and dates, the
+    distinct values of the text columns (on the sample). tables.yaml is left as it is: the formats and the
+    hidden columns stay the ones already reviewed. A table not in the profile is left out (--missing).
+    """
+    usable   = db.get_usable_table_names()
+    existing = load_profile(db_name)
+    asked    = tables_to_profile(usable, existing, tables, missing=False)
+    if absent := [t for t in asked if t not in existing]:
+        logger.info(f"[{db_name}] Not in the profile, left out (profile --missing measures them): {', '.join(absent)}")
+
+    inspector   = sa_inspect(db._engine)
+    quote       = db._engine.dialect.identifier_preparer.quote
+    partitioned = db._engine.dialect.name in PARTITIONED
+    path        = profile_path(db_name)
+    completed   = {}
+    for table in (t for t in asked if t in existing):
+        lacking = missing_facts(existing[table], inspector.get_columns(table), partitioned)
+        if not any(lacking.values()):
+            continue
+        logger.info(f"[{db_name}] Completing: {table}")
+        try:
+            completed[table] = complete_table(db, table, existing[table], quote, lacking)
+        except Exception as e:
+            logger.warning(f"[{db_name}] Not completed: {table} — {str(e).splitlines()[0][:200]}")
+            continue
+        what = [name for name, needed in (("partitions", lacking["partitions"]),
+                                          (f"filled share of {len(lacking['filled'])} column(s)", lacking["filled"]),
+                                          (f"distinct values of {len(lacking['distinct'])} text column(s)", lacking["distinct"]))
+                if needed]
+        logger.info(f"[{db_name}] Completed {table}: {', '.join(what)}")
+        # Written after each table, every other entry as it was: a run stopped keeps the ones completed
+        _write_profile(path, {t: completed.get(t, entry) for t, entry in existing.items()})
+
+    if not completed:
+        logger.info(f"[{db_name}] Nothing to complete: every table asked for has every measure")
+        return existing
+    logger.info(f"[{db_name}] {len(completed)} table(s) completed, {len(asked) - len(absent) - len(completed)} "
+                f"already complete → {path}")
+    return {t: completed.get(t, entry) for t, entry in existing.items()}
+
+
+def missing_facts(entry: dict, columns: list[dict], partitioned: bool) -> dict:
+    """
+    What a profile entry of an older profiler lacks, as the studio tells it (offline/studio/state.outdated,
+    reading.unread): `partitions` on an engine that has them; `filled`, the columns that are neither keys
+    nor text columns of the entry, when none of them is measured; `distinct`, the text columns without
+    their distinct values (the ones still in the table).
+    """
+    texts = entry.get("text_columns") or {}
+    known = set(entry.get("keys") or {}) | set(texts)
+    names = [c["name"] for c in columns]
+    return {
+        "partitions": partitioned and "partitions" not in entry,
+        "filled":     [] if "filled" in entry else [n for n in names if n not in known],
+        "distinct":   [c for c, facts in texts.items() if "distinct" not in (facts or {}) and c in names],
+    }
+
+
+def complete_table(db: SQLDatabase, table: str, entry: dict, quote, lacking: dict) -> dict:
+    """The profile entry of a table with what it lacked (missing_facts) measured, a copy: the rest as it was."""
+    entry = copy.deepcopy(entry)
+    if lacking["partitions"]:
+        # Under the rows, where profile_table writes them
+        entry = {"rows": entry.get("rows"), **_partitions(db, table, quote), **entry}
+    if lacking["filled"]:
+        rows, _, counts = _count_rows(db, table, [], quote, lacking["filled"])
+        entry["filled"] = {column: round(n / rows, 3) if rows else 0.0 for column, n in counts.items()}
+        # Never filled: proposed for exclusion in the profile, like profile_table does; the studio asks
+        if empty := {column: "empty" for column, filled in entry["filled"].items() if rows and filled < EMPTY_FILL}:
+            entry["exclude"] = {**(entry.get("exclude") or {}), **empty}
+    if lacking["distinct"]:
+        for column, n in _distinct_counts(db, table, lacking["distinct"], quote).items():
+            entry["text_columns"][column] = {**(entry["text_columns"][column] or {}), "distinct": n}
+    return entry
 
 
 def apply_profile(semantics: dict, profile: dict, personal: bool, tables=None) -> list[str]:

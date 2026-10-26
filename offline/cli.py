@@ -7,7 +7,8 @@ CLI of the semantic layer pipeline: generate the semantic layer, review it, then
 
     profile       → semantic_layer/<db>/profile.yaml        facts measured on the data (no LLM), and the
                     formats and empty columns it detects into tables.yaml (a table that has none yet)
-                    (--tables a,b / --missing: only those tables, merged into the profile)
+                    (--tables a,b / --missing: only those tables, merged into the profile;
+                    --complete: only what an older profile lacks, tables.yaml left as it is)
     semantics     → semantic_layer/<db>/tables.yaml         descriptions, categorical columns
                     (--fresh: generated again from scratch, the manual keys and the descriptions corrected
                     by hand kept, --replace-edited: those replaced too; --tables a,b: only those)
@@ -48,13 +49,19 @@ def main():
                         help="profile, semantics: only these tables (comma-separated), the others left as they are")
     parser.add_argument("--missing", action="store_true",
                         help="profile: only the tables not in profile.yaml yet")
+    parser.add_argument("--complete", action="store_true",
+                        help="profile: only measure what an older profile lacks (partitions, filled share, "
+                             "distinct values), nothing measured again, tables.yaml left as it is")
     parser.add_argument("--check", action="store_true",
                         help="fk-relations: measure the share of values found of every relation, no LLM")
     args = parser.parse_args()
+    if args.complete and args.missing:
+        parser.error("--complete completes the tables already profiled, --missing measures the others: one at a time")
 
     commands = {
         "index":        lambda name: SchemaIndexer(name).run(),
-        "profile":      lambda name: profiling.profile_database(
+        "profile":      lambda name: profiling.complete_profile(db_registry[name], name, tables=args.tables)
+                        if args.complete else profiling.profile_database(
                             db_registry[name], name, tables=args.tables, missing=args.missing,
                             personal=cfg.get_db(name).exclude_personal_data),
         "semantics":    lambda name: tables.generate_table_semantics(name, fresh=args.fresh, tables=args.tables,

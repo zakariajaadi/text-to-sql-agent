@@ -226,6 +226,9 @@ def test_format_share_and_unique_key():
 def test_profile_command():
     assert profile_command("awb", ["a", "b"], False)[1:] == ["-m", "offline.cli", "profile", "--db", "awb", "--tables", "a,b"]
     assert profile_command("awb", None, True)[-1] == "--missing"
+    # what an older profile lacks: of every table, or of the ones chosen
+    assert profile_command("awb", None, False, complete=True)[-1] == "--complete"
+    assert profile_command("awb", ["a"], False, complete=True)[-3:] == ["--tables", "a", "--complete"]
 
 
 def test_semantics_command():
@@ -266,6 +269,15 @@ def test_job_follows_the_progress_of_the_cli():
     job.finish(0)
     assert (job.current, job.current_since, job.done, job.running) == (None, None, ["a", "c"], False)
     assert [line["message"] for line in job.to_dict(since=4)["lines"]] == ["a raw traceback line"]
+
+
+def test_job_follows_a_profile_completed():
+    job = Job(id=1, db="awb", step="profile", tables=None, command=[])
+    for message in ("[awb] Completing: a", "[awb] Completed a: partitions", "[awb] Completing: b",
+                    "[awb] Not completed: b — boom"):
+        job.add_line(f"2026-10-26 10:00:01 | INFO     | offline.semantic_gen.profiling:complete_profile:170 - {message}")
+    job.finish(0)
+    assert (job.started_tables, job.done, job.failed) == (["a", "b"], ["a"], ["b"])
 
 
 def test_job_sums_what_the_profile_detected():
@@ -356,6 +368,16 @@ def test_a_click_on_a_pill_writes_the_exception(client, tmp_path):
     # a detection the profile does not make is refused
     assert change(client, "montant", "text", detail["version"]).status_code == 400
     assert change(client, "montant", "hide", detail["version"]).status_code == 400
+
+
+def test_the_tables_tell_what_an_older_profile_lacks(client, tmp_path):
+    row = client.get("/api/db/awb/tables").json()["tables"][0]
+    # no filled share of the numbers and dates, no distinct values of the text, no partitions read on Hive
+    assert row["outdated"] == ["filled", "distinct", "partitions"]
+    facts = {**FACTS, "partitions": 0, "filled": {"montant": 1.0},
+             "text_columns": {"date_deblocage": {"filled": 0.99, "distinct": 30}}}
+    (tmp_path / "awb" / "profile.yaml").write_text(yaml.safe_dump({"dossier": facts}))
+    assert client.get("/api/db/awb/tables").json()["tables"][0]["outdated"] == []
 
 
 def test_a_change_over_a_newer_tables_yaml_is_refused(client):

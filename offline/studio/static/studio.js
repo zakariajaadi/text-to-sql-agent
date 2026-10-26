@@ -371,7 +371,8 @@ function visibleRows() {
 }
 
 function renderRows() {
-  renderPersonal();   // the bar of the personal data: on the Contenu tab only
+  renderPersonal();   // the bars of the personal data and of an older profile: on the Contenu tab only
+  renderOutdated();
   if (ui.step === "metrics") { renderMetricRows(); return; }
   $("list-extra").innerHTML = "";
   $("empty").textContent = "Aucune table ne correspond.";
@@ -454,6 +455,18 @@ function renderPersonal() {
       button: () => "Tout montrer", run: () => hidePersonal(false), job: false,
     });
   };
+}
+
+// Tables profiled by an older profiler: what they lack measured in one job, nothing measured again
+function renderOutdated() {
+  const bar = $("outdated-bar"), tables = (ui.data?.tables || []).filter((t) => t.outdated?.length);
+  bar.hidden = ui.step !== "profile" || !tables.length;
+  if (bar.hidden) return;
+  const missing = Object.keys(OUTDATED).filter((m) => tables.some((t) => t.outdated.includes(m)));
+  bar.innerHTML = `<span title="Profil fait par une version précédente du studio : ${outdatedSaid(missing)}"><b>${plural(tables.length, "table")}</b>`
+    + ` au profil incomplet : ${missing.map((m) => OUTDATED[m][2]).join(", ")}</span>
+    <button class="btn small" id="outdated-all" data-job title="${COMPLETE_TITLE}">Compléter</button>`;
+  $("outdated-all").onclick = () => runJob("profile", { complete: true });
 }
 
 async function hidePersonal(hide) {
@@ -611,10 +624,16 @@ function fillBar(filled, missing = "") {
   return `<span class="bar"><i class="${filled < LOW_FILL ? "low" : ""}" style="width:${Math.round(filled * 100)}%"></i></span>${pct(filled)}`;
 }
 
-// What an older profiler did not measure (detail.outdated), each with its own agreement and pronoun
-const OUTDATED = { filled: ["le remplissage des dates et des nombres", "n'est pas mesuré", "le"],
-  distinct: ["les valeurs distinctes du texte", "ne sont pas mesurées", "les"],
-  partitions: ["les partitions", "ne sont pas lues", "les"] };
+// What an older profiler did not measure (detail.outdated, the outdated of a row), each with its own agreement,
+// and its short name (the bar on top of the list)
+const OUTDATED = { filled: ["le remplissage des dates et des nombres", "n'est pas mesuré", "remplissage"],
+  distinct: ["les valeurs distinctes du texte", "ne sont pas mesurées", "valeurs distinctes"],
+  partitions: ["les partitions", "ne sont pas lues", "partitions"] };
+const outdatedSaid = (missing) => missing.length > 1
+  ? `${missing.map((m) => OUTDATED[m][0]).join(" et ")} ne sont pas ${missing.includes("filled") ? "mesurés" : "mesurées"}`
+  : missing.length ? `${OUTDATED[missing[0]][0]} ${OUTDATED[missing[0]][1]}` : "";
+// "Compléter": make profile --complete, only what is missing
+const COMPLETE_TITLE = "Ne mesure que ce qui manque : rien n'est mesuré à nouveau, tables.yaml reste tel quel";
 
 // What is detected in a column, or a quiet dash (hidden on a phone: nothing to say)
 function found(c) {
@@ -640,11 +659,10 @@ function renderProfile(d, el, message) {
     parts.length ? `${d.reading.partitions ? plural(d.reading.partitions, "partition") : "partitionnée"} par ${esc(parts.join(", "))}` : null,
     d.detected ? `${plural(d.detected, "format")} ${d.detected > 1 ? "détectés" : "détecté"}` : "aucun format détecté"].filter(Boolean);
   const error = message ? `<p class="note error">${esc(message)}</p>` : "";
-  // A profile of an older profiler: what it did not measure, and how to measure it
+  // A profile of an older profiler: what it did not measure, completed without measuring the rest again
   const missing = [...(d.outdated || []), ...(d.reading?.unread ? ["partitions"] : [])].filter((m) => OUTDATED[m]);
-  const said = missing.length > 1 ? `${missing.map((m) => OUTDATED[m][0]).join(" et ")} ne sont pas mesurés. « Re-profiler » les mesure.`
-    : missing.length ? `${OUTDATED[missing[0]][0]} ${OUTDATED[missing[0]][1]}. « Re-profiler » ${OUTDATED[missing[0]][2]} mesure.` : "";
-  const old = said ? `<p class="note">Profil fait par une version précédente du studio : ${said}</p>` : "";
+  const old = missing.length ? `<div class="note with-action"><span>Profil fait par une version précédente du studio : ${outdatedSaid(missing)}.</span>
+      <button class="btn ghost small" id="profile-complete" data-job title="${COMPLETE_TITLE}">Compléter</button></div>` : "";
 
   // Columns: declared type against what the profile found (distinct values of a text column: on the sample of the profile)
   const lines = d.column_facts.map((c) => `<div class="line${c.excluded ? " hidden-col" : ""}">
@@ -667,6 +685,7 @@ function renderProfile(d, el, message) {
       </div>`;
 
   $("profile-again").onclick = () => runJob("profile", { tables: [d.name] });
+  if (missing.length) $("profile-complete").onclick = () => runJob("profile", { tables: [d.name], complete: true });
   setupProps(d);
   el.querySelectorAll("button.pill[data-action]").forEach((pill) => pill.addEventListener("click", () => changeColumn(pill)));
 }
@@ -866,7 +885,7 @@ function readingFacts(r) {
   const facts = [];
   if (r.partitioned_by.length) facts.push(`Partitionnée par ${names(r.partitioned_by)}${r.partitions ? ` · ${plural(r.partitions, "partition")}` : ""}, d'après le profil.`);
   else if (r.partitions === 0) facts.push("Pas de partition dans la table, d'après le profil.");
-  else if (r.unread) facts.push("Partitions pas encore lues : profile la table à nouveau (onglet Contenu).");
+  else if (r.unread) facts.push("Partitions pas encore lues : « Compléter » le profil les lit (onglet Contenu).");
   if (r.suggested && r.suggested !== r.mode) facts.push(`Les données proposent ${modeName(r.suggested)} : ${esc(r.why)}.`);
   else if (!r.mode && r.partitioned_by.length && !r.suggested && r.why) facts.push(`Rien à proposer : ${esc(r.why)}.`);
   return facts.map((f) => `<span class="menu-fact">${f}</span>`).join("");

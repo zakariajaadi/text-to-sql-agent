@@ -26,9 +26,10 @@ STOP_GRACE = 30     # seconds a stopped job has to cancel its query (offline/que
 ANSI     = re.compile(r"\x1b\[[0-9;]*m")
 # A loguru line of config.py: "2026-10-23 10:12:03 | INFO     | module:function:12 - message"
 LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\d (?P<time>\d\d:\d\d:\d\d) \| (?P<level>\w+)\s*\| [^ ]+ - (?P<message>.*)$")
-# A table started: profiled one at a time, described up to 8 at a time (offline/semantic_gen/tables.py)
-STARTED  = re.compile(r"\] (?:Profiling|Describing): (?P<table>\S+)$")
-FAILED   = re.compile(r"\] Not profiled: (?P<table>\S+) ")
+# A table started: profiled (or its profile completed) one at a time, described up to 8 at a time
+# (offline/semantic_gen/tables.py)
+STARTED  = re.compile(r"\] (?:Profiling|Completing|Describing): (?P<table>\S+)$")
+FAILED   = re.compile(r"\] Not (?:profiled|completed): (?P<table>\S+) ")
 # What the profile detected in a table measured (offline/semantic_gen/profiling.py)
 DETECTED = re.compile(r"\] Detected in \S+: (?P<formats>\d+) format\(s\), (?P<empty>\d+) empty column\(s\), "
                       r"(?P<personal>\d+) personal data column\(s\)$")
@@ -157,12 +158,17 @@ class Job:
         }
 
 
-def profile_command(db: str, tables: list[str] | None, missing: bool) -> list[str]:
-    """The CLI command of `make profile`: the tables asked for, or the ones missing from the profile."""
+def profile_command(db: str, tables: list[str] | None, missing: bool, complete: bool = False) -> list[str]:
+    """
+    The CLI command of `make profile`: the tables asked for, or the ones missing from the profile; with
+    complete, only what an older profile of those tables (all of them without any) lacks.
+    """
     command = [sys.executable, "-m", "offline.cli", "profile", "--db", db]
     if tables:
         command += ["--tables", ",".join(tables)]
-    elif missing:
+    if complete:
+        command.append("--complete")
+    elif missing and not tables:
         command.append("--missing")
     return command
 
