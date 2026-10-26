@@ -108,14 +108,18 @@ class DatabaseConfig:
 
     def engine_args(self) -> dict:
         """
-        Arguments of the SQLAlchemy engine: driver options, and the query options of impyla,
-        sent with every query of the engine (agent, indexer, generators, eval).
+        Arguments of the SQLAlchemy engine: driver options, the query options of impyla, sent with
+        every query of the engine (agent, indexer, generators, eval), and the age of a pooled connection.
         """
         args = {}
         if self.connect_args:
             args["connect_args"] = dict(self.connect_args)
         if self.query_options:
             args["execution_options"] = {"cursor_configuration": dict(self.query_options)}
+        if self.dialect == "impala":
+            # A connection left idle in the pool gets closed on the cluster side, and impyla can't reopen
+            # it over Kerberos (thrift_sasl: "Already open!"): one older than 5 minutes is replaced before use
+            args["pool_recycle"] = 300
         return args
 
 @dataclass
