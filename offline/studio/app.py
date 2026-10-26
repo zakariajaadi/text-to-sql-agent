@@ -4,7 +4,8 @@
 Studio of the semantic layer: a web page to run the pipeline steps and see what they write, instead
 of patch scripts (Profiling, Semantics, Relations, Metrics, then Index: what the agent reads, and its eval).
 The home shows every database at once from its files (what the agent reads, the step to do next) and
-searches through their semantic layer. Step 1, profiling: the tables and their status at each step, profile the ones chosen
+searches through their semantic layer. The Périmètre: every table of the database against the tables chosen
+for the agent and the pipeline (scope.yaml) and the last index. Step 1, profiling: the tables and their status at each step, profile the ones chosen
 or missing, read the profile of a table (declared type against what the data holds), make an exception
 to what it detects, hide the personal data of the whole database.
 
@@ -36,7 +37,16 @@ from sqlalchemy import text
 from config import SEMANTIC_LAYER_DIR, cfg
 from lib.database import build_database
 from lib.metrics import metrics_path, read_metrics_file
-from lib.semantics import excluded_columns, load_fk_relations, load_profile, load_semantics, tables_path
+from lib.semantics import (
+    excluded_columns,
+    load_fk_relations,
+    load_profile,
+    load_scope,
+    load_semantics,
+    scope_origin,
+    scope_path,
+    tables_path,
+)
 from lib.value_index import value_index_path
 from offline.eval.dashboard import DATASETS_DIR, RESULTS_DIR, build_dashboard
 from offline.indexer.trace import read_trace
@@ -47,11 +57,13 @@ from offline.semantic_gen.utils import (
     relations_path,
     write_metrics_file,
     write_relations_file,
+    write_scope,
 )
 from offline.studio import state
 from offline.studio.home import search_layer
 from offline.studio.index import document_text, document_view, eval_run, index_view
 from offline.studio.reading import edit_read_mode, reading
+from offline.studio.scope import change_scope, scope_rows, scope_view
 from offline.studio.table_types import table_types
 from offline.studio.jobs import (
     JobRunner,
@@ -112,31 +124,36 @@ def _db_config(db: str):
 
 def _listing(db: str, refresh: bool = False) -> dict:
     """
-    The usable tables of the database and their number of columns. When the database can't be
-    reached, the tables known from the files (profile.yaml, tables.yaml), with the error to show.
+    The tables of the scope the database has (`tables`, lib/semantics.load_scope) and their columns, and every
+    table of the database (`base`, for the Périmètre tab). When the database can't be reached, the tables of the
+    scope, else the ones known from the files (profile.yaml, tables.yaml), `base` None, with the error to show.
     """
     with _lock:
         if not refresh and db in _listings:
             return _listings[db]
+        scope = load_scope(db)
         try:
             if db not in _databases:
                 _databases[db] = build_database(_db_config(db))
-            database  = _databases[db]
-            inspector = sa_inspect(database._engine)
-            tables    = database.get_usable_table_names()
-            listing   = {"tables": tables, "source": "database", "error": None, "columns": {
-                t: [{"name": c["name"], "type": _type_name(c["type"])} for c in inspector.get_columns(t)] for t in tables
-            }}
+            inspector = sa_inspect(_databases[db]._engine)
+            base      = sorted(inspector.get_table_names())
+            tables    = [t for t in base if scope is None or t in scope]
+            listing   = {"tables": tables, "base": base, "source": "database", "error": None,
+                         "columns": {t: _columns(inspector, t) for t in tables}}
         except HTTPException:
             raise
         except Exception as e:
             logger.warning(f"[studio] {db}: tables read from the files, the database is unreachable — {e}")
             _databases.pop(db, None)
-            known   = list(dict.fromkeys([*load_profile(db), *load_semantics(db)]))
-            listing = {"tables": known, "columns": {}, "source": "files", "error": str(e).splitlines()[0][:300]}
+            known   = scope if scope is not None else list(dict.fromkeys([*load_profile(db), *load_semantics(db)]))
+            listing = {"tables": known, "base": None, "columns": {}, "source": "files", "error": str(e).splitlines()[0][:300]}
         listing["read_at"] = time.time()
         _listings[db] = listing
         return listing
+
+
+def _columns(inspector, table: str) -> list[dict]:
+    return [{"name": c["name"], "type": _type_name(c["type"])} for c in inspector.get_columns(table)]
 
 
 def _type_name(column_type) -> str:
@@ -164,9 +181,11 @@ def _known_listing(db: str) -> dict:
     with _lock:
         if db in _listings:
             return _listings[db]
+    if (scope := load_scope(db)) is not None:
+        return {"tables": scope, "base": None, "columns": {}, "source": "files", "error": None}
     indexed = (read_trace(db) or {}).get("tables", {})
     known   = list(dict.fromkeys([*load_profile(db), *load_semantics(db), *indexed]))
-    return {"tables": known, "columns": {}, "source": "files", "error": None}
+    return {"tables": known, "base": None, "columns": {}, "source": "files", "error": None}
 
 
 def _table_types(db: str, listing: dict, profile: dict, semantics: dict, relations) -> dict[str, dict]:
@@ -766,6 +785,82 @@ def ignore_one_metric(db: str, name: str, request: MetricVersion, back: bool = F
 
 
 # ------------------------------------------------------------
+# Périmètre: every table of the database against the scope (scope.yaml) and the last index
+# ------------------------------------------------------------
+
+def _scope_version(db: str) -> str:
+    """Version of scope.yaml (its modification time), as _version for tables.yaml."""
+    path = scope_path(db)
+    return str(path.stat().st_mtime_ns if path.exists() else 0)
+
+
+def _scope_payload(db: str, listing: dict) -> dict:
+    """The Périmètre tab: each table of the database, of the scope or of the index, with its state."""
+    db_cfg    = _db_config(db)
+    scope     = load_scope(db)
+    trace     = read_trace(db)
+    semantics = load_semantics(db)
+    columns   = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
+    view      = index_view(listing["tables"], columns, semantics, load_fk_relations(db), trace, {}, db_cfg.dialect, None,
+                           listing["base"])
+    rows = scope_rows(listing["base"], scope, {row["name"]: row["status"] for row in view["tables"]},
+                      set((trace or {}).get("tables", {})), set(load_profile(db)),
+                      {table for table, entry in semantics.items() if (entry or {}).get("description")},
+                      {table: len(cols) for table, cols in listing["columns"].items()})
+    return {**scope_view(rows, listing["base"], scope_origin(db), len(db_cfg.include_tables)),
+            "source": listing["source"], "error": listing["error"], "read_at": listing["read_at"],
+            "trace": trace is not None, "version": _scope_version(db)}
+
+
+@app.get("/api/db/{db}/scope")
+def scope_screen(db: str):
+    """The Périmètre tab of a database, its tables read in the database."""
+    _db_config(db)
+    return _scope_payload(db, _listing(db))
+
+
+class ScopeChange(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+    all: bool = False   # every table, the ones to come too
+    version: str
+
+
+@app.post("/api/db/{db}/scope")
+def edit_scope(db: str, request: ScopeChange):
+    """
+    Every table, the ones to come too (`all`), or tables added to the scope or taken out of it: a list, written to
+    scope.yaml (with neither: the scope as it is today, every table or the include_tables of the config, written as
+    a list). The tables entering it get their columns read first: nothing is written when the database can't give
+    them. The other screens read the new scope at once; the agent and the index at their next start.
+    """
+    _db_config(db)
+    listing = _listing(db)
+    if listing["base"] is None:
+        raise HTTPException(503, "La base ne répond pas : le périmètre se choisit sur la liste de ses tables")
+    with _lock:
+        if request.version != _scope_version(db):
+            raise HTTPException(409, "scope.yaml a changé depuis l'ouverture de la page : recharge la page")
+        if request.all and (request.add or request.remove):
+            raise HTTPException(400, "Toutes les tables, ou des tables ajoutées et retirées : pas les deux")
+        try:
+            scope = None if request.all else change_scope(load_scope(db), listing["base"], request.add, request.remove)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        tables = [t for t in listing["base"] if scope is None or t in scope]
+        try:
+            inspector = sa_inspect(_databases[db]._engine)
+            columns = {t: listing["columns"].get(t) or _columns(inspector, t) for t in tables}
+        except Exception as e:
+            raise HTTPException(502, f"La lecture des colonnes a échoué : {_first_line(e)}") from e
+        write_scope(db, scope)
+        _listings[db] = {**listing, "tables": tables, "columns": columns}
+    logger.info(f"[studio] {db}: scope " + ("every table" if scope is None else
+                                            f"{len(scope)} tables (+{len(request.add)}, -{len(request.remove)})"))
+    return scope_screen(db)
+
+
+# ------------------------------------------------------------
 # Index: what the agent reads of each table against the files today, and the eval of the agent
 # ------------------------------------------------------------
 
@@ -791,18 +886,21 @@ def _index_payload(db: str, listing: dict) -> dict:
     """
     What the Index screen shows of a database, its tables as `listing` gives them: each table with its status
     in the index, what the agent receives, the last eval and the questions of the next one. The dates of the
-    files and of the value index tell how old an index built before its trace is.
+    files and of the value index tell how old an index built before its trace is. `scope`: the tables of the
+    scope against the ones of the database (None when it can't be read), for the tile of the Vue d'ensemble.
     """
     db_cfg  = _db_config(db)
     columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
     view    = index_view(listing["tables"], columns, load_semantics(db), load_fk_relations(db), read_trace(db),
-                         read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db)))
+                         read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db)), listing["base"])
     files   = {name: path.stat().st_mtime for name, path in (("tables.yaml", tables_path(db)),
                                                              ("relationships.yaml", relations_path(db))) if path.exists()}
     values  = value_index_path(db)
     return {**view, "files": files, "values_at": values.stat().st_mtime if values.exists() else None,
             "sample_rows_now": db_cfg.sample_rows, "dataset": (DATASETS_DIR / f"{db.lower()}.yaml").exists(),
-            "questions": _questions(db)}
+            "questions": _questions(db),
+            "scope": {"tables": len(listing["tables"]), "base": None if listing["base"] is None else len(listing["base"]),
+                      "origin": scope_origin(db), "version": _scope_version(db)}}
 
 
 @app.get("/api/db/{db}/index")
@@ -820,8 +918,10 @@ def index_document(db: str, table: str):
     if table not in listing["tables"] and table not in (trace or {}).get("tables", {}):
         raise HTTPException(404, f"Table inconnue : {table}")
     view = document_view(table, trace, load_semantics(db).get(table), load_fk_relations(db), listing["columns"].get(table))
+    leaving = table not in listing["tables"]
     return {**view, "text": document_text(table, trace, db_cfg.dialect),
-            "gone": listing["source"] == "database" and table not in listing["tables"]}
+            "gone": leaving and listing["base"] is not None and table not in listing["base"],
+            "unscoped": leaving and (listing["base"] is None or table in listing["base"])}
 
 
 @app.post("/api/db/{db}/index/run")

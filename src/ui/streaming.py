@@ -323,6 +323,10 @@ class TurnRenderer:
         if output.get("validation_feedback"):
             # Only the database error is shown, never the instructions written for sql_coder
             self.rejected += 1
+            if output.get("validation_check") == "scope":
+                # Caught before execution: tables out of the scope of the agent, never run
+                return ("Tables hors du périmètre de l'agent", f"```\n{output.get('validation_error', '')}\n```\n"
+                        "La requête n'a pas été exécutée : l'agent la réécrit sans elles.", True)
             if output.get("validation_check") == "excluded":
                 # Caught before execution: columns hidden from the agent, never run
                 return ("Colonnes non disponibles pour l'agent", f"```\n{output.get('validation_error', '')}\n```\n"
@@ -337,6 +341,10 @@ class TurnRenderer:
         if output.get("unavailable_reason") == "restricted":
             # A second query reading excluded columns: the question gets the confidential answer
             return f"Requête non exécutée : {UNAVAILABLE_LABELS['restricted']}", UNAVAILABLE_DETAILS["restricted"]
+
+        if output.get("unavailable_reason") == "absent":
+            # A second query reading tables out of the scope: the question gets the out-of-scope answer
+            return f"Requête non exécutée : {UNAVAILABLE_LABELS['absent']}", UNAVAILABLE_DETAILS["absent"]
 
         if output.get("validation_check") == "unreachable":
             # The database could not be reached: the query is not at fault, it was not run

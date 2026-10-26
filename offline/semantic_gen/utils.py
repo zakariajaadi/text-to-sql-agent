@@ -16,7 +16,7 @@ from sqlalchemy import inspect as sa_inspect
 from config import SEMANTIC_LAYER_DIR, cfg
 from lib.column_pruning import get_column_types
 from lib.metrics import metrics_path
-from lib.semantics import load_fk_relations, load_semantics, render_table
+from lib.semantics import load_fk_relations, load_semantics, render_table, scope_path
 from lib.sql_tools import contains_expression, join_condition
 
 
@@ -58,6 +58,35 @@ class FlowListDumper(yaml.SafeDumper):
 FlowListDumper.add_representer(
     list, lambda dumper, data: dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
 )
+
+
+# ------------------------------------------------------------
+# scope.yaml (written by offline/studio)
+# ------------------------------------------------------------
+
+SCOPE_HEADER = """\
+# The tables of this database the agent and the pipeline see, chosen in the studio (Périmètre):
+#   all: true   every table of the database, the ones it will gain too
+#   tables      only these: a table of the database not listed is never read (not profiled, not
+#               described, not indexed, a query of the agent reading it is blocked), and a table
+#               the database gains stays out until it is added
+# Read at startup by the agent and by each run of the pipeline. Without this file: the include_tables
+# of the config, else every table of the database.
+
+"""
+
+
+def write_scope(db_name: str, tables: list[str] | None) -> None:
+    """
+    semantic_layer/<db>/scope.yaml: `all: true` when tables is None (every table, the ones to come too), else the
+    tables sorted. Written at once (a temporary file renamed).
+    """
+    path = scope_path(db_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"all": True} if tables is None else {"tables": sorted(set(tables))}
+    temporary = path.with_suffix(".yaml.tmp")
+    temporary.write_text(SCOPE_HEADER + yaml.safe_dump(entry, sort_keys=False, allow_unicode=True))
+    temporary.replace(path)
 
 
 # ------------------------------------------------------------

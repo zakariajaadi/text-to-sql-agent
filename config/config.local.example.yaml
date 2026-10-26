@@ -20,8 +20,7 @@ databases:
     user_language: French       # language users ask in: descriptions and metric synonyms (make semantics), judge reasonings (make eval); English by default
     exclude_personal_data: true # make semantics excludes the columns make profile flags as personal data
     tagline: "One line presenting the data."
-    include_tables:              # the agent only sees these tables (all of them if omitted)
-      - customers
-      - orders
+    # The tables the agent sees are chosen in the studio (Périmètre tab): semantic_layer/my_database/scope.yaml.
+    # An include_tables list here is only read while that file doesn't exist (the studio saves it there).
     starters:
       - {icon: kpi, question: "How many customers?"}

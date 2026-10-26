@@ -179,12 +179,14 @@ def eval_run(results: dict | None, modified: float | None) -> dict | None:
 
 
 def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: dict, relations,
-               trace: dict | None, metrics: dict[str, dict], dialect: str, evaluation: dict | None) -> dict:
+               trace: dict | None, metrics: dict[str, dict], dialect: str, evaluation: dict | None,
+               base: list[str] | None = None) -> dict:
     """
-    The Index screen: each table of the database with its status, the tables the index holds that the
-    database no longer has (dropped at the next index), what the agent receives (documents and the joins
-    between them, the columns they show or hide, values, sample rows, metrics) and the last eval. Without
-    a trace, the statuses are unknown.
+    The Index screen: each table of the scope with its status, the tables the index holds that leave it at the
+    next index (`gone`: the database no longer has them; `unscoped`: taken out of the scope, or not in it, the
+    database still has them or can't be read: base None), what the agent receives (documents and the joins
+    between them, the columns they show or hide, values, sample rows, metrics) and the last eval. Without a
+    trace, the statuses are unknown. tables: the tables of the scope the database has.
     """
     rows = []
     for table in tables:
@@ -197,10 +199,12 @@ def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: d
 
     indexed = trace["tables"]
     values  = [(t, c, v) for t, entry in indexed.items() for c, v in entry["values"].items()]
+    leaving = sorted(set(indexed) - set(tables))
     view.update({
         "built_at":    trace["built_at"],
         "sample_rows": trace["sample_rows"],
-        "gone":        sorted(set(indexed) - set(tables)),
+        "gone":        [t for t in leaving if base is not None and t not in base],
+        "unscoped":    [t for t in leaving if base is None or t in base],
         "documents":   len(indexed),
         "joins":       len({tuple(relation) for entry in indexed.values() for relation in entry["relations"]}),
         "shown":       sum(len(entry["columns"]) for entry in indexed.values()),

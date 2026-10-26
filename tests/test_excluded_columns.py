@@ -89,6 +89,7 @@ def validator(monkeypatch):
     runs = []
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala", max_rows=100)))
     monkeypatch.setattr(nodes, "get_excluded_columns", lambda db_name: EXCLUDED)
+    monkeypatch.setattr(nodes, "get_scope_tables", lambda db_name: ({"identity_document", "person"}, set()))
     monkeypatch.setattr(nodes, "find_unknown_values", lambda *args: [])
     monkeypatch.setattr(nodes, "get_run_query_tool", lambda db_name: SimpleNamespace(name="sql_db_query"))
     monkeypatch.setattr(nodes, "_run_with_reconnect", lambda db_name, query, max_rows: runs.append(query) or

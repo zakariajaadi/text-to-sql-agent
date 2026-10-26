@@ -1,8 +1,8 @@
 # src/lib/semantics.py
 
 """
-Semantics helpers — loading semantic_layer/<db>/tables.yaml and relationships.yaml, rendering table documents.
-Used by: resources.py (FK graphs), offline/ (indexer, generators), agent/nodes.py (match_values)
+Semantics helpers — loading semantic_layer/<db>/scope.yaml, tables.yaml and relationships.yaml, rendering table documents.
+Used by: resources.py (FK graphs), lib/database.py (scope), offline/ (indexer, generators), agent/nodes.py (match_values)
 """
 
 from pathlib import Path
@@ -10,9 +10,43 @@ from pathlib import Path
 import yaml
 from omegaconf import OmegaConf
 
-from config import SEMANTIC_LAYER_DIR
+from config import SEMANTIC_LAYER_DIR, cfg
 from lib.column_pruning import get_column_names, prune_ddl
 from lib.sql_tools import join_condition
+
+
+def scope_path(db_name: str) -> Path:
+    """semantic_layer/<db>/scope.yaml: the tables of the database the agent and the pipeline see."""
+    return SEMANTIC_LAYER_DIR / db_name / "scope.yaml"
+
+
+def _scope_file(db_name: str) -> dict | None:
+    path = scope_path(db_name)
+    return (yaml.safe_load(path.read_text()) or {}) if path.exists() else None
+
+
+def load_scope(db_name: str) -> list[str] | None:
+    """
+    The tables of the database the agent and the pipeline see (profile, semantics, relations, metrics,
+    index), chosen in the studio: semantic_layer/<db>/scope.yaml, `all: true` (None: every table, the ones
+    to come too) or its `tables`. Without it, the include_tables of the config, the list kept there before
+    the studio; without either, None: every table of the database.
+    """
+    entry = _scope_file(db_name)
+    if entry is not None:
+        return None if entry.get("all") else list(entry.get("tables") or [])
+    return list(cfg.get_db(db_name).include_tables) or None
+
+
+def scope_origin(db_name: str) -> str:
+    """
+    Where the scope of a database comes from: "all" or "list" (scope.yaml: every table, or the tables it lists),
+    "config" (the include_tables of the config, before the studio), "none" (nothing chosen yet: every table).
+    """
+    entry = _scope_file(db_name)
+    if entry is not None:
+        return "all" if entry.get("all") else "list"
+    return "config" if cfg.get_db(db_name).include_tables else "none"
 
 
 def tables_path(db_name: str) -> Path:

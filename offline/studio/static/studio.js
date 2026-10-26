@@ -2,6 +2,8 @@
 // an element of it (a table, a metric). The tabs of a database (STEPS) share one layout: its tables on the left
 // (a status pill each), the chosen one on the right.
 //   Vue d'ensemble: what the agent reads of the database, its last eval, and its setup step by step
+//   Périmètre (opened from the Vue d'ensemble, no tab): every table of the database against the ones the agent and
+//   the pipeline see, and the index
 //   Contenu: what the profile detects in each column (declared type against the data, exceptions)
 //   Descriptions: the descriptions the LLM writes, read and corrected in place
 //   Relations: the map of the tables and every relation measured on the data
@@ -21,9 +23,16 @@ const SQL_KW = /\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORD
 const sqlHtml = (sql) => esc(sql).replace(SQL_KW, (m) => `<span class="sql-kw">${m}</span>`);
 const plural = (n, word) => `${fmt.format(n)} ${word}${n > 1 ? "s" : ""}`;
 
-// The tabs of a database, in their order: their title, sentence, filter and actions (none: the tab only shows)
+// The screens of a database: their title, sentence, filter and actions (none: the screen only shows); TABS, the ones in
+// the bar of tabs
 const STEPS = {
   overview: { title: "Vue d'ensemble", key: "index", todo: "À réindexer" },
+  scope: {
+    title: "Périmètre", key: "scope", todo: "Hors périmètre",
+    text: "Les tables de la base que l'agent et le pipeline voient : toutes, celles qui arriveront aussi, ou une liste. Dans une liste, une nouvelle table de la base reste dehors tant que tu ne l'ajoutes pas. Une table retirée garde son profil et ses descriptions, et l'agent la lit jusqu'à la prochaine indexation.",
+    primary: () => `Ajouter au périmètre (${scopeSelection().add.length})`,
+    secondary: () => `Retirer du périmètre (${scopeSelection().remove.length})`,
+  },
   profile: {
     number: 1, title: "Contenu", key: "profile", todo: "À profiler",
     text: "On examine le contenu réel de chaque table pour que l'agent la lise correctement : les colonnes vides, les dates ou montants enregistrés comme du texte, les données personnelles, et les partitions, qui disent s'il faut lire la dernière photo ou toutes.",
@@ -65,6 +74,7 @@ const ui = {
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop, panel, done, total})
   tested: null,                                                        // what the last tests in the job panel found: {title: [title, halo], job, at}
   idx: null,                                                           // the Index screen
+  scope: null,                                                         // the Périmètre screen: every table of the database
   home: false, overview: null,                                         // the home: every database, read in the files
   wizard: null,                                                        // the guided setup of the database: {step}
   current: null, detail: null, job: null, since: 0, polling: null, logOpen: false,   // logOpen: the detail of the job
@@ -168,7 +178,7 @@ function switchDb(db) {
   ui.db = db; store("studio.db", db); $("db-select").value = db;
   ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
   ui.relCheck = null; closeConfirm($("confirm"));
-  ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null;
+  ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null; ui.scope = null;
   ui.tested = null;   // the tests of the other database leave the panel
 }
 
@@ -187,7 +197,7 @@ function renderStep() {
   const metrics = ui.step === "metrics";
   $("search").placeholder = metrics ? "Rechercher une métrique" : "Rechercher une table";
   $("list-name").textContent = metrics ? "Métrique" : "Table";
-  $("list-status").textContent = metrics ? "État" : ui.step === "index" ? "Index" : "Statut";
+  $("list-status").textContent = metrics || ui.step === "scope" ? "État" : ui.step === "index" ? "Index" : "Statut";
   $("filters").querySelector('[data-filter="review"]').hidden = ui.step !== "semantics";
   $("filters").querySelector('[data-filter="noread"]').hidden = ui.step !== "profile" || !ui.data?.tables.some((t) => t.read_warn);
   $("type-filter-wrap").hidden = ui.step !== "profile";
@@ -215,7 +225,8 @@ function renderBase() {
 function renderTabs() {
   const s = ui.data?.db === ui.db ? ui.data.summary : null;
   const counts = { relations: s?.relations, metrics: s?.metrics, index: ui.idx?.trace ? ui.idx.documents : null };
-  $("tabs").innerHTML = TABS.map((key) => `<button type="button" data-step="${key}"${key === ui.step ? ' aria-current="page"' : ""}>`
+  const current = ui.step === "scope" ? "overview" : ui.step;   // the Périmètre opens from the Vue d'ensemble
+  $("tabs").innerHTML = TABS.map((key) => `<button type="button" data-step="${key}"${key === current ? ' aria-current="page"' : ""}>`
     + `${STEPS[key].title}${counts[key] != null ? `<span class="tab-count">${fmt.format(counts[key])}</span>` : ""}</button>`).join("");
 }
 $("tabs").addEventListener("click", (e) => {
@@ -237,6 +248,7 @@ $("menu-wizard").addEventListener("click", () => openWizard());
 
 // The screens whose content is not the tables: read when they open
 function loadScreen() {
+  if (ui.step === "scope") return loadScope();
   if (ui.step === "relations") return loadRelations();
   if (ui.step === "metrics") return loadMetrics();
   if (indexScreen()) return loadIndex();
@@ -256,8 +268,9 @@ function goTo(step, force = false) {
   renderStep();
   const tables = ui.data?.db !== ui.db ? loadTables() : null;
   const index = !ui.idx && !indexScreen() ? loadIndex() : null;   // the head of the database tells its index
-  if (step === "relations" || step === "metrics" || indexScreen()) {
+  if (step === "scope" || step === "relations" || step === "metrics" || indexScreen()) {
     if (step === "index" && !force) ui.current = null;   // the Fiches tab opens on its own first row (openFirstRow)
+    if (step === "scope" && !force) ui.current = null;   // the Périmètre opens on the database against its scope
     if (step === "relations" && ui.autoOpened) ui.current = null;   // the whole map, unless a table was chosen
     if (ui.data) { renderHeader(); renderRows(); }
     renderDetail();
@@ -303,13 +316,14 @@ function renderHeader() {
     ? `Relire la base (${s.tables} tables lues à ${when})` : "Relire la base (tables lues dans les fichiers)";
   if (data.error) showBanner(`La base ne répond pas : les tables viennent de profile.yaml et tables.yaml. ${data.error}`);
   else $("banner").hidden = true;
-  const todo = { profile: s.tables - s.profiled, semantics: undescribed(s),
+  const todo = { scope: ui.scope ? ui.scope.tables.filter(outOfScope).length : 0, profile: s.tables - s.profiled, semantics: undescribed(s),
     relations: ui.data.tables.filter((t) => t.status.relations !== "done").length,
     metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0,
     index: ui.idx ? ui.idx.counts.changed + ui.idx.counts.missing : 0 }[STEPS[ui.step].key];
   const review = ui.data.tables.filter((t) => t.rewritten).length;
   const noread = ui.data.tables.filter((t) => t.read_warn).length;
-  const counts = { all: ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : s.tables, todo, review, noread };
+  const all = ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : ui.step === "scope" ? ui.scope?.tables.length ?? 0 : s.tables;
+  const counts = { all, todo, review, noread };
   const labels = { all: "Toutes", todo: STEPS[ui.step].todo, review: "À relire", noread: "Sans mode" };
   $("filters").querySelector('[data-filter="noread"]').hidden = ui.step !== "profile" || !noread;
   if (ui.filter === "noread" && !noread) {   // the last one given a mode: back to every table, not an empty list
@@ -371,6 +385,9 @@ const typeName = (type) => TABLE_TYPES[type]?.[0] || "À classer";
 
 function visibleRows() {
   const q = ui.query.toLowerCase(), key = STEPS[ui.step].key;
+  if (ui.step === "scope") {
+    return (ui.scope?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || outOfScope(t)));
+  }
   const type = ui.step === "profile" ? $("type-filter").value : "";   // the type chosen in the list of the Contenu tab
   const todo = indexScreen() ? (t) => ["changed", "missing"].includes(indexStatus(t.name)) : (t) => t.status[key] !== "done";
   const shown = ui.filter === "review" ? (t) => t.rewritten > 0 : ui.filter === "noread" ? (t) => t.read_warn : todo;
@@ -396,6 +413,7 @@ function renderRows() {
   renderPersonal();   // the bars of the personal data and of an older profile: on the Contenu tab only
   renderOutdated();
   if (ui.step === "metrics") { renderMetricRows(); openFirstRow(); return; }
+  if (ui.step === "scope") { renderScopeRows(); return; }
   $("list-extra").innerHTML = "";
   $("empty").textContent = "Aucune table ne correspond.";
   const rows = visibleRows();
@@ -421,8 +439,9 @@ function renderActions() {
   $("run-secondary").hidden = !step.secondary;
   if (step.primary) $("run-primary").textContent = step.primary(ui.selected.size);
   if (step.secondary) $("run-secondary").textContent = step.secondary(ui.selected.size);
-  // "Ajouter une relation" and the tests of the metrics start no job
-  $("run-secondary").toggleAttribute("data-job", ui.step !== "relations" && ui.step !== "metrics");
+  // "Ajouter une relation", the tests of the metrics and a change of the scope start no job
+  $("run-primary").toggleAttribute("data-job", ui.step !== "scope");
+  $("run-secondary").toggleAttribute("data-job", !["relations", "metrics", "scope"].includes(ui.step));
   gateButtons();
 }
 
@@ -432,6 +451,12 @@ const JOB_WHAT = { profile: "profilage", semantics: "description", relations: "r
 // Why one of the two actions of the page has nothing to do now, or null
 function idleReason(button) {
   const s = ui.data?.summary, step = ui.step;
+  if (step === "scope" && (button.id === "run-primary" || button.id === "run-secondary")) {
+    if (ui.scope && ui.scope.counts.base == null) return "La base ne répond pas : le périmètre se choisit sur la liste de ses tables";
+    if (button.id === "run-primary" && !scopeSelection().add.length) return "Coche des tables hors périmètre";
+    if (button.id === "run-secondary" && !scopeSelection().remove.length) return "Coche des tables du périmètre";
+    return null;
+  }
   if (button.id === "run-primary") {
     if (step === "profile" && !ui.selected.size) return "Coche des tables dans la liste";
     if (step === "semantics" && s && !undescribed(s)) return "Toutes les tables sont décrites";
@@ -549,7 +574,10 @@ $("filters").addEventListener("click", (e) => {
   [...$("filters").children].forEach((c) => c.classList.toggle("on", c === chip));
   renderRows();
 });
-$("refresh").addEventListener("click", () => loadTables(true));
+$("refresh").addEventListener("click", async () => {
+  await loadTables(true);
+  if (ui.step === "scope") loadScope();   // the tables the database gained or lost
+});
 
 // ── Columns of a table ───────────────────────────────────
 
@@ -559,6 +587,7 @@ async function openTable(name, { again = false } = {}) {
   if (!again) ui.autoOpened = false;   // chosen by you: it follows on Relations
   if (ui.step === "relations") { selectOnMap(name); renderRows(); showCurrentRow(); if (fromList) showCard(); return; }
   ui.current = name;
+  if (ui.step === "scope") { renderRows(); showCurrentRow(); renderDetail(); if (fromList) showCard(); return; }   // its state is in the list
   renderRows(); showCurrentRow();
   const step = ui.step, db = encodeURIComponent(ui.db), table = encodeURIComponent(name);
   try {
@@ -594,6 +623,7 @@ function renderDetail(message) {
   el.classList.toggle("bare", ui.step === "overview");   // the Vue d'ensemble holds two panels of its own
   el.classList.remove("menu-open");   // drawn again, its menus closed
   if (ui.step === "relations") renderRelations(el, message);
+  else if (ui.step === "scope") renderScope(el, message);
   else if (ui.step === "metrics") renderMetric(el, message);
   else if (indexScreen()) renderIndex(el, message);
   else if (!d) el.innerHTML = '<p class="placeholder">Choisis une table pour voir ses colonnes.</p>';
@@ -2037,6 +2067,207 @@ async function moveMetric(name, back) {
   loadTables(); renderRows(); renderDetail();
 }
 
+// ── Périmètre: every table of the database against the ones the agent and the pipeline see, and the index ──
+
+async function loadScope() {
+  const db = ui.db;
+  try {
+    const scope = await api(`/api/db/${encodeURIComponent(db)}/scope`);
+    if (db !== ui.db) return;
+    ui.scope = scope;
+  } catch (e) {
+    showBanner(`Impossible de lire le périmètre : ${e.message}`, true);
+    return;
+  }
+  if (ui.step !== "scope" || ui.home || ui.wizard) return;
+  if (ui.data) renderHeader();
+  renderRows(); renderDetail();
+}
+
+// A table of the database the scope leaves out (the filter "Hors périmètre")
+const outOfScope = (t) => !t.in_scope && t.in_base !== false;
+
+// The tables checked, by what a button does with them: the ones out of the scope to add, the ones in it to take out
+function scopeSelection() {
+  const checked = (ui.scope?.tables || []).filter((t) => ui.selected.has(t.name));
+  return { add: checked.filter((t) => !t.in_scope && t.in_base).map((t) => t.name), remove: checked.filter((t) => t.in_scope).map((t) => t.name) };
+}
+
+// A pill only where the scope and what the agent reads differ: a table added not indexed yet, one taken out it still
+// reads, one the database no longer has. A table of the scope as indexed has none: the state of its document is the
+// Fiches tab's
+const STILL_INDEXED = '<span class="pill decide" title="L\'agent lit encore sa fiche : elle partira à la prochaine indexation">encore indexée</span>';
+const SCOPE_PILLS = {
+  missing: '<span class="pill todo" title="Pas dans l\'index : l\'agent ne voit pas encore cette table">à indexer</span>',
+  leaving: STILL_INDEXED,
+};
+function scopePill(t) {
+  if (t.state !== "gone") return SCOPE_PILLS[t.state] || "";
+  if (t.indexed) return STILL_INDEXED;
+  return t.in_scope ? '<span class="pill todo" title="Dans le périmètre, plus dans la base : l\'agent et le pipeline l\'ignorent">à retirer</span>' : "";
+}
+
+// The tables of the scope, then the other tables of the database, then the ones it no longer has, quieter
+function renderScopeRows() {
+  const rows = visibleRows();
+  const row = (t) => `<div class="row${t.in_scope && t.in_base !== false ? "" : " aside"}${t.name === ui.current ? " current" : ""}" data-table="${esc(t.name)}">
+      <input type="checkbox" ${ui.selected.has(t.name) ? "checked" : ""} aria-label="Sélectionner ${esc(t.name)}">
+      <span class="cell" title="${esc(t.name)}">${esc(t.name)}</span>${scopePill(t)}</div>`;
+  const group = (title, list) => (list.length ? `<div class="list-group">${title} · ${fmt.format(list.length)}</div>${list.map(row).join("")}` : "");
+  $("rows").innerHTML = group("Dans le périmètre", rows.filter((t) => t.in_scope && t.in_base !== false))
+    + group("Hors périmètre", rows.filter(outOfScope)) + group("Plus dans la base", rows.filter((t) => t.in_base === false));
+  $("list-extra").innerHTML = "";
+  $("empty").textContent = ui.scope ? "Aucune table ne correspond." : "Lecture de la base…";
+  $("empty").hidden = rows.length > 0;
+  $("select-all").checked = rows.length > 0 && rows.every((t) => ui.selected.has(t.name));
+  renderActions();
+}
+
+// The card of the Périmètre: the table chosen, or the database against its scope and its index
+function renderScope(el, message) {
+  const sc = ui.scope;
+  if (!sc) { el.innerHTML = '<p class="placeholder">Lecture de la base…</p>'; return; }
+  const t = ui.current && sc.tables.find((r) => r.name === ui.current);
+  el.innerHTML = (t ? scopeCard(t, sc) : scopeSummary(sc)).replace("<!--message-->", message ? `<p class="note error">${esc(message)}</p>` : "");
+  $("scope-back")?.addEventListener("click", () => { ui.current = null; renderRows(); renderDetail(); });
+  $("scope-overview")?.addEventListener("click", () => goTo("overview"));
+  $("scope-toggle")?.addEventListener("click", (e) => (e.currentTarget.dataset.add ? changeScope({ add: [t.name] }) : confirmRemove([t.name])));
+  el.querySelectorAll("[data-scope-all]").forEach((b) => { b.onclick = () => chooseMode(b.dataset.scopeAll === "1"); });
+}
+
+// How the scope is chosen: every table, the ones to come too, or a list (lib/semantics.scope_origin). Before a choice:
+// nothing (every table, the step to do) or the include_tables of the config, saved as a list
+function scopeMode(sc) {
+  const off = sc.counts.base == null ? ' disabled title="La base ne répond pas"' : "";
+  const mode = (all, label) => `<button type="button" data-scope-all="${all ? 1 : 0}" aria-pressed="${sc.origin === (all ? "all" : "list")}"${off}>${label}</button>`;
+  const says = {
+    none: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront. À choisir :",
+    config: `Le périmètre vient encore de <span class="mono">include_tables</span> dans la configuration (${plural(sc.config_tables, "table")}) :
+      « Une liste de tables » l'enregistre dans <span class="mono">semantic_layer/${esc(ui.db)}/scope.yaml</span>.`,
+    all: "Toutes les tables de la base, celles qui y arriveront aussi.",
+    list: "Les tables de la liste seulement : une table qui arrive dans la base reste dehors.",
+  }[sc.origin];
+  const stale = ["all", "list"].includes(sc.origin) && sc.config_tables ? `<p class="note"><span class="mono">include_tables</span> de la
+    configuration n'est plus lu : retire-le de <span class="mono">config.local.yaml</span>.</p>` : "";
+  return `<div class="${sc.origin === "config" ? "rule-note" : "note with-action"} scope-mode"><span>${says}</span>
+    <div class="seg scope-seg" role="group" aria-label="Tables lues">${mode(true, "Toutes les tables, même les futures")}${mode(false, "Une liste de tables")}</div></div>${stale}`;
+}
+
+// Every table or a list: a list keeps the tables of today; every table brings in the ones out of the scope, said before
+function chooseMode(all) {
+  const sc = ui.scope, outside = sc.tables.filter(outOfScope).length;
+  if (sc.origin === (all ? "all" : "list")) return;
+  if (!all || !outside) { changeScope({ all }); return; }
+  openConfirm($("confirm"), {
+    text: `<b>Toutes les tables</b> : ${outside > 1 ? `les ${fmt.format(outside)} tables hors périmètre y entrent` : "la table hors périmètre y entre"}, `
+      + "et celles qui arriveront dans la base aussi. Le pipeline pourra les profiler et les décrire, l'agent les lire une fois indexées.",
+    button: () => "Toutes les tables", run: () => changeScope({ all: true }), job: false,
+  });
+}
+
+// What differs between the scope and what the agent reads, in a sentence or two (a document changed since the index is
+// the Fiches tab's)
+function scopeVerdict(sc) {
+  const named = (test) => sc.tables.filter(test).map((t) => t.name);
+  const missing = named((t) => t.state === "missing"), leaving = named((t) => t.state === "leaving");
+  const gone = named((t) => t.state === "gone");
+  const goneInScope = named((t) => t.state === "gone" && t.in_scope);
+  const many = (list, one, more) => (list.length > 1 ? more : one);
+  const parts = [];
+  if (!sc.trace) parts.push("L'index n'a pas de trace : réindexe pour comparer le périmètre à ce que l'agent lit.");
+  if (missing.length) {
+    parts.push(`${names(missing)} ${many(missing, "est", "sont")} dans le périmètre mais pas dans l'index : l'agent ne ${many(missing, "la", "les")} voit pas encore. `
+      + `${many(missing, "Profile-la et décris-la", "Profile-les et décris-les")}, puis réindexe.`);
+  }
+  if (leaving.length) {
+    parts.push(`${names(leaving)} ${many(leaving, "est sortie", "sont sorties")} du périmètre : l'agent ${many(leaving, "la", "les")} lit jusqu'à la prochaine indexation.`);
+  }
+  if (gone.length) {
+    const remove = goneInScope.length === gone.length ? many(gone, "retire-la", "retire-les") : `retire ${names(goneInScope)}`;
+    parts.push(`${names(gone)} ${many(gone, "n'est plus", "ne sont plus")} dans la base${goneInScope.length ? ` : ${remove} du périmètre` : ""}.`);
+  }
+  if (!parts.length) {
+    const outside = (sc.counts.outside || 0);
+    return `<p class="verdict">Le périmètre et l'index concordent : l'agent lit les ${plural(sc.counts.scope, "table")} du périmètre`
+      + `${outside ? `, aucune des ${fmt.format(outside)} autres de la base` : ""}.</p>`;
+  }
+  const reindex = sc.trace && (leaving.length || sc.tables.some((t) => t.state === "gone" && t.indexed));
+  return `<p class="verdict warn">${parts.join(" ")}${reindex ? " Réindexe pour que l'agent lise le périmètre tel qu'il est." : ""}</p>`;
+}
+
+function scopeSummary(sc) {
+  const c = sc.counts, outside = (c.outside || 0) + (c.leaving || 0);
+  const read = sc.source === "database" ? `lue à ${at(sc.read_at)}` : "lue dans les fichiers";
+  return `<div class="detail-head"><h2>La base et l'index</h2><span class="figures">${read}</span>
+      <span class="grow"></span><button class="btn ghost small" type="button" id="scope-overview">← Vue d'ensemble</button></div><!--message-->
+    ${scopeMode(sc)}${scopeVerdict(sc)}
+    <div class="dash"><div class="tiles">
+      ${indexTile("Dans la base", c.base == null ? "—" : fmt.format(c.base),
+        c.base == null ? "La base ne répond pas : les tables viennent des fichiers." : "Toutes ses tables, lues dans la base.")}
+      ${indexTile("Dans le périmètre", fmt.format(c.scope), "Ce que l'agent et le pipeline voient.")}
+      ${indexTile("Dans l'index", sc.trace ? fmt.format(c.indexed) : "—",
+        sc.trace ? `${c.indexed > 1 ? "Fiches" : "Fiche"} que l'agent lit aujourd'hui.` : "Pas de trace : réindexer pour la voir.")}
+      ${indexTile("Hors périmètre", fmt.format(outside), outside
+        ? "Le pipeline ne les lit pas, et une requête de l'agent qui les lit est bloquée." : "Toutes les tables de la base sont dans le périmètre.")}
+    </div></div>`;
+}
+
+// What a table is in the database, the scope, the files and the index, and the button that moves it in or out
+const SCOPE_STATES = {
+  fresh: () => "Dans le périmètre et dans l'index : l'agent lit sa fiche à jour.",
+  changed: () => "Dans le périmètre. Ses fichiers ont changé depuis l'index : l'agent lit encore l'ancienne fiche, réindexe pour la nouvelle.",
+  missing: (t) => `Dans le périmètre, pas encore dans l'index : l'agent ne la voit pas. ${t.described ? "Réindexe pour qu'il la lise."
+    : t.profiled ? "Décris-la, puis réindexe." : "Profile-la et décris-la, puis réindexe."}`,
+  unknown: () => "Dans le périmètre. L'index n'en a pas de trace : réindexe pour savoir ce que l'agent lit.",
+  outside: () => "Hors périmètre : le pipeline ne la lit pas, et une requête de l'agent qui la lit est bloquée.",
+  leaving: () => "Retirée du périmètre, encore dans l'index : l'agent la lit jusqu'à la prochaine indexation.",
+  gone: (t) => `Plus dans la base${t.indexed ? " : sa fiche partira à la prochaine indexation" : ""}.`
+    + `${t.in_scope ? " L'agent et le pipeline l'ignorent : retire-la du périmètre." : ""}`,
+};
+function scopeCard(t, sc) {
+  const facts = [t.columns != null && plural(t.columns, "colonne"), t.profiled ? "profilée" : "non profilée", t.described ? "décrite" : "non décrite"];
+  const tone = ["changed", "missing", "leaving", "gone"].includes(t.state) ? " warn" : "";
+  const kept = !t.in_scope && t.in_base && (t.profiled || t.described)
+    ? `<p class="note">${t.profiled && t.described ? "Son profil et ses descriptions restent" : t.profiled ? "Son profil reste" : "Ses descriptions restent"}
+      dans les fichiers : ajoutée de nouveau, elle les retrouve.</p>` : "";
+  const off = sc.counts.base == null ? " disabled title=\"La base ne répond pas\"" : "";
+  const action = t.in_scope ? `<button class="btn" type="button" id="scope-toggle"${off}>Retirer du périmètre</button>`
+    : t.in_base ? `<button class="btn primary" type="button" id="scope-toggle" data-add="1"${off}>Ajouter au périmètre</button>` : "";
+  return `<div class="detail-head"><h2>${esc(t.name)}</h2><span class="figures">${facts.filter(Boolean).join(" · ")}</span>
+      <span class="grow"></span><button class="btn ghost small" type="button" id="scope-back">← La base et l'index</button></div><!--message-->
+    <p class="verdict${tone}">${SCOPE_STATES[t.state](t)}</p>${kept}
+    ${action ? `<div class="scope-actions">${action}</div>` : ""}`;
+}
+
+// A change of the scope, written to scope.yaml: every table ({all: true}), tables added or taken out ({add, remove}: a
+// list), or the scope of today as a list ({all: false}); every screen reads it again
+async function changeScope(body) {
+  const version = ui.scope?.version ?? ui.idx?.scope.version;   // the guided setup changes it before the screen is read
+  try {
+    ui.scope = await api(`/api/db/${encodeURIComponent(ui.db)}/scope`, { method: "POST", body: { ...body, version } });
+  } catch (e) {
+    showBanner(e.status === 409 ? "scope.yaml a changé : relis la base avant de recommencer." : e.message, true);
+    return;
+  }
+  ui.selected.clear();
+  if (ui.step === "scope") { renderRows(); renderDetail(); }
+  await loadTables();   // the other tabs, the head and the tabs of the database
+  loadIndex();
+}
+
+// Tables taken out of the scope, said before: their files stay, the agent loses them at the next index
+function confirmRemove(tables) {
+  if (!tables.length) return;
+  const one = tables.length === 1;
+  openConfirm($("confirm"), {
+    text: `<b>Retirer ${one ? `<span class="mono">${esc(tables[0])}</span>` : plural(tables.length, "table")} du périmètre</b> : `
+      + `${one ? "elle ne sera plus profilée, décrite ni indexée" : "elles ne seront plus profilées, décrites ni indexées"}, et l'agent `
+      + `${one ? "la" : "les"} perdra à la prochaine indexation. ${one ? "Son profil et ses descriptions restent" : "Leurs profils et descriptions restent"} dans les fichiers.`
+      + (["all", "none"].includes(ui.scope.origin) ? " Le périmètre devient une liste : une table qui arrivera dans la base restera dehors." : ""),
+    button: () => "Retirer", run: () => changeScope({ remove: tables }), job: false,
+  });
+}
+
 // ── Index: what the agent reads of each table, against the files today ──
 
 async function loadIndex() {
@@ -2063,12 +2294,15 @@ const INDEX_PILLS = {
   unknown: '<span class="pill todo" title="Index construit avant que le studio en garde la trace">état inconnu</span>',
 };
 
-// The tables the index holds that the database no longer has: under the tables, quieter
+// The tables the index holds that leave it at the next index: the database no longer has them, or they are out of the scope
+const leavingIndex = (idx) => [...idx.gone, ...idx.unscoped];
+
+// The tables leaving the index: under the tables, quieter
 function renderGone() {
-  const gone = ui.idx?.gone || [];
-  $("list-extra").innerHTML = gone.length ? `<div class="list-group">Plus dans la base · ${fmt.format(gone.length)}</div>`
-    + gone.map((name) => `<div class="row aside${name === ui.current ? " current" : ""}" data-table="${esc(name)}">
-        <span></span><span class="cell" title="${esc(name)}">${esc(name)}</span><span class="pill todo">à retirer</span></div>`).join("") : "";
+  const group = (title, list) => (list.length ? `<div class="list-group">${title} · ${fmt.format(list.length)}</div>`
+    + list.map((name) => `<div class="row aside${name === ui.current ? " current" : ""}" data-table="${esc(name)}">
+        <span></span><span class="cell" title="${esc(name)}">${esc(name)}</span><span class="pill todo">à retirer</span></div>`).join("") : "");
+  $("list-extra").innerHTML = group("Plus dans la base", ui.idx?.gone || []) + group("Hors du périmètre", ui.idx?.unscoped || []);
 }
 
 const when = (seconds) => `${new Date(seconds * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} à ${at(seconds)}`;
@@ -2103,7 +2337,7 @@ function indexVerdict(idx, db = ui.db) {
   if (errors.length) {
     tone = "bad";
     text = `L'agent ne démarrera pas : il refuse ${errors.length > 1 ? "les métriques" : "la métrique"} ${names(errors)} (détail dans la tuile Métriques).`;
-  } else if (changed.length || missing.length || idx.gone.length) {
+  } else if (changed.length || missing.length || leavingIndex(idx).length) {
     tone = "warn";
     const parts = [];
     if (changed.length) {
@@ -2114,6 +2348,10 @@ function indexVerdict(idx, db = ui.db) {
     if (idx.gone.length) {
       parts.push(`${names(idx.gone)} ${idx.gone.length > 1 ? "ne sont plus" : "n'est plus"} dans la base : `
         + `${idx.gone.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
+    }
+    if (idx.unscoped.length) {
+      parts.push(`${names(idx.unscoped)} ${idx.unscoped.length > 1 ? "sont sorties" : "est sortie"} du périmètre : `
+        + `${idx.unscoped.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
     }
     text = `${parts.join(" ")} ${idx.dataset ? "Réindexe, puis relance l'évaluation." : "Réindexe."}`;
   } else if (!idx.dataset) {
@@ -2129,7 +2367,7 @@ function indexVerdict(idx, db = ui.db) {
       + `exacte${e.exact > 1 ? "s" : ""} sur ${fmt.format(e.scored)}.`;
   }
   // What the tiles flag in amber, in a few words: the agent starts, but it reads less than it could
-  const raw = idx.raw.filter((t) => !idx.gone.includes(t));
+  const raw = idx.raw.filter((t) => !leavingIndex(idx).includes(t));
   const look = [
     raw.length && `${plural(raw.length, "table")} sans description`,
     idx.dropped.length && `${plural(idx.dropped.length, "colonne")} sans valeurs`,
@@ -2169,7 +2407,7 @@ function valuesTile(idx) {
 // What the agent receives: the documents and their joins, the columns hidden from it, the sample rows, the metrics
 // it checks at startup, then the categorical columns
 function indexTiles(idx) {
-  const raw = idx.raw.filter((t) => !idx.gone.includes(t)), m = idx.metrics, hidden = idx.hidden.length;
+  const raw = idx.raw.filter((t) => !leavingIndex(idx).includes(t)), m = idx.metrics, hidden = idx.hidden.length;
   const rows = idx.sample_rows, now = idx.sample_rows_now;
   const perDocument = rows ? `${fmt.format(rows)}<small>par fiche</small>` : "aucune";
   return [
@@ -2191,6 +2429,24 @@ function indexTiles(idx) {
         m.total ? "Leurs colonnes sont toutes dans les fiches : l'agent démarrera." : "Pas de métrique : rien à vérifier."),
     valuesTile(idx),
   ].join("");
+}
+
+// The tables the agent and the pipeline see, out of the ones of the database: the Périmètre opens from here
+function scopeTile(idx) {
+  const sc = idx.scope, outside = sc.base == null ? null : sc.base - sc.tables;
+  const every = sc.origin === "all" || sc.origin === "none";
+  const value = every ? `${fmt.format(sc.tables)}<small>toutes</small>`
+    : `${fmt.format(sc.tables)}<small>${sc.base == null ? (sc.tables > 1 ? "tables" : "table") : `sur ${fmt.format(sc.base)}`}</small>`;
+  const text = sc.origin === "none" ? "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront."
+    : sc.origin === "all" ? "Toutes les tables de la base, celles qui y arriveront aussi."
+    : sc.origin === "config" ? `Encore lu dans <span class="mono">include_tables</span> de la configuration : enregistre-le dans le studio.`
+    : outside == null ? "Les tables de la liste, que l'agent et le pipeline voient."
+    : outside ? `Les tables de la liste : ${plural(outside, "autre")} de la base ${outside > 1 ? "restent" : "reste"} dehors, et celles qui y arriveront aussi.`
+    : "Les tables de la liste, toutes celles de la base aujourd'hui : une table qui y arrivera restera dehors.";
+  return `<div class="tile scope${sc.origin === "config" ? " warn" : ""}">
+    <div class="scope-figure"><span class="tile-label">Tables lues</span><span class="tile-value">${value}</span></div>
+    <div class="scope-body"><span>${text}</span></div>
+    <button class="btn ghost small" type="button" data-setup="scope">${sc.origin === "none" ? "Choisir le périmètre" : "Voir les tables"} →</button></div>`;
 }
 
 // The last eval: its score in large, a meter of the exact answers (grey when it measured an older index), the dashboard of the database
@@ -2228,7 +2484,8 @@ function renderIndex(el, message) {
     <section class="panel overview-main">
       <div class="detail-head"><h2>Ce que l'agent lit</h2><span class="figures">${figures}</span></div>
       ${message ? `<p class="note error">${esc(message)}</p>` : ""}${baseVerdict(idx, ui.data?.db === ui.db ? ui.data.summary : null, ui.db)}
-      <div class="dash">${idx.trace ? `<section><h3 class="dash-title">Ce que l'agent reçoit</h3><div class="tiles">${indexTiles(idx)}</div></section>` : ""}
+      <div class="dash"><section><h3 class="dash-title">Périmètre</h3>${scopeTile(idx)}</section>
+        ${idx.trace ? `<section><h3 class="dash-title">Ce que l'agent reçoit</h3><div class="tiles">${indexTiles(idx)}</div></section>` : ""}
         <section><h3 class="dash-title">Évaluation</h3>${evalTile(idx)}</section></div>
     </section>
     <aside class="panel setup">${setupCard()}</aside>
@@ -2246,7 +2503,7 @@ function setupCard() {
       <span class="dot ${p.state}">${p.state === "done" ? CHECK : p.state === "bad" ? BANG : ""}</span>
       <span class="setup-name">${STAGES[p.key]}<small class="${p.state}">${esc(p.tip)}</small></span>
       <span class="setup-go">${p.key !== "index" ? "→" : need === "reindex" ? "Réindexer →" : need === "eval" ? "Évaluer →" : ""}</span></button></li>`;
-  return `<div class="setup-head"><h2>Mise en place</h2><span class="muted-text">${fmt.format(done)} ${done > 1 ? "étapes" : "étape"} sur 5</span></div>
+  return `<div class="setup-head"><h2>Mise en place</h2><span class="muted-text">${fmt.format(done)} ${done > 1 ? "étapes" : "étape"} sur ${steps.length}</span></div>
     <p class="setup-text">Ce qui prépare la base pour l'agent. Chaque étape s'ouvre dans son onglet.</p>
     <ol class="setup-steps">${steps.map(row).join("")}</ol>
     <div class="setup-foot"><button class="btn" type="button" id="setup-wizard">Lancer la mise en place guidée</button>
@@ -2317,8 +2574,9 @@ function renderDocument(el, message) {
       d.described ? "décrite" : "structure brute", d.data_as_of ? `données au ${d.data_as_of}` : null].filter(Boolean).join(" · ");
     const notes = [
       d.gone && "Plus dans la base : sa fiche partira à la prochaine indexation.",
+      d.unscoped && "Hors du périmètre : sa fiche partira à la prochaine indexation.",
       d.changes.length && `Depuis l'index : ${d.changes.map((c) => CHANGES[c.kind](c)).join(" · ")}. L'agent lit encore l'ancienne fiche.`,
-      !d.described && !d.gone && !d.changes.length && "Sans description : l'agent ne lit que la structure brute. L'onglet Descriptions la décrit.",
+      !d.described && !d.gone && !d.unscoped && !d.changes.length && "Sans description : l'agent ne lit que la structure brute. L'onglet Descriptions la décrit.",
     ].filter(Boolean);
     el.innerHTML = head(figures) + notes.map((n) => `<div class="rule-note"><span>${n}</span></div>`).join("")
       + (text ? documentText(d)
@@ -2415,13 +2673,13 @@ const HOME = "accueil";
 const DIALECTS = { hive: "Hive", impala: "Impala", sqlite: "SQLite", postgresql: "PostgreSQL" };
 const CHECK = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-4.9"/></svg>';
 const BANG = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.8v4"/><circle cx="6" cy="9.2" r="1"/></svg>';
-// The five steps of the setup of a database, by the name of what they make
-const STAGES = { profile: "Contenu", semantics: "Descriptions", relations: "Relations", metrics: "Métriques", index: "Index et évaluation" };
+// The steps of the setup of a database, by the name of what they make
+const STAGES = { scope: "Périmètre", profile: "Contenu", semantics: "Descriptions", relations: "Relations", metrics: "Métriques", index: "Index et évaluation" };
 
 // What the index of a database needs: "reindex" (never built, built before its trace, files changed since), "eval"
 // (no score of this index while there are questions), or nothing
 function indexNeed(idx) {
-  if (!idx.trace || idx.counts.changed + idx.counts.missing + idx.gone.length) return "reindex";
+  if (!idx.trace || idx.counts.changed + idx.counts.missing + leavingIndex(idx).length) return "reindex";
   const built = idx.built_at ?? idx.values_at;
   return idx.dataset && (!idx.eval || (built != null && idx.eval.at < built)) ? "eval" : null;
 }
@@ -2470,14 +2728,20 @@ function renderHome() {
   $("bases").innerHTML = bases.map(baseCard).join("") || '<p class="placeholder">Aucune base dans la configuration.</p>';
 }
 
-// The five steps of a database, each done, partial (to finish or to do again), todo or bad (the agent won't start)
+// The steps of a database, each done, partial (to finish or to do again), todo or bad (the agent won't start). The
+// Périmètre is done once chosen, every table or a list (lib/semantics.scope_origin)
 function pipelineSteps(base) {
-  const s = base.summary, idx = base.index, e = idx.eval, errors = idx.metrics?.errors || [];
+  const s = base.summary, idx = base.index, e = idx.eval, errors = idx.metrics?.errors || [], sc = idx.scope;
   const built = idx.built_at ?? idx.values_at;
-  const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + idx.gone.length : 0;
+  const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + leavingIndex(idx).length : 0;
   const staleEval = idx.dataset && (!e || (built != null && e.at < built));
   const undescribed = s.tables - s.described;
+  const of = sc.base == null ? "" : ` sur ${fmt.format(sc.base)}`;
   return [
+    { key: "scope", state: { all: "done", list: "done", config: "partial", none: "todo" }[sc.origin],
+      count: { all: "toutes", list: `${fmt.format(sc.tables)}${sc.base == null ? "" : `/${fmt.format(sc.base)}`}`, config: "à enregistrer", none: "à choisir" }[sc.origin],
+      tip: { all: "Toutes les tables, celles qui arriveront aussi", list: `${plural(sc.tables, "table")}${of} : une nouvelle reste dehors`,
+        config: "Liste encore dans la configuration : à enregistrer", none: "Aucun périmètre choisi : toutes les tables, celles qui arriveront aussi" }[sc.origin] },
     { key: "profile", state: s.profiled === s.tables ? "done" : s.profiled ? "partial" : "todo",
       count: `${fmt.format(s.profiled)}/${fmt.format(s.tables)}`, tip: `${fmt.format(s.profiled)} tables profilées sur ${fmt.format(s.tables)}` },
     { key: "semantics", state: !undescribed && !s.partial && !s.rewritten ? "done" : s.described ? "partial" : "todo",
@@ -2511,6 +2775,10 @@ function nextStep(base, steps) {
   const tab = (key, label) => open + (preparing
     ? `<button class="btn primary" type="button" data-wizard="1">${steps[0].state === "todo" ? "Lancer" : "Reprendre"} la mise en place →</button>`
     : go(key, label));
+  if (step.key === "scope") {
+    return { text: idx.scope.origin === "config" ? say("Enregistrer le périmètre", "il est encore lu dans la configuration.")
+      : say("Choisir le périmètre", "toutes les tables, celles qui arriveront aussi, ou une liste."), buttons: tab("scope", "Ouvrir le périmètre") };
+  }
   if (step.key === "profile") {
     return { text: say(`Profiler ${plural(s.tables - s.profiled, "table")}`, "le studio ne sait pas encore ce qu'elles contiennent."),
       buttons: tab("profile", "Ouvrir le contenu") };
@@ -2531,7 +2799,7 @@ function nextStep(base, steps) {
       : say("Proposer des métriques", "sans elles, l'agent refait ses calculs à chaque question."), buttons: tab("metrics", "Ouvrir les métriques") };
   }
   if (preparing) return { text: say("Indexer la base", "l'agent ne la voit pas encore."), buttons: tab("overview", "") };
-  const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + idx.gone.length : 0;
+  const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + leavingIndex(idx).length : 0;
   if (indexNeed(idx) === "reindex") {
     return { text: say("Réindexer", toIndex ? `${plural(toIndex, "fiche")} à mettre à jour : l'agent lit encore l'ancienne version.`
       : "pour voir ce que l'agent lit, table par table."), buttons: open + go("overview", "Réindexer", "reindex") };
@@ -2563,7 +2831,7 @@ function minis(base) {
       mini(s.metrics ? fmt.format(s.metrics) : "aucune", many(s.metrics, "métrique", "métriques")),
     ];
   }
-  const raw = idx.raw.filter((t) => !idx.gone.includes(t)).length, hidden = idx.hidden.length, m = idx.metrics;
+  const raw = idx.raw.filter((t) => !leavingIndex(idx).includes(t)).length, hidden = idx.hidden.length, m = idx.metrics;
   const valid = m.total - m.errors.length;
   return [
     mini(fmt.format(idx.documents), raw ? `${many(idx.documents, "fiche", "fiches")}, dont ${fmt.format(raw)} sans description`
@@ -2655,16 +2923,17 @@ $("search-results").addEventListener("click", (e) => {
   if (row) openDb(row.dataset.db, "index", { table: row.dataset.table });
 });
 
-// ── The guided setup: the five steps of a database one after the other, opened on purpose ──
+// ── The guided setup: the steps of a database one after the other, opened on purpose ──
 
 const GUIDE = {
+  scope: { title: "Choisir les tables", text: "Les tables de la base que l'agent et le pipeline voient : toutes, celles qui arriveront aussi, ou une liste. Une table hors de la liste n'est jamais profilée, décrite ni indexée, et une requête de l'agent qui la lit est bloquée." },
   profile: { title: "Profiler les tables", text: STEPS.profile.text },
   semantics: { title: "Décrire les tables", text: "L'agent choisit ses tables et écrit ses requêtes à partir de ces descriptions. L'IA les rédige à partir de la structure des tables et de leur profil ; tu pourras les relire et les corriger ensuite dans l'onglet Descriptions." },
   relations: { title: "Relier les tables", text: STEPS.relations.text },
   metrics: { title: "Proposer des métriques", text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose et chacune est testée sur les données, sans jamais en montrer le résultat. Une base peut s'en passer : l'agent calcule alors lui-même." },
   index: { title: "Indexer et évaluer", text: "L'index écrit la fiche de chaque table, ce que l'agent lit vraiment, et les valeurs des colonnes catégorielles lues dans la base. L'évaluation pose ensuite les questions de test à l'agent et compare ses réponses aux lignes attendues." },
 };
-const GUIDE_STEPS = ["profile", "semantics", "relations", "metrics", "index"];
+const GUIDE_STEPS = ["scope", "profile", "semantics", "relations", "metrics", "index"];
 
 // The setup opens on the step asked, else on the first that is not done (known once the database is read)
 function openWizard(step = null) {
@@ -2688,7 +2957,7 @@ function leaveWizard() {
 
 $("wizard-quit").addEventListener("click", () => goTo("overview", true));
 
-// The five steps on the left (done or not), the current one on the right: what it does, how far it went, its
+// The steps on the left (done or not), the current one on the right: what it does, how far it went, its
 // action, what is left; then the way to the step before, the next one, or the tab where it is reviewed
 function renderWizard() {
   if (!ui.wizard) return;
@@ -2723,7 +2992,26 @@ function guideStep(key, base, p) {
     + items.map((it) => `<div class="guide-row"><span class="mono">${esc(it.name)}</span><span class="figures">${esc(it.size)}</span>${it.pill}</div>`).join("") + "</div>";
   const done = p.state === "done" ? '<p class="guide-done">Étape terminée : tu peux passer à la suivante.</p>' : "";
   let body = "";
-  if (key === "profile") {
+  if (key === "scope") {
+    // The choice itself, every table or a list; the tables of a list are chosen on the Périmètre
+    const sc = idx.scope, off = sc.base == null ? ' disabled title="La base ne répond pas"' : "";
+    const choice = (mode, label, primary) => `<button class="btn${primary ? " primary" : ""}" type="button" data-guide-run="scope-${mode}"${off}>${label}</button>`;
+    const said = {
+      none: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront.",
+      config: `La liste vient encore de <span class="mono">include_tables</span> dans la configuration (${plural(sc.tables, "table")}).`,
+      all: `Toutes les tables de la base${sc.base == null ? "" : ` (${fmt.format(sc.base)})`}, celles qui y arriveront aussi.`,
+      list: `<b>${fmt.format(sc.tables)}</b> ${sc.tables > 1 ? "tables" : "table"} dans la liste${sc.base == null ? "" : ` sur ${fmt.format(sc.base)}`} : une table qui arrive dans la base reste dehors.`,
+    }[sc.origin];
+    const choices = {
+      none: choice("all", "Toutes les tables, même les futures", true) + choice("list", "Une liste de tables", false)
+        + '<span class="muted-text">La liste part des tables d\'aujourd\'hui : tu retires ensuite les autres dans le Périmètre.</span>',
+      config: choice("list", "Enregistrer la liste de la configuration", true) + choice("all", "Toutes les tables, même les futures", false),
+      all: choice("list", "Passer à une liste de tables", false),
+      list: "",
+    }[sc.origin];
+    body = `<div class="guide-progress"><div class="guide-count"><span>${said}</span></div></div>` + done
+      + (choices ? `<div class="guide-action">${choices}</div>` : "");
+  } else if (key === "profile") {
     const missing = rows.filter((t) => t.status.profile === "none"), n = missing.length;
     body = progress(s.profiled, s.tables, "tables profilées") + done
       + (n ? `<div class="guide-action">${action(n > 1 ? `Profiler les ${fmt.format(n)} manquantes` : "Profiler la manquante", "profile", "Des comptes seulement, jamais une valeur.")}</div>` : "")
@@ -2753,16 +3041,16 @@ function guideStep(key, base, p) {
       + `<div class="guide-action">${action(idx.trace || idx.values_at ? "Réindexer" : "Indexer", "index",
         "", need === "reindex")}${idx.dataset ? action("Évaluer l'agent", "eval", "", need === "eval") : ""}</div>`;
   }
-  return `<div class="guide-head"><span class="eyebrow">Étape ${GUIDE_STEPS.indexOf(key) + 1} sur 5</span><h1>${GUIDE[key].title}</h1>`
+  return `<div class="guide-head"><span class="eyebrow">Étape ${GUIDE_STEPS.indexOf(key) + 1} sur ${GUIDE_STEPS.length}</span><h1>${GUIDE[key].title}</h1>`
     + `<p>${GUIDE[key].text}</p></div>${body}`;
 }
 
 // The way to the step before, the tab where this one is reviewed, the next step (skipped while not done) or the end
 function guideFoot(at, p) {
-  const prev = GUIDE_STEPS[at - 1], next = GUIDE_STEPS[at + 1], tab = at === 4 ? "overview" : GUIDE_STEPS[at];
+  const prev = GUIDE_STEPS[at - 1], next = GUIDE_STEPS[at + 1], tab = GUIDE_STEPS[at] === "index" ? "overview" : GUIDE_STEPS[at];
   return `<div class="guide-foot">
     ${prev ? `<button class="btn" type="button" data-guide="${prev}">← ${STAGES[prev]}</button>` : ""}
-    <button class="btn ghost" type="button" data-tab="${tab}">Voir dans l'onglet ${STEPS[tab].title}</button>
+    <button class="btn ghost" type="button" data-tab="${tab}">${tab === "scope" ? "Choisir dans le Périmètre" : `Voir dans l'onglet ${STEPS[tab].title}`}</button>
     <span class="grow"></span>
     ${!next ? `<button class="btn${p.state === "done" ? " primary" : ""}" type="button" data-finish="1">Terminer</button>`
       : p.state === "done" ? `<button class="btn primary" type="button" data-guide="${next}">Suivant : ${STAGES[next]} →</button>`
@@ -2781,7 +3069,9 @@ $("wizard").addEventListener("click", (e) => {
 
 // The action of a step: the same job as the button of its tab
 function runGuide(job) {
-  if (job === "profile") runJob("profile", { missing: true });
+  if (job === "scope-all") changeScope({ all: true });
+  else if (job === "scope-list") changeScope({ all: false });
+  else if (job === "profile") runJob("profile", { missing: true });
   else if (job === "semantics") runJob("semantics", {});
   else if (job === "relations") runJob("relations/run", {});
   else if (job === "metrics") runJob("metrics/run", {});
@@ -2818,7 +3108,8 @@ function runMissing() {
   runJob(ui.step === "profile" ? "profile" : "semantics", ui.step === "profile" ? { missing: true } : {});
 }
 $("run-primary").addEventListener("click", () => {
-  if (ui.step === "metrics") runJob("metrics/run", {});
+  if (ui.step === "scope") changeScope({ add: scopeSelection().add });
+  else if (ui.step === "metrics") runJob("metrics/run", {});
   else if (ui.step === "relations") runJob("relations/run", {});
   else if (ui.step === "profile") runSelection();
   else runMissing();
@@ -2836,7 +3127,8 @@ function confirmEval() {
 }
 
 $("run-secondary").addEventListener("click", () => {
-  if (ui.step === "metrics") {
+  if (ui.step === "scope") confirmRemove(scopeSelection().remove);
+  else if (ui.step === "metrics") {
     if (ui.testing) { ui.testing.stop = true; renderJob(); return; }
     testMetrics((ui.met?.metrics || []).filter((m) => m.sql).map((m) => m.name), { panel: true });
   }
@@ -2890,6 +3182,8 @@ async function pollJob() {
     }
     // A new index or a new eval: what the agent reads, its score
     if ((job.step === "index" || job.step === "eval") && ended) { await loadIndex(); renderJob(); }
+    // The Périmètre tells what each table has: profiled, described, indexed
+    if (ended && ui.step === "scope") await loadScope();
   }
   // The home counts every database: read again when a job ends
   if (ui.home && before?.id === job.id && before.running && !job.running) loadHome();

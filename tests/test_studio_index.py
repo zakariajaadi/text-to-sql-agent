@@ -122,16 +122,22 @@ def test_the_index_of_a_database_against_its_files():
     metrics = {"revenue": {"description": "Invoiced", "expr": "SUM(invoice.total)"},
                "mails": {"description": "Mails", "expr": "COUNT(DISTINCT invoice.email)"}}
     view = index_view(["invoice", "customer", "track"], DB_COLUMNS, semantics, RELATIONS, make_trace(), metrics,
-                      "hive", None)
+                      "hive", None, base=["customer", "invoice", "track"])
     assert [(r["name"], r["status"]) for r in view["tables"]] == [("invoice", CHANGED), ("customer", FRESH), ("track", MISSING)]
     assert view["tables"][0]["changes"] == [{"kind": "data_as_of"}]
-    assert view["gone"] == ["legacy"] and view["raw"] == ["customer", "legacy"] and view["documents"] == 3
+    assert view["gone"] == ["legacy"] and view["unscoped"] == [] and view["raw"] == ["customer", "legacy"] and view["documents"] == 3
     # One join (written in the trace of each table it links), email hidden from the 9 columns
     assert view["joins"] == 1 and view["shown"] == 8 and view["hidden"] == ["invoice.email"]
     assert view["searched"] == {"columns": 1, "values": 53} and view["inline"] == {"columns": 0, "values": 0}
     assert view["dropped"] == ["invoice.country"]
     # email is hidden: not in the document, the agent would refuse the metric at startup
     assert view["metrics"] == {"total": 2, "errors": [{"name": "mails", "detail": "unknown column 'invoice.email'"}]}
+
+    # legacy still in the database, out of the scope; or the database not read: its document leaves the index all the same
+    for base in (["customer", "invoice", "legacy", "track"], None):
+        view = index_view(["invoice", "customer", "track"], DB_COLUMNS, semantics, RELATIONS, make_trace(), metrics,
+                          "hive", None, base=base)
+        assert view["gone"] == [] and view["unscoped"] == ["legacy"]
 
     # Never indexed since the traces exist: nothing is known of the tables
     view = index_view(["invoice"], DB_COLUMNS, semantics, RELATIONS, None, metrics, "hive", None)
@@ -212,10 +218,12 @@ def client(tmp_path, monkeypatch):
     for module in (lib.semantics, lib.metrics, studio_app):
         monkeypatch.setattr(module, "SEMANTIC_LAYER_DIR", tmp_path)
     monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(
-        exclude_personal_data=False, dialect="hive", sample_rows=0))
+        exclude_personal_data=False, dialect="hive", sample_rows=0, include_tables=[]))
+    monkeypatch.setattr(lib.semantics, "cfg", SimpleNamespace(get_db=lambda db: SimpleNamespace(include_tables=[])))
     columns = {table: [{"name": c, "type": "STRING"} for c in names] for table, names in DB_COLUMNS.items()}
     monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: {
-        "tables": list(DB_COLUMNS), "columns": columns, "source": "database", "error": None, "read_at": 0})
+        "tables": list(DB_COLUMNS), "base": list(DB_COLUMNS), "columns": columns, "source": "database", "error": None,
+        "read_at": 0})
     monkeypatch.setattr(studio_app, "read_trace", lambda db: make_trace())
     monkeypatch.setattr(studio_app, "value_index_path", lambda db: tmp_path / "none.sqlite")
     monkeypatch.setattr(studio_app, "RESULTS_DIR", tmp_path / "results")
@@ -231,9 +239,11 @@ def test_the_index_screen_and_a_document(client, tmp_path):
     assert [(r["name"], r["status"]) for r in view["tables"]] == [("invoice", CHANGED), ("customer", FRESH)]
     assert view["sample_rows"] == 3 and view["sample_rows_now"] == 0 and view["dataset"] is False
     assert view["eval"] is None and view["values_at"] is None and "tables.yaml" in view["files"]
+    # The tile of the Périmètre: no scope chosen, every table of the database
+    assert view["scope"] == {"tables": 2, "base": 2, "origin": "none", "version": "0"}
 
     document = client.get("/api/db/shop/index/legacy").json()
-    assert document["gone"] is True and document["chars"] == 40
+    assert document["gone"] is True and document["unscoped"] is False and document["chars"] == 40
     assert client.get("/api/db/shop/index/nothing").status_code == 404
 
     # No questions: no eval to run, no dashboard to open
@@ -279,6 +289,7 @@ def test_the_home_asks_no_database(client, monkeypatch):
     # The tables the files and the last index know: none is gone, the database was not read
     assert base["summary"]["tables"] == 3 and base["summary"]["described"] == 1 and base["summary"]["isolated"] == 3
     assert base["index"]["gone"] == [] and base["index"]["joins"] == 1 and base["index"]["hidden"] == ["invoice.email"]
+    assert base["index"]["scope"] == {"tables": 3, "base": None, "origin": "none", "version": "0"}
 
     # The search goes through the semantic layer of every database: email is hidden from the agent
     found = client.get("/api/search", params={"q": "EMAIL"}).json()

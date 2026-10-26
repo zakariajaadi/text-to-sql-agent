@@ -598,6 +598,11 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .verdict.warn { background: var(--warn-soft); color: var(--warn-ink); }
 .verdict.bad { background: var(--bad-soft); color: var(--bad-ink); }
 .verdict .mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
+/* The Périmètre: how its scope is chosen (every table or a list), next to what it says */
+.scope-mode { flex-wrap: wrap; }
+.scope-seg button { padding: 3px 10px; }
+/* The card of a table on the Périmètre: the button that moves it in or out of the scope */
+.scope-actions { display: flex; gap: 8px; margin: 0 14px 14px; }
 .dash { display: grid; gap: 18px; padding: 14px; border-top: 1px solid var(--line); container-type: inline-size; }
 .dash-title { margin: 0 0 8px; font-size: var(--fs-xs); font-weight: 500; color: var(--muted); }
 .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -632,12 +637,13 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 }
 .split-key:hover .key-tip, .split-key:focus .key-tip { opacity: 1; visibility: visible; }
 /* the last eval: its score, a meter of the exact answers, grey when it measured an older index */
-.tile.eval { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px 32px; padding: 16px 20px; }
-.eval-score { display: grid; gap: 2px; min-width: 120px; }
+.tile.eval, .tile.scope { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px 32px; padding: 16px 20px; }
+.eval-score, .scope-figure { display: grid; gap: 2px; min-width: 120px; }
 .hero { font-size: var(--fs-hero); font-weight: 600; line-height: 1.05; letter-spacing: -0.04em; }
 .hero small { font-size: var(--fs-xl); }   /* the unit of the score, the size of a title */
 .hero-unit { font-size: var(--fs-xs); color: var(--muted); }
-.eval-body { display: grid; gap: 6px; font-size: var(--fs-sm); }
+.eval-body, .scope-body { display: grid; gap: 6px; font-size: var(--fs-sm); }
+.tile.scope.warn .scope-body { color: var(--warn-ink); }
 .meter { display: flex; height: 8px; max-width: 420px; margin-bottom: 4px; border-radius: 999px; overflow: hidden; background: var(--chip); }
 .meter span { background: var(--good); }
 .meter.stale span { background: var(--bar); }
@@ -646,8 +652,8 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 }
 @container (max-width: 560px) {
   .tiles { grid-template-columns: minmax(0, 1fr); }
-  .tile.eval { grid-template-columns: minmax(0, 1fr); }
-  .tile.eval > .btn { justify-self: start; }
+  .tile.eval, .tile.scope { grid-template-columns: minmax(0, 1fr); }
+  .tile.eval > .btn, .tile.scope > .btn { justify-self: start; }
 }
 .xline {
   display: grid; grid-template-columns: minmax(0, 1fr) 110px 170px; gap: 12px; align-items: center;
@@ -869,8 +875,8 @@ body[data-view="home"] .home-mark { display: inline-flex; }
 /* five dots joined by a line: done (green), to finish or do again (half amber), todo (a ring), bad (red) */
 .pipeline { border-top: 1px solid var(--line); padding: 14px 18px 6px; }
 .pipeline-title { display: block; font-size: var(--fs-xs); color: var(--muted); margin-bottom: 10px; }
-.pipe { position: relative; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.pipe::before { content: ""; position: absolute; top: 8px; left: 10%; right: 10%; height: 1px; background: var(--line); }
+.pipe { position: relative; list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.pipe::before { content: ""; position: absolute; top: 8px; left: calc(100% / 12); right: calc(100% / 12); height: 1px; background: var(--line); }
 .pipe button {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 100%; min-height: 44px;
   padding: 0 2px 8px; border: 0; background: none; font: inherit; color: var(--ink); cursor: pointer;

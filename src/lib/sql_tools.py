@@ -1,6 +1,7 @@
 """
 SQL helpers built on sqlglot: deterministic fixes applied to every generated query (Hive, Impala),
-tables a query reads, the text values it filters on, the excluded columns it reads, whether it is
+tables a query reads, the text values it filters on, the excluded columns and the tables out of the
+scope it reads, whether it is
 a refusal rather than a query, whether a query computes a given expression, and the join condition
 of a declared relationship.
 Used by: agent/nodes.py (sql_coder, sql_validator), ui/streaming.py (result card), lib/metrics.py,
@@ -158,6 +159,33 @@ def find_excluded_columns(query: str, dialect: str, excluded: dict[str, set[str]
             else:
                 continue
             found += [f"{t}.*" for t in tables if t in excluded]
+    return list(dict.fromkeys(found))
+
+
+def find_unavailable_tables(query: str, dialect: str, allowed: set[str], outside: set[str], database: str) -> list[str]:
+    """
+    The tables the query reads out of `allowed`, the scope of the agent: a table of its database the
+    scope leaves out, a name it guessed, or a table of another database ("db.table"). CTE names are no
+    tables; names compare case-insensitively. When sqlglot can't parse the query, every word naming a
+    table of `outside` (the tables of the database out of the scope) counts.
+    """
+    allowed, database = {t.lower() for t in allowed}, database.lower()
+    try:
+        tree = sqlglot.parse_one(query, read=sqlglot_dialect(dialect))
+    except SqlglotError:   # unparseable SQL: words naming a table out of the scope
+        words = {word.lower() for word in re.findall(r"\w+", query)}
+        return sorted(t.lower() for t in outside if t.lower() in words)
+
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+    found = []
+    for table in tree.find_all(exp.Table):
+        name, db = table.name.lower(), table.db.lower()
+        if not name or (not db and name in cte_names):
+            continue
+        if db and db != database:
+            found.append(f"{db}.{name}")
+        elif name not in allowed:
+            found.append(name)
     return list(dict.fromkeys(found))
 
 

@@ -47,6 +47,7 @@ from lib.semantics import add_matching_values, excluded_columns, load_semantics
 from lib.sql_tools import (
     contains_expression,
     find_excluded_columns,
+    find_unavailable_tables,
     get_query_tables,
     get_value_filters,
     is_refusal,
@@ -74,7 +75,8 @@ def not_available(reason: str) -> dict:
     """
     State of a question whose information is in no column: no query, the out-of-scope answer
     (format_answer). reason: "restricted" or "absent", from the "Not available (...)" line of the
-    planner or sql_coder, "restricted" when the excluded columns guardrail blocked the query.
+    planner or sql_coder, "restricted" when the excluded columns guardrail blocked the query, "absent"
+    when the scope guardrail did.
     """
     return {"generated_query": "", "is_in_scope": False, "unavailable_reason": reason, "validation_feedback": ""}
 
@@ -95,6 +97,22 @@ EXCLUDED_COLUMNS_ERROR = (
     "the question cannot be answered without them, write no query: output only the line "
     "-- Not available (restricted): [the information, in business words]"
 )
+
+
+# Feedback of sql_validator for a query reading tables out of the scope of the agent (scope.yaml)
+UNAVAILABLE_TABLES_ERROR = (
+    "BLOCKED: the query reads tables that are not available: {tables}. They are not in the schema and never "
+    "queried. Rewrite it with the tables of the schema only. If the question cannot be answered without "
+    "them, write no query: output only the line -- Not available (absent): [the information, in business words]"
+)
+
+
+@cache
+def get_scope_tables(db_name: str) -> tuple[set[str], set[str]]:
+    """The tables the agent may read (its scope, as the database had it at startup), and the other tables of the database."""
+    db      = db_registry[db_name]
+    allowed = set(db.get_usable_table_names())
+    return allowed, set(db._all_tables) - allowed
 
 
 @cache
@@ -561,7 +579,7 @@ def sql_coder(state: AgentState) -> dict:
 def sql_validator(state: AgentState) -> dict:
     """
     Deterministic node — validates and executes the generated SQL.
-    Checks: guardrail → filtered values → execute → result handling.
+    Checks: guardrail → tables out of the scope → excluded columns → filtered values → execute → result handling.
     On failure: writes structured feedback for sql_coder.
     On success: injects the query result into messages for format_answer.
 
@@ -585,7 +603,23 @@ def sql_validator(state: AgentState) -> dict:
             "validation_check":    "guardrail",
         }
 
-    # 2. Excluded columns (exclude_columns of tables.yaml): hidden from the documents, never read
+    # 2. Tables out of the scope (semantic_layer/<db>/scope.yaml), or of another database: never
+    #    read, even under a guessed name. One rewrite: when the next query reads them too, the
+    #    question needs them and gets the out-of-scope answer
+    allowed, outside = get_scope_tables(db_name)
+    if blocked := find_unavailable_tables(query, db_cfg.dialect, allowed, outside, db_name):
+        logger.warning(f"sql_validator: query reading tables out of the scope blocked: {', '.join(blocked)}")
+        if state.get("validation_feedback") and state.get("validation_check") == "scope":
+            return {**not_available("absent"), "validation_error": "", "validation_check": "scope"}
+        return {
+            "validation_feedback": SQL_VALIDATOR_FEEDBACK.format(
+                query=query, error=UNAVAILABLE_TABLES_ERROR.format(tables=", ".join(blocked)), extra_context="",
+            ),
+            "validation_error":    f"Tables hors du périmètre de l'agent : {', '.join(blocked)}",
+            "validation_check":    "scope",
+        }
+
+    # 3. Excluded columns (exclude_columns of tables.yaml): hidden from the documents, never read
     #    either, even under a guessed name. One rewrite: when the next query reads them too, the
     #    question needs them and gets the out-of-scope answer
     if blocked := find_excluded_columns(query, db_cfg.dialect, get_excluded_columns(db_name)):
@@ -600,7 +634,7 @@ def sql_validator(state: AgentState) -> dict:
             "validation_check":    "excluded",
         }
 
-    # 3. Filtered values — a value its column doesn't hold silently returns no row
+    # 4. Filtered values — a value its column doesn't hold silently returns no row
     #    (city = 'Sao Paolo'). First attempt only: at most one correction, a retry runs as written
     #    (the value index may be older than the data)
     if not state.get("validation_feedback"):
@@ -619,7 +653,7 @@ def sql_validator(state: AgentState) -> dict:
                 "validation_check":    "values",
             }
 
-    # 4. Execute SQL query, reading at most max_rows rows
+    # 5. Execute SQL query, reading at most max_rows rows
     try:
         result = _run_with_reconnect(db_name, query, db_cfg.max_rows)
     except Exception as e:

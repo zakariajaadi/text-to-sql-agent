@@ -7,22 +7,39 @@ without the models, the Chroma index or the cache resources.py builds at import)
 """
 
 from langchain_community.utilities import SQLDatabase
+from loguru import logger
+from sqlalchemy import create_engine
+from sqlalchemy import inspect as sa_inspect
 
 from config import DatabaseConfig
 from lib.db_errors import is_unreachable
+from lib.semantics import load_scope, scope_path
 
 
 def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
     """
     Build a langchain SQLAlchemy wrapper from the URI.
-    With include_tables, the agent, the indexer and the generators only see those tables
-    (an unknown name stops the startup). sample_rows: rows under each DDL of get_table_info.
+    The agent, the indexer and the generators only see the tables of the scope (lib/semantics.load_scope):
+    a table of the scope the database no longer has is left out, with a warning. sample_rows: rows
+    under each DDL of get_table_info.
     """
+    scope = load_scope(db_cfg.name)
+    if db_cfg.include_tables and scope_path(db_cfg.name).exists():
+        logger.warning(f"[{db_cfg.name}] include_tables of the config is ignored: {scope_path(db_cfg.name)} "
+                       f"chooses the tables (remove it from the config)")
     try:
-        db = SQLDatabase.from_uri(
-            db_cfg.uri,
-            engine_args=db_cfg.engine_args() or None,
-            include_tables=list(db_cfg.include_tables) or None,
+        engine = create_engine(db_cfg.uri, **db_cfg.engine_args())
+        tables = {}
+        if scope is not None:
+            base = set(sa_inspect(engine).get_table_names())
+            if missing := sorted(set(scope) - base):
+                logger.warning(f"[{db_cfg.name}] Tables of the scope not in the database, left out: {', '.join(missing)}")
+            kept = [table for table in scope if table in base]
+            # An empty include_tables means every table: a scope with none of them ignores them all
+            tables = {"include_tables": kept} if kept else {"ignore_tables": sorted(base)}
+        db = SQLDatabase(
+            engine,
+            **tables,
             sample_rows_in_table_info=db_cfg.sample_rows,
             lazy_table_reflection=True,  # don't reflect the whole metastore at startup
         )
