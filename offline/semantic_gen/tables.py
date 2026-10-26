@@ -125,13 +125,13 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     }
     all_tables = ", ".join(columns)
 
-    # 1. Only tables with something missing go to the LLM
+    # 1. Only tables with something missing go to the LLM (a column without a description: none, or an empty one)
     todo = [
         t for t in columns
         if (not tables or t in tables) and (
             t not in existing
             or "categorical_columns" not in existing[t]
-            or set(columns[t]) - set(existing[t].get("columns") or {})
+            or any(not (existing[t].get("columns") or {}).get(c) for c in columns[t])
         )
     ]
 
@@ -164,14 +164,15 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
         # Categorical columns, in DDL order (columns the LLM invented are dropped).
         # A reviewed list only gains the columns new to the table: rejections stay rejected
         flagged     = {c.name for c in result.columns if c.categorical}
-        new_columns = [c for c in columns[table] if c not in entry["columns"]]
+        missing     = [c for c in columns[table] if not entry["columns"].get(c)]   # no description, or an empty one
+        new_columns = [c for c in missing if c not in entry["columns"]]           # new to the table
         if "categorical_columns" not in entry:
             entry["categorical_columns"] = [c for c in columns[table] if c in flagged]
         else:
             entry["categorical_columns"] += [c for c in new_columns if c in flagged]
 
         described = {c.name: c.description for c in result.columns}
-        for column in new_columns:
+        for column in missing:
             if column in described:
                 entry["columns"][column] = described[column]
                 added += 1

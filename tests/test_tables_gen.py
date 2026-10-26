@@ -86,6 +86,23 @@ def test_fresh_keeps_the_corrections_made_by_hand(llm):
     assert (entry["rewritten_description"], entry["rewritten_columns"]) == (True, ["label"])
 
 
+def test_complete_describes_only_the_columns_without_a_description(llm):
+    # the studio's "Compléter": a column without a description, or with an empty one, is described; nothing else moves
+    lib.semantics.tables_path("shop").parent.mkdir(parents=True, exist_ok=True)
+    lib.semantics.tables_path("shop").write_text(dump_table_semantics({
+        "client": {"description": "Clients, reviewed.", "categorical_columns": [], "columns": {"id": "Id, reviewed.", "label": ""}},
+        "produit": {"description": "Produits.", "categorical_columns": [], "columns": {"id": "Id."}},
+    }))
+    tables.generate_table_semantics("shop", tables=["client"])
+    assert llm.asked == ["client"]
+    semantics = lib.semantics.load_semantics("shop")
+    assert semantics["client"]["description"] == "Clients, reviewed."
+    assert semantics["client"]["columns"] == {"id": "Id, reviewed.", "label": "New label."}
+    # the column was not new to the table: the reviewed categorical list stays as it is
+    assert semantics["client"]["categorical_columns"] == []
+    assert semantics["produit"]["columns"] == {"id": "Id."}   # not asked for
+
+
 def test_an_unknown_table_stops(llm):
     with pytest.raises(ValueError, match="clients"):
         tables.generate_table_semantics("shop", tables=["clients"])

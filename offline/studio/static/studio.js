@@ -32,7 +32,12 @@ const STEPS = {
   semantics: {
     number: 2, title: "Descriptions", key: "semantics", todo: "À décrire",
     text: "L'agent choisit ses tables et écrit ses requêtes à partir de ces descriptions. L'IA les rédige à partir de la structure des tables et de leur profil ; tu les relis et tu les corriges ici.",
-    primary: () => "Décrire les manquantes", secondary: (n) => `Redécrire la sélection (${n})`,
+    // tables never described first; then, when only columns are left to describe, the tables that hold them
+    primary: () => {
+      const s = ui.data?.summary;
+      return s && s.tables === s.described && s.partial ? `Compléter les descriptions (${fmt.format(s.partial)})` : "Décrire les manquantes";
+    },
+    secondary: (n) => `Redécrire la sélection (${n})`,
   },
   relations: {
     number: 3, title: "Relations", key: "relations", todo: "Isolées",
@@ -678,6 +683,8 @@ const outdatedSaid = (missing) => missing.length > 1
   : missing.length ? `${OUTDATED[missing[0]][0]} ${OUTDATED[missing[0]][1]}` : "";
 // "Compléter": make profile --complete, only what is missing
 const COMPLETE_TITLE = "Ne mesure que ce qui manque : rien n'est mesuré à nouveau, tables.yaml reste tel quel";
+// "Compléter" of the Descriptions: make semantics on one table, additive (offline/semantic_gen/tables.py)
+const COMPLETE_DESCRIPTIONS = "L'IA ne décrit que ces colonnes : les autres descriptions, tes corrections et les colonnes catégorielles ne bougent pas";
 
 // What is detected in a column, or a quiet dash (hidden on a phone: nothing to say)
 function found(c) {
@@ -787,11 +794,12 @@ const ORIGIN_LEGEND = `<span>Origine :</span>${["data", "ai", "you"].map((kind) 
 const ORIGIN_STEPS = ["profile", "semantics", "relations"];
 
 // The marks of a description (column: its name, "" for the table): rewritten by the IA (an amber dot, to read
-// again), written by the IA or corrected by you (kept when the table is described again), toggled as it is saved
+// again), written by the IA or corrected by you (kept when the table is described again), none while it is empty;
+// toggled as it is saved
 const rewrittenDot = (column, on) => `<span class="todo-dot" data-dot="${esc(column)}" title="Réécrite par l'IA par-dessus ton texte : à relire" ${on ? "" : "hidden"}></span>`;
-const descriptionMarks = (column, rewritten, edited) => rewrittenDot(column, rewritten)
-  + originMark("ai", "Rédigée par l'IA", `data-ai="${esc(column)}" ${edited ? "hidden" : ""}`)
-  + originMark("you", "Corrigée par toi : gardée quand l'IA redécrit", `data-hand="${esc(column)}" ${edited ? "" : "hidden"}`);
+const descriptionMarks = (column, rewritten, edited, text) => rewrittenDot(column, rewritten)
+  + originMark("ai", "Rédigée par l'IA", `data-ai="${esc(column)}" ${edited || !text ? "hidden" : ""}`)
+  + originMark("you", "Corrigée par toi : gardée quand l'IA redécrit", `data-hand="${esc(column)}" ${edited && text ? "" : "hidden"}`);
 
 function renderSemantics(d, el, message) {
   if (!d.described) {
@@ -801,6 +809,8 @@ function renderSemantics(d, el, message) {
     $("describe-one").onclick = () => runJob("semantics", { tables: [d.name] });
     return;
   }
+  // The columns the agent sees without a description (arrived since, or emptied): "Compléter" describes those only
+  const missing = d.columns.filter((c) => !c.excluded && !c.description).map((c) => c.column);
   const lines = d.columns.map((c) => {
     const key = c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : "";
     if (c.excluded) {
@@ -812,7 +822,7 @@ function renderSemantics(d, el, message) {
     return `<div class="sline">
       <span class="cell">${esc(c.column)}${key}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
-      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited)}<textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea></span>
+      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited, c.description)}<textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea></span>
       <label class="switch-cell">${values}<input type="checkbox" class="switch" data-field="categorical" data-column="${esc(c.column)}" ${c.categorical ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
     </div>`;
   }).join("");
@@ -822,10 +832,12 @@ function renderSemantics(d, el, message) {
       <button class="btn ghost small" id="mark-read" title="Les descriptions réécrites par l'IA sortent de « à relire »" ${d.counts.rewritten ? "" : "hidden"}>Tout marquer relu</button>
       <button class="btn ghost small" id="describe-again" data-job title="L'IA réécrit les descriptions de cette table ; celles corrigées par toi sont gardées">Redécrire</button></div>
     <div class="confirm" id="sem-confirm" role="group" aria-label="Redécrire ${esc(d.name)}" hidden></div>
+    ${missing.length ? `<div class="note with-action"><span>${plural(missing.length, "colonne")} sans description : ${missing.map((c) => `<span class="mono">${esc(c)}</span>`).join(", ")}.</span>
+      <button class="btn ghost small" id="describe-missing" data-job title="${COMPLETE_DESCRIPTIONS}">Compléter</button></div>` : ""}
     ${message ? `<p class="note error">${esc(message)}</p>` : ""}
     <div class="table-text">
       <label class="field-label" for="sem-description">Description de la table</label>
-      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited)}<textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea></span>
+      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited, d.description)}<textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea></span>
     </div>
     <div class="columns">
       <div class="sline head"><span>Colonne</span><span>Type</span><span>Description</span><span class="num">Catégorielle</span></div>
@@ -833,6 +845,7 @@ function renderSemantics(d, el, message) {
     </div>`;
 
   $("describe-again").onclick = () => redescribeTable(d);
+  if (missing.length) $("describe-missing").onclick = () => runJob("semantics", { tables: [d.name] });
   $("mark-read").onclick = () => markRead(d);
   el.querySelectorAll("textarea.edit").forEach((area) => {
     fitHeight(area);
@@ -1119,11 +1132,13 @@ function updateMarks(d) {
   $("detail").querySelectorAll("[data-dot]").forEach((dot) => {
     dot.hidden = dot.dataset.dot ? !rewritten.has(dot.dataset.dot) : !d.description_rewritten;
   });
-  // written by the IA until corrected by you: one mark or the other
+  // written by the IA until corrected by you: one mark or the other, none while the description is empty
+  const texts = new Map(d.columns.map((c) => [c.column, c.description]));
   $("detail").querySelectorAll("[data-hand], [data-ai]").forEach((mark) => {
     const column = mark.dataset.hand ?? mark.dataset.ai;
     const yours = column ? edited.has(column) : d.description_edited;
-    mark.toggleAttribute("hidden", mark.dataset.hand !== undefined ? !yours : yours);
+    const text = column ? texts.get(column) : d.description;
+    mark.toggleAttribute("hidden", !text || (mark.dataset.hand !== undefined ? !yours : yours));
   });
   $("sem-figures").textContent = semanticsFigures(d);
   $("mark-read").hidden = !d.counts.rewritten;
