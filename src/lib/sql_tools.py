@@ -13,6 +13,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.dialects.hive import Hive
 from sqlglot.errors import ParseError, SqlglotError, TokenError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.scope import traverse_scope
 
 
@@ -176,27 +177,78 @@ def is_refusal(query: str, dialect: str) -> bool:
             and all(isinstance(p.unalias(), exp.Literal) and p.unalias().is_string for p in tree.expressions))
 
 
-def contains_expression(query: str, expression: str, dialect: str) -> bool:
+def contains_expression(query: str, expression: str, dialect: str,
+                        sources: dict[str, str | None] | None = None) -> bool:
     """
-    True when the query computes the expression, whatever the table aliases and the quoting
-    (e.g. SUM(od.unitprice * od.quantity) contains SUM(order_details.unitprice * order_details.quantity)).
+    True when the query computes the expression on the same tables, whatever the aliases and the
+    quoting: SUM(od.unitprice * od.quantity) FROM order_details od contains
+    SUM(order_details.unitprice * order_details.quantity), COUNT(DISTINCT eden.numero_contrat)
+    never contains COUNT(DISTINCT wafasalaf.numero_contrat).
+    In a query, an alias stands for its table. In an expression alone (a metric, written table.column),
+    the qualifier is the table, or the one `sources` names ({alias: table, None for a step of the
+    query: a CTE, a subquery}). A column whose table can't be told (read from a subquery, unqualified
+    among several tables) matches the column of any table.
     False when either side can't be parsed.
     """
     read = sqlglot_dialect(dialect)
     try:
-        tree   = sqlglot.parse_one(query, read=read)
-        target = sqlglot.parse_one(expression, read=read)
+        tree   = _with_tables(sqlglot.parse_one(query, read=read), read, sources)
+        target = _with_tables(sqlglot.parse_one(expression, read=read), read, None)
     except (ParseError, TokenError):  # unparseable SQL, e.g. an unclosed quote
         return False
 
-    def unqualified(node: exp.Expression) -> str:
+    def untold(node: exp.Expression) -> set[str]:
+        return {column.name for column in node.find_all(exp.Column) if not column.table}
+
+    def text(node: exp.Expression, untold: set[str]) -> str:
+        """The SQL of the node, the columns of an untold table compared by their name only."""
         node = node.copy()
         for column in node.find_all(exp.Column):
-            column.set("table", None)
+            if column.name in untold:
+                column.set("table", None)
         return node.sql(dialect=read, identify=True)
 
-    wanted = unqualified(target)
-    return any(unqualified(node) == wanted for node in tree.find_all(type(target)))
+    for node in tree.find_all(type(target)):
+        names = untold(node) | untold(target)
+        if text(node, names) == text(target, names):
+            return True
+    return False
+
+
+def _with_tables(tree: exp.Expression, read, sources: dict[str, str | None] | None) -> exp.Expression:
+    """
+    The tree, identifiers normalized as the dialect reads them, each column qualified by the name of its
+    table, or by nothing when its table can't be told (see contains_expression).
+    """
+    tree = normalize_identifiers(tree, dialect=read)
+    if tree.find(exp.Select):
+        try:
+            scopes = traverse_scope(tree)
+        except SqlglotError:
+            scopes = []
+            for column in tree.find_all(exp.Column):
+                _qualify(column, {})
+        for scope in scopes:
+            tables = {alias: source.name if isinstance(source, exp.Table) else None
+                      for alias, source in scope.sources.items()}
+            for column in scope.columns:
+                _qualify(column, tables)
+    elif sources is not None:
+        tables = {alias.lower(): name.lower() if name else None for alias, name in sources.items()}
+        for column in tree.find_all(exp.Column):
+            _qualify(column, tables)
+    return tree
+
+
+def _qualify(column: exp.Column, tables: dict[str, str | None]) -> None:
+    """The column qualified by the table its alias stands for; unqualified, by the only table there is."""
+    if column.table:
+        table = tables.get(column.table)
+    else:
+        table = next(iter(tables.values())) if len(tables) == 1 else None
+    column.set("table", exp.to_identifier(table) if table else None)
+    column.set("db", None)
+    column.set("catalog", None)
 
 
 # Type families of the column types read from a DDL, by their base name ("DECIMAL(8, 0)" -> decimal)

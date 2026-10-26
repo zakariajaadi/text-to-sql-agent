@@ -1,8 +1,8 @@
-"""Text values a query filters on (src/lib/sql_tools.py get_value_filters)."""
+"""Text values a query filters on, and whether it computes an expression (src/lib/sql_tools.py)."""
 
 import pytest
 
-from lib.sql_tools import get_value_filters
+from lib.sql_tools import contains_expression, get_value_filters
 
 
 def filters(sql):
@@ -44,3 +44,32 @@ def test_text_filters_are_found(sql, expected):
 ])
 def test_other_conditions_are_left_out(sql):
     assert filters(sql) == []
+
+
+@pytest.mark.parametrize("query, expression, sources, contained", [
+    # Two metrics (table.column): the same columns of two tables are two formulas
+    ("COUNT(DISTINCT eden.numero_contrat)", "COUNT(DISTINCT wafasalaf.numero_contrat)", None, False),
+    ("SUM(eden.montant)", "SUM(trade.montant)", None, False),
+    ("sum( eden.Montant )", "SUM(`eden`.`montant`)", None, True),
+    # A query: an alias stands for its table, an unqualified column for the only table read
+    ("SELECT SUM(od.unitprice * od.quantity) FROM order_details od",
+     "SUM(order_details.unitprice * order_details.quantity)", None, True),
+    ("SELECT SUM(od.unitprice * od.quantity) FROM order_details od",
+     "SUM(orders.unitprice * orders.quantity)", None, False),
+    ("SELECT SUM(unitprice * quantity) FROM order_details", "SUM(order_details.unitprice * order_details.quantity)", None, True),
+    ("SELECT SUM(`E`.montant) FROM awb.Eden e", "SUM(eden.montant)", None, True),
+    ("SELECT SUM(e.montant) FROM eden e JOIN trade t ON e.id = t.id", "SUM(trade.montant)", None, False),
+    # A ratio contains its parts
+    ("SELECT SUM(e.montant) / COUNT(DISTINCT e.numero_contrat) FROM eden e", "SUM(eden.montant)", None, True),
+    # Read from a step of the query (CTE): its table can't be told, any table matches
+    ("WITH c AS (SELECT DISTINCT numero_contrat, montant FROM eden) SELECT SUM(c.montant) FROM c",
+     "SUM(eden.montant)", None, True),
+    # An output of the lineage (an expression alone) with the tables of its step
+    ("SUM(i.total)", "SUM(invoice.total)", {"i": "invoice"}, True),
+    ("SUM(i.total)", "SUM(orders.total)", {"i": "invoice"}, False),
+    ("SUM(c.total)", "SUM(invoice.total)", {"c": None}, True),
+    # Unparseable
+    ("SELECT SUM(e.montant FROM eden e", "SUM(eden.montant)", None, False),
+])
+def test_contains_expression_compares_the_tables(query, expression, sources, contained):
+    assert contains_expression(query, expression, "impala", sources) is contained

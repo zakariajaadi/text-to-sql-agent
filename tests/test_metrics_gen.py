@@ -12,8 +12,10 @@ IGNORED = ["order_count"]
     # Named like a defined or rejected metric
     ("revenue", "SUM(invoice_line.quantity)", True),
     ("order_count", "COUNT(DISTINCT invoice.invoiceid)", True),
-    # A known expression under another name, aliases aside
-    ("sales", "SUM(il.unitprice * il.quantity)", True),
+    # A known expression under another name, spelling and quoting aside
+    ("sales", "sum( invoice_line.UnitPrice * `invoice_line`.quantity )", True),
+    # ... but not the same columns of another table: each metric counts its own table
+    ("order_sales", "SUM(order_line.unitprice * order_line.quantity)", False),
     # Distinct amounts, whatever the name and the spelling: two rows with the same amount are two amounts
     ("outstanding", "SUM(DISTINCT loan.outstanding_amount)", True),
     ("outstanding_bis", "sum( distinct loan.outstanding_amount ) / COUNT(DISTINCT loan.loan_id)", True),

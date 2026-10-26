@@ -541,9 +541,13 @@ def _lineage_of(sql: str, db_name: str) -> dict | None:
         lineage = build_query_lineage(sql, dialect, _schema_columns(db_name))
         if lineage is None:
             return None
-        for output in (o for step in lineage["steps"] for o in step["outputs"]):
-            output["metric"] = next((name for name, metric in metrics_store[db_name].items()
-                                     if output["aggregated"] and contains_expression(output["expression"], metric.expr, dialect)), None)
+        for step in lineage["steps"]:
+            # The table each alias of the step stands for (None: another step), for the metric's own tables
+            tables = {s["alias"]: s["name"] if s["kind"] == "table" else None for s in step["sources"]}
+            for output in step["outputs"]:
+                output["metric"] = next((name for name, metric in metrics_store[db_name].items()
+                                         if output["aggregated"]
+                                         and contains_expression(output["expression"], metric.expr, dialect, tables)), None)
         lineage["context"] = _lineage_context(lineage, db_name)
         return lineage
     except Exception as e:   # a query shape the lineage doesn't handle

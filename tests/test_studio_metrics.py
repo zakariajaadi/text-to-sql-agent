@@ -59,9 +59,13 @@ def test_a_metric_checked_without_the_database():
 
     # The rules of the generator, on a metric already written
     assert row("invoice_count", METRICS["invoice_count"])["rule"] == "count"
-    twin = row("sales", {"description": "Sales", "expr": "SUM(il.unitprice * il.quantity)"},
+    twin = row("sales", {"description": "Sales", "expr": "SUM(InvoiceLine.unitprice * `invoiceline`.quantity)"},
                {"revenue": METRICS["revenue"], "sales": {}})
     assert (twin["rule"], twin["rule_with"]) == ("same", "revenue")
+    # the same columns of another table: another formula
+    other = row("track_value", {"description": "Value", "expr": "SUM(track.unitprice * track.milliseconds)"},
+                {"revenue": METRICS["revenue"], "track_value": {}})
+    assert (other["rule"], other["rule_with"]) == (None, None)
     assert row("revenue", METRICS["revenue"], ignored=["revenue"])["rule"] == "known"
 
 
