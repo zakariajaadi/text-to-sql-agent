@@ -743,7 +743,7 @@ const originMark = (kind, title = ORIGIN[kind].says, attrs = "") =>
 // A mark before what it qualifies (a pill)
 const withOrigin = (kind, html, title) => `<span class="origin-item">${originMark(kind, title)}${html}</span>`;
 
-// The legend of the tabs that show origins, one line under their sentence
+// The legend of the tabs that show origins, in the footer (the marks say it on hover too)
 const ORIGIN_LEGEND = `<span>Origine :</span>${["data", "ai", "you"].map((kind) =>
   `<span class="${kind}">${originMark(kind)}${ORIGIN[kind].says}</span>`).join("")}`
   + '<span class="review"><span class="todo-dot"></span>à relire</span><span>— avant le suivi</span>';
