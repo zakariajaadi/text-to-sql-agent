@@ -56,7 +56,9 @@ MAX_SHAPES        = 6         # shapes kept per column in the profile
 DISTINCT_BATCH    = 10        # text columns whose distinct values one query counts (a small Hive runs out of memory)
 EMPTY_FILL        = 0.01      # a column filled below this share is proposed for exclusion
 FORMAT_SHARE      = 0.9       # a format is proposed when it covers this share of the filled values
-PARTITIONED       = ("hive", "impala")   # the engines whose tables have partitions (DESCRIBE FORMATTED)
+# The engines whose tables have partitions (DESCRIBE FORMATTED), as SQLAlchemy names them: impala4 is
+# the dialect of impyla for Impala >= 4 (the URI of config.py), impala the one of the databases configured
+PARTITIONED       = ("hive", "impala", "impala4")
 PARTITION_SECTIONS = ("# Partition Information", "# Partition Transform Information")   # Hive tables, Iceberg
 
 # Identifier-like column names: numero_x, id_x, x_id, xid, x_host...

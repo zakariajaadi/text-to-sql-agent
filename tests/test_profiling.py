@@ -316,6 +316,15 @@ def test_complete_measures_only_what_an_older_profile_lacks(bank, tmp_path):
     assert semantics.read_text() == "client:\n  description: Les clients.\n"
 
 
+def test_complete_reads_the_partitions_on_impala_4(bank, monkeypatch):
+    # impyla names its dialect impala4 (impala4:// in config.py): its partitions are read like Impala's
+    monkeypatch.setattr(bank._engine.dialect, "name", "impala4")
+    monkeypatch.setattr(profiling, "_partitions", lambda db, table, quote: {"partitions": 0})
+    _write_profile({"client": {"rows": 2, "keys": {}, "text_columns": {}, "filled": {}}})
+    profiling.complete_profile(bank, "bank")
+    assert lib.semantics.load_profile("bank")["client"]["partitions"] == 0
+
+
 def test_complete_leaves_out_the_tables_not_profiled(bank):
     _write_profile({"client": {"rows": 999, "keys": {}, "text_columns": {}}})
     profiling.complete_profile(bank, "bank")
