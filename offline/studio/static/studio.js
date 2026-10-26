@@ -659,7 +659,7 @@ function renderProfile(d, el, message) {
   const partitions = parts.length ? `partitionnée par ${esc(parts.join(", "))}${r.partitions ? ` (${plural(r.partitions, "partition")})` : ""}`
     : r?.partitions === 0 ? "non partitionnée" : r?.unread ? "partitions non lues" : null;
   const figures = [plural(d.rows, "ligne"), plural(d.columns ?? d.column_facts.length, "colonne"), partitions,
-    d.detected ? `${plural(d.detected, "format")} ${d.detected > 1 ? "détectés" : "détecté"}` : "aucun format détecté"].filter(Boolean);
+    d.formats ? plural(d.formats, "format") : "aucun format"].filter(Boolean);
   const error = message ? `<p class="note error">${esc(message)}</p>` : "";
   // A profile of an older profiler: what it did not measure, completed without measuring the rest again
   const missing = [...(d.outdated || []), ...(d.reading?.unread ? ["partitions"] : [])].filter((m) => OUTDATED[m]);

@@ -178,9 +178,17 @@ def test_table_detail_one_line_per_column_of_the_database():
     # a date of birth stored as text: a format whose day and month order no value tells, and personal data
     assert [(p["kind"], p["state"]) for p in lines["date_naissance"]["proposals"]] == [("format", "pending")]
     assert (lines["date_naissance"]["personal"], lines["date_naissance"]["ambiguous"]) == ("visible", True)
-    assert detail["detected"] == 1
+    assert (detail["detected"], detail["formats"]) == (1, 0)   # detected, not applied: the agent reads it as text
     assert table_detail("agence", None, None, personal=False) == {"name": "agence", "profiled": False, "detected": 0,
                                                                   "unique_key": None, "column_facts": []}
+
+
+def test_the_head_counts_the_formats_the_agent_applies():
+    # written by hand in tables.yaml, the profile detecting none; the format of a hidden column left out
+    entry = {"formats": {"date_deblocage": "date dd/MM/yyyy", "montant": "decimal", "date_naissance": "date dd/MM/yyyy"},
+             "exclude_columns": ["date_naissance"]}
+    detail = table_detail("dossier", {**FACTS, "formats": {}}, entry, personal=False, db_columns=DB_COLUMNS)
+    assert (detail["formats"], detail["detected"]) == (2, 0)
 
 
 def test_table_detail_distinct_values_of_the_sample_and_an_older_profile():

@@ -288,6 +288,8 @@ def table_detail(table: str, facts: dict | None, entry: dict | None, personal: b
         "profiled":     True,
         "rows":         rows,
         "detected":     sum(p["kind"] == "format" for column in by_column.values() for p in column),
+        # the formats the agent applies: written in tables.yaml, detected or by hand, of the columns it sees
+        "formats":      sum(bool(c["format"]) and not c["excluded"] for c in column_facts),
         "unique_key":   next((c["column"] for c in column_facts if c["key"] == "unique"), None),
         "outdated":     outdated(facts, columns),
         "column_facts": column_facts,
