@@ -781,7 +781,7 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .eval-detail { flex: 1 1 320px; min-width: 0; display: grid; gap: 8px; }
 .eval-boxes { display: flex; gap: 3px; height: 12px; }
 .eval-boxes span { flex: 1; border-radius: 2px; }
-.eval-boxes.bar { gap: 2px; border-radius: 999px; overflow: hidden; }
+.eval-boxes.bar { width: auto; gap: 2px; border-radius: 999px; overflow: hidden; }   /* not the 36px of the fill .bar */
 .eval-boxes.bar span { border-radius: 0; }
 .eval-boxes .exact, .swatch.exact { background: var(--good); }
 .eval-boxes .wrong, .swatch.wrong { background: var(--bad-ink); }
