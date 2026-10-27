@@ -447,41 +447,71 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
   radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 0) 0 0 / 16px 16px; }
 .map { display: block; width: 100%; height: 420px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .map.panning { cursor: grabbing; }
-.map .node { cursor: pointer; transition: opacity 0.15s; }
-.map .node rect { fill: var(--surface); stroke: var(--edge-on); stroke-width: 1; }
-.map .node text { fill: var(--ink); font-family: var(--font-mono); font-size: 11px; pointer-events: none; }
-.map .node:hover rect, .map .node:focus rect { stroke: var(--ink); outline: none; }
-.map .node.near rect { stroke: var(--accent); }
-.map .node.on rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
-.map .node.on text { fill: var(--accent-ink); font-weight: 500; }
-.map .node.iso rect { stroke: var(--warn); stroke-dasharray: 4 3; }
-.map .node.iso text { fill: var(--muted); }
-.map .node.path rect { stroke: var(--path); stroke-width: 1.8; }
+/* a table: its box, its name, its rows and a gauge of them; it glides when it moves (the table chosen in the middle of
+   the view, its neighbours around it, the others gone) */
+.map .node { cursor: pointer; transition: opacity 0.35s, transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.map .node .box { fill: var(--surface); stroke: var(--edge-on); stroke-width: 1; transition: stroke 0.2s, fill 0.2s; }
+.map .node text { font-family: var(--font-mono); pointer-events: none; }
+.map .node .nm { fill: var(--ink); font-size: 11px; }
+.map .node .rows { fill: var(--muted); font-size: 9.5px; }
+.map .node .gauge-bg { fill: var(--chip); }
+.map .node .gauge-fill { fill: var(--bar); transition: fill 0.2s; }
+.map .node:hover .box, .map .node:focus .box { stroke: var(--ink); outline: none; }
+.map .node.near .box { stroke: var(--accent); }
+.map .node.on .box { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
+.map .node.on .nm { fill: var(--accent-ink); font-weight: 500; }
+.map .node.on .gauge-fill { fill: var(--accent); }
+.map .node.iso .box { stroke: var(--warn); stroke-dasharray: 4 3; }
+.map .node.iso .nm { fill: var(--muted); }
+.map .node.path .box { stroke: var(--path); stroke-width: 1.8; }
+.map .node.path .gauge-fill { fill: var(--path); }
 .map .node.dim { opacity: 0.35; }
+.map g.node.gone { opacity: 0; pointer-events: none; }
+/* a relation: its line (solid measured, pale never measured, amber dashes weak), its ends (a crow's foot: many rows,
+   a bar: one); those of the table chosen in orange, flowing slowly from the many to the one; the path in blue */
 .map .e { transition: opacity 0.15s; }
-.map .e .line { fill: none; stroke: var(--edge-on); stroke-width: 1.4; }
-.map .e .key { fill: var(--edge-on); }
-.map .e.unchecked .line { stroke: var(--edge); }
-.map .e.unchecked .key { fill: var(--edge); }
+.map .e .line { fill: none; stroke: var(--edge-on); stroke-width: 1.4; transition: stroke 0.2s, stroke-width 0.2s; }
+.map .e .mark { fill: none; stroke: var(--edge-on); stroke-width: 1.3; stroke-linecap: round; transition: stroke 0.2s; }
+.map .e.unchecked .line, .map .e.unchecked .mark { stroke: var(--edge); }
 .map .e.weak .line { stroke: var(--warn); stroke-dasharray: 5 3; }
-.map .e.weak .key { fill: var(--warn); }
-.map .e.on .line { stroke: var(--accent); stroke-width: 2; }
-.map .e.on .key { fill: var(--accent); }
-.map .e.on.weak .line { stroke: var(--warn); }
+.map .e.weak .mark { stroke: var(--warn); }
+.map .e.on .line, .map .e.on .mark { stroke: var(--accent); }
+.map .e.on .line { stroke-width: 2; }
+.map .e.on.weak .line, .map .e.on.weak .mark { stroke: var(--warn); }
 .map .e.path .line { stroke: var(--path); stroke-width: 2.6; stroke-dasharray: none; }
-.map .e.path .key { fill: var(--path); }
+.map .e.path .mark { stroke: var(--path); }
 .map .e.dim { opacity: 0.15; }
+.map .e.enter { animation: map-fade 0.35s ease-out 0.4s both; }   /* after its tables, once they are in place */
+.map .e .flow { display: none; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 10; pointer-events: none; }
+.map .e.on .flow, .map .e.hl .flow { display: block; animation: map-flow 1.1s linear infinite; }
+.map .e.weak .flow { stroke: var(--warn); }
+@keyframes map-flow { to { stroke-dashoffset: -12; } }
 .map .e .hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
-.map .card { font-family: var(--font-mono); font-size: 10px; font-weight: 600; fill: var(--accent-ink); pointer-events: none; }
-/* a table hovered: its relations and the tables they join stand out, the rest fades */
-.map.hovering .e:not(.hl), .map.hovering .card:not(.hl) { opacity: 0.12; }
+.map .packet { fill: var(--path); stroke: var(--surface); stroke-width: 1.5; pointer-events: none; }
+/* a table hovered (on the map or in the list): its relations and the tables they join stand out, the rest fades */
+.map.hovering .e:not(.hl):not(.path) { opacity: 0.12; }
 .map.hovering .node:not(.hl) { opacity: 0.35; }
 .map.hovering .e.hl .line { stroke-width: 2; }
+.map.hovering .e.hl:not(.weak) .line, .map.hovering .e.hl:not(.weak) .mark { stroke: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .map .node, .map .e .flow, .map .e.enter { transition: none; animation: none; } }
+/* what a relation says, on its line at its middle */
 .map-tip {
   position: absolute; z-index: 3; max-width: 340px; padding: 7px 10px; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); font-size: var(--fs-xs); line-height: 1.45; color: var(--ink-2); pointer-events: none;
+  transform: translate(-50%, calc(-100% - 8px));
 }
 .map-tip .mono { font-family: var(--font-mono); color: var(--ink); }
+/* the whole map small at the bottom right when it passes its frame, the part shown framed in the accent */
+.map-mini {
+  position: absolute; right: 10px; bottom: 48px; z-index: 2; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); cursor: pointer; touch-action: none;
+}
+.map-mini svg { display: block; }
+.map-mini .mini-node { fill: var(--bar); }
+.map-mini .mini-node.on { fill: var(--accent); }
+.map-mini .mini-node.path { fill: var(--path); }
+.map-mini .mini-edge { fill: none; stroke: var(--edge); stroke-width: 3; }
+.map-mini .mini-view { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 6; }
 /* the bar over the map: the table chosen, the path, what the lines mean, the zoom */
 .map-tools { position: relative; display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .sel-chip {
@@ -536,6 +566,8 @@ body.map-open { overflow: hidden; }
 .map-legend path.on { stroke: var(--edge-on); }
 .map-legend path.unchecked { stroke: var(--edge); }
 .map-legend path.weak { stroke: var(--warn); stroke-dasharray: 4 3; }
+.map-legend path.end { stroke: var(--ink-2); stroke-width: 1.3; stroke-linecap: round; }
+.legend-sep { width: 1px; height: 12px; background: var(--line); }
 .add-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .map-tools select, .add-form select {
   font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink); background: var(--surface);

@@ -327,6 +327,7 @@ async function loadTables(refresh = false) {
     $("refresh").classList.remove("busy");
   }
   renderHeader(); renderRows(); renderBase(); renderTabs(); renderWizard();
+  if (MAP.rowless && ui.step === "relations" && ui.rel) renderDetail();   // the rows of the tables on the map
 }
 
 function renderHeader() {
@@ -618,7 +619,7 @@ async function openTable(name, { again = false } = {}) {
   if (ui.draft && ui.draft.name !== name) { leaveDraft(() => openTable(name, { again })); return; }
   const fromList = !document.body.classList.contains("card-open");   // on a phone: the card comes in view, once
   if (!again) ui.autoOpened = false;   // chosen by you: it follows on Relations
-  if (ui.step === "relations") { selectOnMap(name); renderRows(); showCurrentRow(); if (fromList) showCard(); return; }
+  if (ui.step === "relations") { selectOnMap(name, again); renderRows(); showCurrentRow(); if (fromList) showCard(); return; }
   ui.current = name;
   if (ui.step === "scope") { renderRows(); showCurrentRow(); renderDetail(); if (fromList) showCard(); return; }   // its state is in the list
   renderRows(); showCurrentRow();
@@ -1289,102 +1290,147 @@ async function loadRelations() {
   if (ui.path.a && ui.path.b && !ui.path.result) findPath();   // a path asked from another screen (a metric left out)
 }
 
-// A click on a table, in the list or on the map, opens its relations and makes it the start of a path:
-// the end of the path is chosen in the list "à" only
-function selectOnMap(name) {
+// A click on a table, in the list or on the map, opens its relations and makes it the start of a path (the end of the
+// path is chosen in the list "à" only); a second click on the table chosen goes back to the whole map
+function selectOnMap(name, again = false) {
+  if (name === ui.current && !ui.path.b && !again) { showAllTables(); return; }
   ui.current = name;
   ui.relFocus = null;
   ui.path = { a: name, b: null, result: null };
   renderDetail();
+}
+function showAllTables() {
+  ui.current = null; ui.relFocus = null; ui.path = { a: null, b: null, result: null };
+  renderRows(); renderDetail();
 }
 
 // The tables of the path shown, and the step of each: a relation is on the path between two steps that follow
 const pathLayers = () => new Map((ui.path.result?.layers || []).flatMap((tables, i) => tables.map((t) => [t, i])));
 const onPath = (r, layer) => layer.has(r.source) && layer.has(r.target) && Math.abs(layer.get(r.source) - layer.get(r.target)) === 1;
 
-// The SVG of the map: a box per table (its name), a curve per relation from the right side of the table pointing to
-// the left side of the one it points to, a dot on the key. The line says what the data showed: solid measured,
-// pale not measured yet, amber dashes weak; the table chosen, its relations and their cardinality in orange
-function mapSvg() {
-  const { nodes, width, height } = ui.rel.layout, layer = pathLayers(), path = layer.size > 0;
-  const cur = path ? null : ui.current;   // a path shown alone: no table chosen in orange over it
-  const near = new Set(ui.rel.relations.filter((r) => r.source === cur || r.target === cur).flatMap((r) => [r.source, r.target]));
-  const pairs = new Map();   // two relations between the same tables: side by side, not one over the other
-  const labels = [];   // the cardinalities of the relations of the table chosen, drawn together (cardinalities)
-  const edges = ui.rel.relations.map((r, i) => [r, i]).filter(([r]) => nodes[r.source] && nodes[r.target]).map(([r, i]) => {
-    const pair = [r.source, r.target].sort().join("|"), n = pairs.get(pair) || 0;
-    pairs.set(pair, n + 1);
-    const curve = edgePath(nodes[r.source], nodes[r.target], r.source === r.target, n ? (n % 2 ? 6 : -6) * Math.ceil(n / 2) : 0);
-    const mine = Boolean(cur) && (r.source === cur || r.target === cur), inPath = onPath(r, layer);
-    const cls = ["e", r.weak ? "weak" : r.found == null ? "unchecked" : "", mine ? "on" : "",
-      (cur && !mine) || (path && !inPath) ? "dim" : "", inPath ? "path" : ""].join(" ");
-    if (mine) labels.push(...cardinality(r, curve, i));
-    return `<g class="${cls}" data-rel="${i}" data-s="${esc(r.source)}" data-t="${esc(r.target)}">
-      <path class="line" d="${curve.d}"/><circle class="key" cx="${curve.end[0]}" cy="${curve.end[1]}" r="2.5"/>
-      <path class="hit" d="${curve.d}"/></g>`;
-  }).join("");
-  const isolated = new Set(ui.rel.isolated);
-  const boxes = Object.entries(nodes).map(([table, n]) => {
-    const cls = ["node", table === cur ? "on" : "", near.has(table) && table !== cur ? "near" : "", isolated.has(table) ? "iso" : "",
-      layer.has(table) ? "path" : "", (cur && table !== cur && !near.has(table)) || (path && !layer.has(table)) ? "dim" : ""].join(" ");
-    const type = ui.data?.db === ui.db ? ui.data.tables.find((t) => t.name === table) : null;
-    return `<g class="${cls}" data-table="${esc(table)}" tabindex="0" role="button" aria-label="${esc(table)}">
-      ${type ? `<title>${esc(table)} · ${typeName(type.type).toLowerCase()}</title>` : ""}
-      <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="7"/>
-      <text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 + 4}" text-anchor="middle">${esc(table)}</text></g>`;
-  }).join("");
-  return `<svg class="map" id="map" viewBox="0 0 ${width} ${height}" role="img"
-      aria-label="Carte des tables et de leurs jointures">${edges}${cardinalities(labels)}${boxes}</svg>`;
+// What the map last drew: where each table was moved from its place in the layout (a table that moves glides from
+// there), the animations of the camera and of the path, a map drawn before the rows of its tables were read
+const MAP = { shift: null, db: null, camera: 0, packet: 0, rowless: false };
+const compactRows = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
+
+// The map as it shows: the boxes of the layout, and the table chosen with its neighbours in the middle of the view (its
+// tables on its left, the ones it joins on its right, the others gone); each relation from the side of one table to the
+// side of the other, the relations of a side spread along it by the height of their other end
+function mapGeometry() {
+  const { nodes: laid } = ui.rel.layout, layer = pathLayers(), cur = layer.size ? null : ui.current;
+  const nodes = Object.fromEntries(Object.entries(laid).map(([t, n]) => [t, { ...n, dx: n.x, dy: n.y, gone: false }]));
+  if (cur && nodes[cur]) {
+    const places = centredPlaces(nodes, cur);
+    for (const [t, n] of Object.entries(nodes)) {
+      const p = places.get(t);
+      Object.assign(n, p ? { dx: p.x, dy: p.y } : { gone: true });
+    }
+  }
+  const shown = Object.fromEntries(Object.entries(nodes).filter(([, n]) => !n.gone).map(([t, n]) => [t, { ...n, x: n.dx, y: n.dy }]));
+  const list = Object.values(shown), x = Math.min(...list.map((n) => n.x)) - 40, y = Math.min(...list.map((n) => n.y)) - 30;
+  const box = { x, y, w: Math.max(...list.map((n) => n.x + n.w)) + 70 - x, h: Math.max(...list.map((n) => n.y + n.h)) + 30 - y };
+  const rels = ui.rel.relations, offset = rels.map(() => ({ s: 0, t: 0 })), sides = new Map();
+  const side = (s, t) => (t.x > s.x + s.w + 8 ? ["r", "l"] : t.x + t.w < s.x - 8 ? ["l", "r"] : ["r", "r"]);
+  const drawn = (r) => shown[r.source] && shown[r.target] && (!cur || r.source === cur || r.target === cur);
+  rels.forEach((r, i) => {
+    if (!drawn(r) || r.source === r.target) return;
+    const s = shown[r.source], t = shown[r.target], [ss, ts] = side(s, t);
+    for (const [key, end, other] of [[`${r.source}|${ss}`, "s", t], [`${r.target}|${ts}`, "t", s]]) {
+      if (!sides.has(key)) sides.set(key, []);
+      sides.get(key).push({ i, end, y: other.y + other.h / 2 });
+    }
+  });
+  for (const [key, ends] of sides) {
+    const h = shown[key.split("|")[0]].h, step = ends.length > 1 ? Math.min(7, (h - 12) / (ends.length - 1)) : 0;
+    ends.sort((a, b) => a.y - b.y).forEach((p, j) => { offset[p.i][p.end] = (j - (ends.length - 1) / 2) * step; });
+  }
+  const edges = rels.map((r, i) => (drawn(r)
+    ? { r, i, ...edgePath(shown[r.source], shown[r.target], r.source === r.target, offset[i].s, offset[i].t) } : null));
+  return { nodes, shown, edges, box, cur, layer };
 }
 
-// The curve of a relation, where it starts and where it ends (on the key): left to right between two columns,
-// right to left when the table pointed to is on the left, out on the right and back within one column, a loop
-// for a table pointing to itself. dy: the place of a second relation between the same tables, beside the first
-function edgePath(s, t, self, dy = 0) {
+// The table chosen in the middle of the view: it stays where it is, the tables that join it in columns on its left, the
+// tables it joins on its right; many of them (a hub) in a few balanced columns
+function centredPlaces(nodes, cur) {
+  const c = nodes[cur], into = [], from = [];
+  ui.rel.relations.forEach((r) => {
+    if (r.target === cur && r.source !== cur && nodes[r.source] && !into.includes(r.source)) into.push(r.source);
+    if (r.source === cur && r.target !== cur && nodes[r.target] && !from.includes(r.target)) from.push(r.target);
+  });
+  const places = new Map([[cur, { x: c.x, y: c.y }]]), row = c.h + 14;
+  const place = (tables, dir) => tables.sort().forEach((t, i) => {
+    const per = Math.ceil(tables.length / Math.max(1, Math.round(Math.sqrt(tables.length * row / 230))));
+    const col = Math.floor(i / per), inCol = Math.min(per, tables.length - col * per), n = nodes[t];
+    places.set(t, { x: dir < 0 ? c.x - 130 - col * 230 - n.w : c.x + c.w + 130 + col * 230,
+      y: c.y + c.h / 2 - (inCol * row - 14) / 2 + (i % per) * row });
+  });
+  place(into, -1);
+  place(from.filter((t) => !into.includes(t)), 1);
+  return places;
+}
+
+// The curve of a relation, horizontal at its two ends, from the side of a table to the side of the other: left to right
+// between two columns, right to left when the table pointed to is on the left, out on the right and back within one
+// column, a loop for a table pointing to itself. ds, dt: the place of each end along its side; dirs: where the line
+// goes out of each end (1 right, -1 left)
+function edgePath(s, t, self, ds = 0, dt = 0) {
   if (self) {
     const x = s.x + s.w, y = s.y + s.h / 2;
-    return { d: `M${x} ${y + 5} C${x + 34} ${y + 22} ${x + 34} ${y - 22} ${x + 2} ${y - 5}`, start: [x, y + 5], end: [x + 2, y - 5], self: true };
+    return { d: `M${x} ${y + 5} C${x + 34} ${y + 22} ${x + 34} ${y - 22} ${x + 2} ${y - 5}`, start: [x, y + 5], end: [x + 2, y - 5], dirs: [1, 1] };
   }
-  const sy = s.y + s.h / 2 + dy, ty = t.y + t.h / 2 + dy;
-  const curve = (x1, x2, bend) => ({ d: `M${x1} ${sy} C${x1 + bend} ${sy} ${x2 - bend} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty] });
-  if (t.x > s.x + s.w + 8) return curve(s.x + s.w, t.x, Math.max(30, (t.x - s.x - s.w) * 0.45));
-  if (t.x + t.w < s.x - 8) return curve(s.x, t.x + t.w, -Math.max(30, (s.x - t.x - t.w) * 0.45));
+  const sy = s.y + s.h / 2 + ds, ty = t.y + t.h / 2 + dt;
+  const curve = (x1, x2, bend, dirs) => ({ d: `M${x1} ${sy} C${x1 + bend} ${sy} ${x2 - bend} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs });
+  if (t.x > s.x + s.w + 8) return curve(s.x + s.w, t.x, Math.max(30, (t.x - s.x - s.w) * 0.45), [1, -1]);
+  if (t.x + t.w < s.x - 8) return curve(s.x, t.x + t.w, -Math.max(30, (s.x - t.x - t.w) * 0.45), [-1, 1]);
   const x1 = s.x + s.w, x2 = t.x + t.w, out = Math.max(x1, x2) + 40;
-  return { d: `M${x1} ${sy} C${out} ${sy} ${out} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty] };
+  return { d: `M${x1} ${sy} C${out} ${sy} ${out} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs: [1, 1] };
 }
 
-// "n" and "1" at the two ends of a relation of the table chosen (how many rows on each side for one on the other):
-// where each is written, by the end of the line it belongs to (rel: the index of the relation, toward: the height of
-// the other end of the line)
-function cardinality(r, curve, rel) {
-  const [from, to] = r.links.split("→").map((side) => side.trim());
-  if (curve.self) return [{ x: curve.start[0] + 34, y: curve.end[1] - 13, anchor: "end", text: r.links, rel, toward: 0 }];   // over the loop
-  const [x1, y1] = curve.start, [x2, y2] = curve.end, right = x2 >= x1;
-  return [{ x: x1 + (right ? 6 : -6), y: y1, anchor: right ? "start" : "end", text: from, rel, toward: y2 },
-    { x: x2 + (right ? -6 : 6), y: y2, anchor: right ? "end" : "start", text: to, rel, toward: y1 }];
+// What an end of a relation holds, as in the diagrams of databases: many rows a crow's foot (its toes on the table),
+// one row a bar; unknown ("?") nothing
+function endMark(kind, [x, y], dir) {
+  if (kind === "n") { const q = x + dir * 9; return `M${x} ${y - 5}L${q} ${y}M${x} ${y + 5}L${q} ${y}`; }
+  if (kind === "1") { const b = x + dir * 7; return `M${b} ${y - 5}L${b} ${y + 5}`; }
+  return "";
 }
 
-// The relations of a table leave from one point and reach another table at one point: a value shared by the lines
-// of an end is written once (a fork: "n" once for the two lines leaving a table); two values at the same end, one
-// over the lines and one under them, the one of the line going up over. Each label knows its relations, for the
-// hover to fade it with them
-function cardinalities(labels) {
-  const ends = new Map();
-  labels.forEach((l) => {
-    const key = `${l.x}|${l.y}|${l.anchor}`;
-    if (!ends.has(key)) ends.set(key, new Map());
-    const values = ends.get(key);
-    if (!values.has(l.text)) values.set(l.text, { ...l, rels: [], towards: [] });
-    values.get(l.text).rels.push(l.rel);
-    values.get(l.text).towards.push(l.toward);
-  });
-  const mean = (list) => list.reduce((a, b) => a + b, 0) / list.length;
-  return [...ends.values()].flatMap((values) => [...values.values()].sort((a, b) => mean(a.towards) - mean(b.towards))
-    .map((l, i) => `<text class="card" data-rels="${l.rels.join(" ")}"
-    x="${l.x}" y="${l.y + (i ? 13 : -5)}" text-anchor="${l.anchor}">${esc(l.text)}</text>`)).join("");
+// The SVG of the map: a box per table (its name, its rows and a gauge of them), a curve per relation whose line says
+// what the data showed (solid measured, pale not measured yet, amber dashes weak) and whose ends say how many rows each
+// side holds; the table chosen and its relations in orange, a slow flow along them; the path in blue. Each box is drawn
+// at its place in the layout and moved to where it shows (the table chosen in the middle): it glides there
+function mapSvg(g) {
+  const { cur, layer } = g, path = layer.size > 0, rows = ui.data?.db === ui.db ? new Map(ui.data.tables.map((t) => [t.name, t])) : null;
+  MAP.rowless = !rows;
+  const near = new Set(ui.rel.relations.filter((r) => r.source === cur || r.target === cur).flatMap((r) => [r.source, r.target]));
+  const max = Math.max(1, ...[...(rows?.values() || [])].map((t) => t.rows || 0));
+  const edges = g.edges.filter(Boolean).map(({ r, i, d, start, end, dirs }) => {
+    const mine = Boolean(cur) && (r.source === cur || r.target === cur), inPath = onPath(r, layer);
+    const cls = ["e", r.weak ? "weak" : r.found == null && !r.empty ? "unchecked" : "", mine ? "on" : "",
+      (cur && !mine) || (path && !inPath) ? "dim" : "", inPath ? "path" : ""].join(" ");
+    const [from, to] = r.links.split("→").map((s) => s.trim());
+    return `<g class="${cls}" data-rel="${i}" data-s="${esc(r.source)}" data-t="${esc(r.target)}">
+      <path class="line" d="${d}"/><path class="mark" d="${endMark(from, start, dirs[0])}${endMark(to, end, dirs[1])}"/>
+      <path class="flow" d="${d}"/><path class="hit" d="${d}"/></g>`;
+  }).join("");
+  const isolated = new Set(ui.rel.isolated);
+  const boxes = Object.entries(g.nodes).map(([table, n]) => {
+    const cls = ["node", table === cur ? "on" : "", near.has(table) && table !== cur ? "near" : "", isolated.has(table) ? "iso" : "",
+      layer.has(table) ? "path" : "", path && !layer.has(table) ? "dim" : "", n.gone ? "gone" : ""].join(" ");
+    const t = rows?.get(table), count = t?.rows, share = count ? Math.log10(count + 1) / Math.log10(max + 1) : 0;
+    const said = !t ? "" : count == null ? "lignes non comptées" : count ? `${compactRows.format(count)} ligne${count > 1 ? "s" : ""}` : "vide";
+    return `<g class="${cls}" data-table="${esc(table)}" tabindex="${n.gone ? -1 : 0}" role="button" aria-label="${esc(table)}"
+        style="transform:translate(${n.dx - n.x}px,${n.dy - n.y}px)">
+      ${t ? `<title>${esc(table)} · ${typeName(t.type).toLowerCase()}</title>` : ""}
+      <rect class="box" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="7"/>
+      <text class="nm" x="${n.x + 10}" y="${n.y + 15}">${esc(table)}</text><text class="rows" x="${n.x + 10}" y="${n.y + 27}">${said}</text>
+      <rect class="gauge-bg" x="${n.x + 8}" y="${n.y + n.h - 5}" width="${n.w - 16}" height="2" rx="1"/>
+      <rect class="gauge-fill" x="${n.x + 8}" y="${n.y + n.h - 5}" width="${count ? Math.max(share * (n.w - 16), 2) : 0}" height="2" rx="1"/></g>`;
+  }).join("");
+  return `<svg class="map" id="map" role="img" aria-label="Carte des tables et de leurs jointures">${edges}${boxes}
+    <circle class="packet" id="map-packet" r="4" hidden/></svg>`;
 }
 
-// What a relation says in the bubble of the map: its columns, its cardinality, what the data showed, its origin
+// What a relation says by its line: its columns, what the data showed, its origin
 function relationTip(r) {
   const measured = r.fanout ? `chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois`
     : r.empty ? `${esc(r.source)} est vide : rien à mesurer`
@@ -1404,42 +1450,66 @@ function frameBox(box, cw, ch) {
   return { scale, x: box.x + box.w / 2 - w / scale / 2, y: box.y + box.h / 2 - ch / scale / 2 };
 }
 
-// The view a map opens on: whole when it fits; a big map at the width of the panel (its names readable), from its
-// top, the rest a drag away
-function firstView(cw, ch) {
-  const { width, height } = ui.rel.layout, w = cw - ZOOM_SPACE, scale = Math.max(0.5, Math.min(w / width, 1.25));
-  return height * scale <= ch ? frameBox(mapBox(), cw, ch) : { scale, x: (width - w / scale) / 2, y: 0 };
+// The view of the whole map: whole when it fits; a big map at the width of the panel (its names readable, 50 % at
+// least; 75 % large), from its top, the rest a drag away
+function wholeView(box, cw, ch, least = 0.5) {
+  const fit = frameBox(box, cw, ch);
+  if (fit.scale >= least) return fit;
+  const scale = Math.max(least, Math.min((cw - ZOOM_SPACE) / box.w, 1.25));
+  return { scale, x: box.x + box.w / 2 - (cw - ZOOM_SPACE) / scale / 2, y: box.y };
 }
 
-// The view the map opens on, large: the table chosen and the tables it joins, or the whole map when its names stay
-// readable (75 %); a map taller than that from its top, centred, the rest a drag away
-function bigView(cw, ch, table) {
-  const fit = frameBox(mapBox(table), cw, ch);
-  if (table || fit.scale >= 0.75) return fit;
-  return { scale: 0.75, x: ui.rel.layout.width / 2 - (cw - ZOOM_SPACE) / 0.75 / 2, y: 0 };
+// The view of the table chosen with its neighbours around it: whole while its names stay readable (60 %), else the
+// table and its nearest neighbours at 90 %, the mini-map showing the rest
+function centredView(g, cw, ch) {
+  const fit = frameBox(g.box, cw, ch);
+  if (fit.scale >= 0.6 || !g.cur) return fit;
+  const n = g.shown[g.cur], scale = 0.9;
+  return { scale, x: n.x + n.w / 2 - (cw - ZOOM_SPACE) / scale / 2, y: n.y + n.h / 2 - ch / scale / 2 };
 }
 
-// The whole map, or the table chosen and the tables it joins
-function mapBox(table = null) {
-  const { nodes, width, height } = ui.rel.layout;
-  if (!table || !nodes[table]) return { x: 0, y: 0, w: width, h: height };
-  const near = new Set([table, ...ui.rel.relations.filter((r) => r.source === table || r.target === table).flatMap((r) => [r.source, r.target])]);
-  const boxes = [...near].map((t) => nodes[t]).filter(Boolean);
+// The tables of the path framed
+function pathBox(g) {
+  const boxes = [...g.layer.keys()].map((t) => g.shown[t]).filter(Boolean);
   const x = Math.min(...boxes.map((n) => n.x)) - 40, y = Math.min(...boxes.map((n) => n.y)) - 30;
-  return { x, y, w: Math.max(...boxes.map((n) => n.x + n.w)) + 60 - x, h: Math.max(...boxes.map((n) => n.y + n.h)) + 30 - y };
+  return { x, y, w: Math.max(...boxes.map((n) => n.x + n.w)) + 70 - x, h: Math.max(...boxes.map((n) => n.y + n.h)) + 30 - y };
+}
+
+// Where the map goes for what is shown: the table chosen, a path, or the whole map
+function viewFor(g, cw, ch) {
+  if (g.cur) return centredView(g, cw, ch);
+  if (g.layer.size) return frameBox(pathBox(g), cw, ch);
+  return ui.mapBig ? wholeView(g.box, cw, ch, 0.75) : wholeView(g.box, cw, ch);
 }
 
 function applyView() {
   const svg = $("map"), v = ui.mapView;
-  if (svg && v) svg.setAttribute("viewBox", `${v.x} ${v.y} ${svg.clientWidth / v.scale} ${svg.clientHeight / v.scale}`);
+  if (!svg || !v) return;
+  svg.setAttribute("viewBox", `${v.x} ${v.y} ${svg.clientWidth / v.scale} ${svg.clientHeight / v.scale}`);
+  drawMiniMap();
+}
+
+// The view goes somewhere: it glides there in a short ease, or jumps without movement
+function glideView(target) {
+  cancelAnimationFrame(MAP.camera);
+  const from = ui.mapView;
+  if (stillMotion() || !from) { ui.mapView = { ...from, ...target }; applyView(); return; }
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, Math.max(0, now - t0) / 420), e = 1 - (1 - t) ** 3;   // a frame's time can precede t0
+    ui.mapView = { ...from, x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, scale: from.scale + (target.scale - from.scale) * e };
+    applyView();
+    if (t < 1) MAP.camera = requestAnimationFrame(step);
+  };
+  MAP.camera = requestAnimationFrame(step);
 }
 
 // Zoom by a factor around a point of the svg (its centre by default)
-function zoomMap(factor, px = null, py = null) {
+function zoomMap(factor, px = null, py = null, glide = false) {
   const svg = $("map"), v = ui.mapView, w = svg.clientWidth, h = svg.clientHeight;
   const ox = px ?? w / 2, oy = py ?? h / 2, scale = Math.min(2.5, Math.max(0.2, v.scale * factor));
-  ui.mapView = { ...v, scale, x: v.x + ox / v.scale - ox / scale, y: v.y + oy / v.scale - oy / scale };
-  applyView();
+  const target = { scale, x: v.x + ox / v.scale - ox / scale, y: v.y + oy / v.scale - oy / scale };
+  if (glide) glideView(target); else { cancelAnimationFrame(MAP.camera); ui.mapView = { ...v, ...target }; applyView(); }
 }
 
 // The map opened large over the page, or back in its panel: the height it leaves there kept (the page does not move
@@ -1453,29 +1523,115 @@ function bigMap(open) {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ui.mapBig && !e.defaultPrevented) bigMap(false); });
 
-// The map once drawn: its height (the whole map at the width of the panel, at most 600 px), its view, the table
-// chosen brought into it, then a drag that moves it, the zoom, the hover of a table and the bubble of a relation
-function setupMap() {
-  const wrap = $("map-wrap"), svg = $("map"), { width, height } = ui.rel.layout, cur = ui.current;
+// The whole map small at the bottom right when it passes its frame (a big base, a table chosen with many neighbours):
+// the part shown framed in the accent, a click or a drag takes the view there
+function drawMiniMap() {
+  const mini = $("map-mini"), svg = $("map"), g = MAP.geo, v = ui.mapView;
+  if (!mini || !g || !v) return;
+  const all = g.box, w = svg.clientWidth / v.scale, h = svg.clientHeight / v.scale;
+  const fits = all.x >= v.x - 1 && all.y >= v.y - 1 && all.x + all.w <= v.x + w + 1 && all.y + all.h <= v.y + h + 1;
+  mini.hidden = fits;
+  if (fits) return;
+  const k = Math.min(140 / all.w, 150 / all.h), path = g.layer;
+  const lines = g.edges.filter(Boolean).map((e) => `<path class="mini-edge" d="${e.d}"/>`).join("");
+  const rects = Object.entries(g.shown).map(([t, n]) => `<rect class="mini-node${path.has(t) ? " path" : t === g.cur ? " on" : ""}"`
+    + ` x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="6"/>`).join("");
+  const vx = Math.max(all.x, v.x), vy = Math.max(all.y, v.y);
+  mini.innerHTML = `<svg width="${all.w * k}" height="${all.h * k}" viewBox="${all.x} ${all.y} ${all.w} ${all.h}" aria-hidden="true">${lines}${rects}
+    <rect class="mini-view" x="${vx}" y="${vy}" width="${Math.max(0, Math.min(v.x + w, all.x + all.w) - vx)}" height="${Math.max(0, Math.min(v.y + h, all.y + all.h) - vy)}" rx="8"/></svg>`;
+  mini.dataset.k = k;
+}
+
+// The path between two tables travelled by a point, join after join, again and again: the way the agent goes
+function runPacket(g) {
+  cancelAnimationFrame(MAP.packet);
+  const dot = $("map-packet"), layers = ui.path.result?.layers || [];
+  if (!dot || layers.length < 2 || stillMotion()) return;
+  const legs = [];
+  let at = layers[0][0];
+  for (const next of layers.slice(1)) {
+    const k = ui.rel.relations.findIndex((r) => (r.source === at && next.includes(r.target)) || (r.target === at && next.includes(r.source)));
+    const line = k >= 0 && $("map").querySelector(`.e[data-rel="${k}"] .line`);
+    if (!line) return;
+    const r = ui.rel.relations[k];
+    legs.push({ line, len: line.getTotalLength(), back: r.source !== at });   // against the line: from its end
+    at = r.source === at ? r.target : r.source;
+  }
+  const leg = 650, total = legs.length * leg + 900, t0 = performance.now();
+  const step = (now) => {
+    const t = Math.max(0, now - t0) % total, k = Math.floor(t / leg);   // a frame's time can precede t0
+    if (k < legs.length) {
+      const f = (t - k * leg) / leg, e = f < 0.5 ? 2 * f * f : 1 - (-2 * f + 2) ** 2 / 2, { line, len, back } = legs[k];
+      const p = line.getPointAtLength(len * (back ? 1 - e : e));
+      dot.setAttribute("cx", p.x); dot.setAttribute("cy", p.y); dot.hidden = false;
+    } else dot.hidden = true;
+    MAP.packet = requestAnimationFrame(step);
+  };
+  MAP.packet = requestAnimationFrame(step);
+}
+
+// A table under the pointer, on the map or in the list: its relations and the tables they join stand out, the rest
+// fades; its relations flow
+function lightTable(table) {
+  const svg = $("map");
+  if (!svg) return;
+  svg.classList.toggle("hovering", Boolean(table));
+  svg.querySelectorAll(".hl").forEach((el) => el.classList.remove("hl"));
+  if (!table) return;
+  svg.querySelectorAll(".e").forEach((e) => {
+    if (e.dataset.s !== table && e.dataset.t !== table) return;
+    e.classList.add("hl");
+    [e.dataset.s, e.dataset.t].forEach((t) => svg.querySelector(`.node[data-table="${CSS.escape(t)}"]`)?.classList.add("hl"));
+  });
+  svg.querySelector(`.node[data-table="${CSS.escape(table)}"]`)?.classList.add("hl");
+}
+$("rows").addEventListener("mouseover", (e) => { if (ui.step === "relations") lightTable(e.target.closest(".row[data-table]")?.dataset.table ?? null); });
+$("rows").addEventListener("mouseleave", () => { if (ui.step === "relations") lightTable(null); });
+
+// The map once drawn: its height (the whole map at the width of the panel, at most 600 px), the tables that moved
+// gliding from where they were, the view going to what is shown (another table, a path, the whole map), then a drag
+// that moves it, the zoom, the hover of a table and the label of a relation, the mini-map, the path travelled
+function setupMap(g) {
+  const wrap = $("map-wrap"), svg = $("map"), { width, height } = ui.rel.layout;
   const cw = wrap.clientWidth || 800;
   svg.style.height = ui.mapBig ? "" : `${Math.max(260, Math.min(600, Math.round(height * Math.min(cw / width, 1.25))))}px`;
-  const ch = svg.clientHeight;
-  if (ui.mapView?.db !== ui.db) ui.mapView = ui.mapBig ? { db: ui.db, focus: cur, ...bigView(cw, ch, cur) } : { db: ui.db, focus: null, ...firstView(cw, ch) };
-  const node = cur && ui.rel.layout.nodes[cur], v = ui.mapView;
-  if (node && v.focus !== cur) {   // a table chosen out of view: the view goes to it, the zoom stays
-    const vw = cw / v.scale, vh = ch / v.scale;
-    if (node.x < v.x || node.y < v.y || node.x + node.w > v.x + vw || node.y + node.h > v.y + vh) {
-      ui.mapView = { ...v, x: node.x + node.w / 2 - vw / 2, y: node.y + node.h / 2 - vh / 2 };
-    }
+  const ch = svg.clientHeight, key = g.cur || (g.layer.size ? `${ui.path.a}>${ui.path.b}` : null);
+  MAP.geo = g;
+
+  // the tables that moved since the map was drawn: from where they were to where they go, their relations after them
+  const before = MAP.db === ui.db ? MAP.shift : null;
+  MAP.db = ui.db;
+  MAP.shift = new Map(Object.entries(g.nodes).map(([t, n]) => [t, { x: n.dx - n.x, y: n.dy - n.y, gone: n.gone }]));
+  const moved = before && !stillMotion() && [...MAP.shift].some(([t, b]) => { const a = before.get(t); return a && (a.x !== b.x || a.y !== b.y || a.gone !== b.gone); });
+  if (moved) {
+    const nodes = [...svg.querySelectorAll(".node")];
+    nodes.forEach((el) => {
+      const a = before.get(el.dataset.table);
+      if (!a) return;
+      el.style.transition = "none";
+      el.style.transform = `translate(${a.x}px,${a.y}px)`;
+      el.classList.toggle("gone", a.gone);
+    });
+    svg.getBoundingClientRect();
+    nodes.forEach((el) => {
+      const b = MAP.shift.get(el.dataset.table);
+      el.style.transition = "";
+      el.style.transform = `translate(${b.x}px,${b.y}px)`;
+      el.classList.toggle("gone", b.gone);
+    });
+    svg.querySelectorAll(".e").forEach((e) => e.classList.add("enter"));
   }
-  ui.mapView.focus = cur;
+
+  // the view: another database or the map opened large, framed at once; another table, a path or none, it glides there
+  if (ui.mapView?.db !== ui.db) ui.mapView = { db: ui.db, focus: key, ...viewFor(g, cw, ch) };
+  else if (ui.mapView.focus !== key) { ui.mapView.focus = key; applyView(); glideView(viewFor(g, cw, ch)); }
   applyView();
 
   $("map-expand").onclick = () => bigMap(!ui.mapBig);
   if (ui.mapBig) { $("map-backdrop").onclick = () => bigMap(false); $("map-close").onclick = () => bigMap(false); }
-  $("zoom-in").onclick = () => zoomMap(1.25);
-  $("zoom-out").onclick = () => zoomMap(0.8);
-  $("zoom-fit").onclick = () => { ui.mapView = { ...ui.mapView, ...frameBox(mapBox(cur), svg.clientWidth, svg.clientHeight) }; applyView(); };
+  $("zoom-in").onclick = () => zoomMap(1.25, null, null, true);
+  $("zoom-out").onclick = () => zoomMap(0.8, null, null, true);
+  $("zoom-fit").onclick = () => glideView(viewFor(g, svg.clientWidth, svg.clientHeight));
   svg.addEventListener("wheel", (e) => {   // a pinch of the trackpad, or Ctrl and the wheel; the wheel alone scrolls the page
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
@@ -1486,6 +1642,7 @@ function setupMap() {
   let drag = null;
   svg.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".node, .hit")) return;
+    cancelAnimationFrame(MAP.camera);
     drag = { x: e.clientX, y: e.clientY, view: { ...ui.mapView } };
     svg.setPointerCapture(e.pointerId);
     svg.classList.add("panning");
@@ -1499,48 +1656,49 @@ function setupMap() {
   svg.addEventListener("pointerup", stop);
   svg.addEventListener("pointercancel", stop);
 
-  // A table hovered: its relations and the tables they join stand out, the rest fades
-  svg.querySelectorAll(".node").forEach((g) => {
-    const table = g.dataset.table;
-    g.addEventListener("click", () => openTable(table));
-    g.addEventListener("keydown", (e) => { if (e.key === "Enter") openTable(table); });
-    g.addEventListener("mouseenter", () => {
-      svg.classList.add("hovering");
-      svg.querySelectorAll(".e").forEach((e) => {
-        const mine = e.dataset.s === table || e.dataset.t === table;
-        e.classList.toggle("hl", mine);
-        if (mine) [e.dataset.s, e.dataset.t].forEach((t) => svg.querySelector(`.node[data-table="${CSS.escape(t)}"]`)?.classList.add("hl"));
-      });
-      // a cardinality stays while one of its relations does
-      svg.querySelectorAll(".card").forEach((c) => c.classList.toggle("hl",
-        c.dataset.rels.split(" ").some((i) => svg.querySelector(`.e[data-rel="${i}"]`)?.classList.contains("hl"))));
-      g.classList.add("hl");
-    });
-    g.addEventListener("mouseleave", () => {
-      svg.classList.remove("hovering");
-      svg.querySelectorAll(".hl").forEach((el) => el.classList.remove("hl"));
-    });
+  // A table hovered: its relations and the tables they join stand out; clicked: chosen, clicked again: the whole map
+  svg.querySelectorAll(".node").forEach((n) => {
+    const table = n.dataset.table;
+    n.addEventListener("click", () => openTable(table));
+    n.addEventListener("keydown", (e) => { if (e.key === "Enter") openTable(table); });
+    n.addEventListener("mouseenter", () => lightTable(table));
+    n.addEventListener("mouseleave", () => lightTable(null));
   });
 
-  // A relation hovered: its bubble by the pointer; clicked: its table chosen, its line found in the list
+  // A relation hovered: what it says on its line, at its middle; clicked: its table chosen, its line found in the list
   const tip = $("map-tip");
-  svg.querySelectorAll(".e").forEach((g) => {
-    const r = ui.rel.relations[g.dataset.rel];
-    g.addEventListener("mousemove", (e) => {
-      const box = wrap.getBoundingClientRect();
+  svg.querySelectorAll(".e").forEach((e) => {
+    const r = ui.rel.relations[e.dataset.rel], line = e.querySelector(".line");
+    e.addEventListener("mouseenter", () => {
+      const p = line.getPointAtLength(line.getTotalLength() / 2), m = line.getScreenCTM(), box = wrap.getBoundingClientRect();
       tip.innerHTML = relationTip(r);
       tip.hidden = false;
-      tip.style.left = `${Math.min(e.clientX - box.left + 14, box.width - tip.offsetWidth - 8)}px`;
-      tip.style.top = `${Math.min(e.clientY - box.top + 14, box.height - tip.offsetHeight - 8)}px`;
+      const x = p.x * m.a + m.e - box.left, y = p.y * m.d + m.f - box.top;
+      tip.style.left = `${Math.max(tip.offsetWidth / 2 + 8, Math.min(x, box.width - tip.offsetWidth / 2 - 8))}px`;
+      tip.style.top = `${Math.max(tip.offsetHeight + 16, y)}px`;
     });
-    g.addEventListener("mouseleave", () => { tip.hidden = true; });
-    g.addEventListener("click", () => {
+    e.addEventListener("mouseleave", () => { tip.hidden = true; });
+    e.addEventListener("click", () => {
       ui.relFocus = `${r.from}|${r.to}`;
       ui.current = r.source;
       ui.path = { a: r.source, b: null, result: null };
       renderRows(); renderDetail();
     });
   });
+
+  // the mini-map: a click or a drag puts the middle of the view there
+  const mini = $("map-mini");
+  let moving = false;
+  const goTo = (e, glide) => {
+    const r = mini.querySelector("svg").getBoundingClientRect(), k = Number(mini.dataset.k), v = ui.mapView;
+    const x = g.box.x + (e.clientX - r.left) / k, y = g.box.y + (e.clientY - r.top) / k;
+    const target = { scale: v.scale, x: x - svg.clientWidth / v.scale / 2, y: y - svg.clientHeight / v.scale / 2 };
+    if (glide) glideView(target); else { ui.mapView = { ...v, ...target }; applyView(); }
+  };
+  mini.addEventListener("pointerdown", (e) => { moving = true; mini.setPointerCapture(e.pointerId); goTo(e, true); });
+  mini.addEventListener("pointermove", (e) => { if (moving) goTo(e, false); });
+  mini.addEventListener("pointerup", () => { moving = false; });
+  runPacket(g);
 }
 
 function pathText() {
@@ -1825,6 +1983,7 @@ function wireJoins(el) {
 function renderRelations(el, message) {
   const rel = ui.rel;
   if (!rel) { el.innerHTML = '<p class="placeholder">Lecture des jointures…</p>'; return; }
+  const geo = mapGeometry();
   const cur = ui.current, tables = ui.data?.tables.map((t) => t.name) || [], layer = pathLayers(), path = layer.size > 0;
   const mine = (r) => r.source === cur || r.target === cur;
   // a table chosen (or a path) does not filter the list: its joins stand out there, its groups open
@@ -1855,6 +2014,7 @@ function renderRelations(el, message) {
   // not on each line of the list. In the map: the zoom at the top right, what the lines mean at the bottom left
   const measure = '<button class="btn small" id="check-relations" data-job title="Mesure sur les données la part des valeurs trouvées de chaque jointure, sans l\'IA">';
   const line = (cls) => `<svg width="22" height="8" viewBox="0 0 22 8" aria-hidden="true"><path class="${cls}" d="M1 4 L21 4"/></svg>`;
+  const end = (d) => `<svg width="22" height="12" viewBox="0 0 22 12" aria-hidden="true"><path class="end" d="${d}"/></svg>`;
   const fit = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
   // large: the map, its bar and its note over the page, a title of their own; a block of their height left in the panel
   const big = ui.mapBig;
@@ -1878,11 +2038,14 @@ function renderRelations(el, message) {
     </div>
     ${rel.unchecked ? `<div class="rule-note"><span>${rel.unchecked > 1 ? `${fmt.format(rel.unchecked)} jointures jamais mesurées` : "Une jointure jamais mesurée"} sur les données : `
       + `rien ne prouve encore que leurs valeurs se retrouvent d'une table à l'autre.</span>${measure}Vérifier sur les données</button></div>` : ""}
-    <div class="map-wrap" id="map-wrap">${mapSvg()}
+    <div class="map-wrap" id="map-wrap">${mapSvg(geo)}
       <div class="map-zoom"><button type="button" id="zoom-in" aria-label="Zoomer" title="Zoomer">+</button>`
       + `<button type="button" id="zoom-out" aria-label="Dézoomer" title="Dézoomer">−</button>`
       + `<button type="button" id="zoom-fit" aria-label="Ajuster" title="${cur ? `Ajuster sur ${esc(cur)} et les tables qu'elle joint` : "Ajuster sur toute la carte"}">${fit}</button></div>
-      <div class="map-legend"><span>${line("on")}vérifiée</span><span>${line("unchecked")}non mesurée</span><span>${line("weak")}faible</span></div>
+      <div class="map-legend"><span>${line("on")}vérifiée</span><span>${line("unchecked")}non mesurée</span><span>${line("weak")}faible</span>
+        <span class="legend-sep"></span><span title="Une table dont plusieurs lignes vont vers une même ligne de l'autre">${end("M2 6H21M2 1L11 6M2 11L11 6")}plusieurs</span>
+        <span title="Une seule ligne de la table pour chaque ligne de l'autre">${end("M1 6H20M14 1V11")}une</span></div>
+      <div class="map-mini" id="map-mini" hidden></div>
       <button class="map-expand" type="button" id="map-expand" aria-label="${big ? "Réduire la carte" : "Agrandir la carte"}" title="${big ? "Réduire (Échap)" : "Agrandir la carte"}">`
       + `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${expand}</svg></button>
       <div class="map-tip" id="map-tip" role="tooltip" hidden></div></div>
@@ -1904,11 +2067,11 @@ function renderRelations(el, message) {
           <button class="btn ghost small" data-restore="${esc(r.from)}|${esc(r.to)}">Rétablir</button></div>`).join("")}</details>` : ""}
     </div>`;
 
-  setupMap();
+  setupMap(geo);
   $("path-a").onchange = (e) => { ui.path.a = e.target.value || null; ui.path.result = null; findPath(); };
   $("path-b").onchange = (e) => { ui.path.b = e.target.value || null; ui.path.result = null; findPath(); };
   $("check-relations").onclick = () => runJob("relations/run", { check: true });
-  if ($("relations-all")) $("relations-all").onclick = () => { ui.current = null; ui.relFocus = null; ui.path = { a: null, b: null, result: null }; renderRows(); renderDetail(); };
+  if ($("relations-all")) $("relations-all").onclick = showAllTables;
   wireJoins(el);
   el.querySelectorAll("[data-restore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.restore, true)));
   // the progress moves from where it was drawn last; after an answer, the next line of the queue takes the focus

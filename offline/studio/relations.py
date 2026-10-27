@@ -26,8 +26,9 @@ from grandalf.layouts import SugiyamaLayout
 from lib.fk_graph import MAX_BRIDGE_JOINS, _distances, _shortest_path_tables
 
 KEY_OVERLAP = 0.9    # under it a relation is shown in amber, for a human to keep or ignore (relationships.py)
-NODE_HEIGHT = 26
+NODE_HEIGHT = 38     # two lines: the name of the table, its rows (and a gauge of them)
 CHAR_WIDTH  = 7      # width of a character of the table names (monospace, 11px)
+MIN_WIDTH   = 104    # room for the line of the rows ("609,3 k lignes")
 GAP         = 40     # between two groups of joined tables, and around the map
 COLUMN_GAP  = 96     # between two columns of tables: room for the curves of the relations
 ROW_GAP     = 14     # between two tables of a column
@@ -105,7 +106,7 @@ class _View:
 
 
 def node_width(table: str) -> int:
-    return CHAR_WIDTH * len(table) + 24
+    return max(CHAR_WIDTH * len(table) + 28, MIN_WIDTH)
 
 
 def layout(tables: list[str], relations: list[dict]) -> dict:
