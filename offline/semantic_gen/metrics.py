@@ -122,7 +122,7 @@ def generate_metrics(db_name: str):
         except Exception as e:
             logger.warning(f"[{db_name}] Rejected metric '{name}': {e}")
             continue
-        added[name] = entry
+        added[name] = {**entry, "origin": "ai"}   # proposed by the LLM: the studio marks it so
 
     write_metrics_file(db_name, {**entries, **added}, ignored)
     logger.info(f"[{db_name}] {len(added)} new metric(s) added to {metrics_path(db_name).name}: {', '.join(added) or 'none'} — review them.")

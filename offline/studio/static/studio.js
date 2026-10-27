@@ -4,9 +4,9 @@
 //   Vue d'ensemble: what the agent reads of the database, its last eval, and its setup step by step
 //   Périmètre (opened from the Vue d'ensemble, no tab): every table of the database against the ones the agent and
 //   the pipeline see, and the index
-//   Contenu: what the profile detects in each column (declared type against the data, exceptions)
+//   Profilage: what the profile detects in each column (declared type against the data, exceptions)
 //   Descriptions: the descriptions the LLM writes, read and corrected in place
-//   Relations: the map of the tables and every relation measured on the data
+//   Jointures: the map of the tables and every join measured on the data
 //   Métriques: the metrics on the left instead of the tables, each tested on the data (counts, never a value)
 //   Fiches: what the agent reads of each table (its document) against the files today
 // The steps in their order, one after the other, only in the guided setup, opened on purpose.
@@ -15,7 +15,13 @@
 
 const $ = (id) => document.getElementById(id);
 const fmt = new Intl.NumberFormat("fr-FR");
-const pct = (x) => (x == null ? "—" : `${fmt.format(Math.round(x * 100))} %`);
+// A share in percent, rounded; one decimal near the ends, so that 0,4 % or 99,6 % is never said 0 % or 100 %
+const pct = (x) => {
+  if (x == null) return "—";
+  const p = x * 100, tenth = Math.round(p * 10) / 10;
+  const shown = p > 0 && p < 1 ? Math.max(0.1, tenth) : p > 99 && p < 100 ? Math.min(99.9, tenth) : Math.round(p);
+  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 }).format(shown)} %`;
+};
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 // SQL as the eval dashboard shows it: its keywords in the accent (the list of offline/eval/eval_lib/dashboard_template.html,
 // with CREATE TABLE for the documents of the Fiches tab)
@@ -34,7 +40,7 @@ const STEPS = {
     secondary: () => `Retirer du périmètre (${scopeSelection().remove.length})`,
   },
   profile: {
-    number: 1, title: "Contenu", key: "profile", todo: "À profiler",
+    number: 1, title: "Profilage", key: "profile", todo: "À profiler",
     text: "On examine le contenu réel de chaque table pour que l'agent la lise correctement : les colonnes vides, les dates ou montants enregistrés comme du texte, les données personnelles, et les partitions, qui disent s'il faut lire la dernière photo ou toutes.",
     primary: (n) => `Profiler la sélection (${n})`, secondary: () => "Profiler les manquantes",
   },
@@ -49,18 +55,18 @@ const STEPS = {
     secondary: (n) => `Redécrire la sélection (${n})`,
   },
   relations: {
-    number: 3, title: "Relations", key: "relations", todo: "Isolées",
-    text: "L'agent passe d'une table à l'autre grâce à ces liens. Chacun est vérifié sur les données : la part des valeurs d'une table qu'on retrouve dans l'autre.",
-    primary: () => "Chercher les relations", secondary: () => "Ajouter une relation",
+    number: 3, title: "Jointures", key: "relations", todo: "Isolées",
+    text: "L'agent passe d'une table à l'autre grâce à ces jointures. Chacune est vérifiée sur les données : la part des valeurs d'une table qu'on retrouve dans l'autre.",
+    primary: () => "Chercher les jointures", secondary: () => "Ajouter une jointure",
   },
   metrics: {
     number: 4, title: "Métriques", key: "metrics", todo: "À revoir",
-    text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose ; chacune est testée sur les données (lignes comptées deux fois, mesures vides, dates manquantes) sans jamais en montrer le résultat. Une métrique modifiée arrive chez l'agent à son prochain démarrage, sans réindexer.",
+    text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose ; chacune est testée sur les données (lignes comptées deux fois, mesures vides, dates manquantes). Une métrique modifiée arrive chez l'agent à son prochain démarrage, sans réindexer.",
     primary: () => "Proposer des métriques", secondary: () => (ui.testing ? "Arrêter les tests" : "Tout tester"),
   },
   index: {
     number: 5, title: "Fiches", key: "index", todo: "À réindexer",
-    text: "Ce que l'agent lit de chaque table : sa fiche, faite des descriptions et des relations, et les valeurs de ses colonnes catégorielles lues dans la base. Une correction n'arrive chez l'agent qu'une fois réindexée, à son prochain démarrage.",
+    text: "Ce que l'agent lit de chaque table : sa fiche, faite des descriptions et des jointures, et les valeurs de ses colonnes catégorielles lues dans la base. Une correction n'arrive chez l'agent qu'une fois réindexée, à son prochain démarrage.",
   },
 };
 const TABS = ["overview", "profile", "semantics", "relations", "metrics", "index"];
@@ -72,6 +78,9 @@ const ui = {
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
   relCheck: null,                                                      // a relation measured, not added (its target is no key)
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop, panel, done, total})
+  showQuery: false,                                                    // the query of a metric shown under its formula
+  showChecks: false,                                                   // the checks of a test that passes, unfolded
+  draft: null, draftError: null,                                       // the metric open changed, not saved: {metric, fields}; why it was refused
   tested: null,                                                        // what the last tests in the job panel found: {title: [title, halo], job, at}
   idx: null,                                                           // the Index screen
   scope: null,                                                         // the Périmètre screen: every table of the database
@@ -137,7 +146,11 @@ async function init() {
   if (target.db) ui.db = target.db;
   $("db-select").innerHTML = ui.dbs.map((d) =>
     `<option value="${esc(d.name)}" ${d.name === ui.db ? "selected" : ""}>${esc(d.name)}</option>`).join("");
-  $("db-select").onchange = (e) => { switchDb(e.target.value); goTo(ui.step, true); };
+  $("db-select").onchange = (e) => {
+    const db = e.target.value;
+    e.target.value = ui.db;   // until a draft of a metric is saved or dropped
+    leaveDraft(() => { switchDb(db); goTo(ui.step, true); });
+  };
   ui.step = STEPS[target.screen] ? target.screen : "overview";
   ui.home = Boolean(target.home);
   history.replaceState(null, "", address());   // the first entry of the history names its screen: Back returns to it
@@ -178,7 +191,7 @@ function switchDb(db) {
   ui.db = db; store("studio.db", db); $("db-select").value = db;
   ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
   ui.relCheck = null; closeConfirm($("confirm"));
-  ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null; ui.scope = null;
+  ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null; ui.scope = null; dropDraft();
   ui.tested = null;   // the tests of the other database leave the panel
 }
 
@@ -259,6 +272,7 @@ function loadScreen() {
 function goTo(step, force = false) {
   if (!STEPS[step]) return;
   if (step === ui.step && !ui.home && !ui.wizard && !force) return;
+  if (ui.draft) { leaveDraft(() => goTo(step, force)); return; }   // a metric changed and not saved: asked first
   if (ui.home) leaveHome();
   if (ui.wizard) leaveWizard();
   ui.step = step;
@@ -326,7 +340,10 @@ function renderHeader() {
   const counts = { all, todo, review, noread };
   const labels = { all: "Toutes", todo: STEPS[ui.step].todo, review: "À relire", noread: "Sans mode" };
   $("filters").querySelector('[data-filter="noread"]').hidden = ui.step !== "profile" || !noread;
-  if (ui.filter === "noread" && !noread) {   // the last one given a mode: back to every table, not an empty list
+  const noReview = ui.step === "metrics" && !todo;   // no metric to review: no empty filter
+  $("filters").querySelector('[data-filter="todo"]').hidden = noReview;
+  // the last one given a mode, or reviewed: back to every row, not an empty list
+  if ((ui.filter === "noread" && !noread) || (ui.filter === "todo" && noReview)) {
     ui.filter = "all";
     [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   }
@@ -365,8 +382,8 @@ function statusPill(table) {
   }
   if (ui.step === "relations") {
     const n = ui.rel?.counts[table.name] ?? 0;
-    return n ? `<span class="pill done">${plural(n, "lien")}</span>`
-      : '<span class="pill decide" title="Aucune relation : l\'agent ne peut joindre cette table à aucune autre">isolée</span>';
+    return n ? `<span class="pill done">${plural(n, "jointure")}</span>`
+      : '<span class="pill decide" title="Aucune jointure : l\'agent ne peut joindre cette table à aucune autre">isolée</span>';
   }
   if (status === "none") return '<span class="pill todo">à décrire</span>';
   if (status === "partial") return `<span class="pill decide" title="Colonnes ajoutées depuis la dernière description">${table.undescribed} col. à décrire</span>`;
@@ -388,14 +405,14 @@ function visibleRows() {
   if (ui.step === "scope") {
     return (ui.scope?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || outOfScope(t)));
   }
-  const type = ui.step === "profile" ? $("type-filter").value : "";   // the type chosen in the list of the Contenu tab
+  const type = ui.step === "profile" ? $("type-filter").value : "";   // the type chosen in the list of the Profilage tab
   const todo = indexScreen() ? (t) => ["changed", "missing"].includes(indexStatus(t.name)) : (t) => t.status[key] !== "done";
   const shown = ui.filter === "review" ? (t) => t.rewritten > 0 : ui.filter === "noread" ? (t) => t.read_warn : todo;
   return (ui.data?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || shown(t))
     && (!type || (t.type || "none") === type));
 }
 
-// On arrival on a tab with nothing open, its first row opened, as a click would (Contenu, Descriptions, Fiches,
+// On arrival on a tab with nothing open, its first row opened, as a click would (Profilage, Descriptions, Fiches,
 // Métriques): never on Relations, whose screen without a table is the whole map, nor on a phone, where the card would
 // take the place of the list. Once a row is open, the list drawn again leaves it be. A table opened so (ui.autoOpened,
 // until one is opened by hand) does not follow on Relations, which keeps its whole map
@@ -410,14 +427,14 @@ function openFirstRow() {
 }
 
 function renderRows() {
-  renderPersonal();   // the bars of the personal data and of an older profile: on the Contenu tab only
+  renderPersonal();   // the bars of the personal data and of an older profile: on the Profilage tab only
   renderOutdated();
   if (ui.step === "metrics") { renderMetricRows(); openFirstRow(); return; }
   if (ui.step === "scope") { renderScopeRows(); return; }
   $("list-extra").innerHTML = "";
   $("empty").textContent = "Aucune table ne correspond.";
   const rows = visibleRows();
-  $("rows").innerHTML = rows.map((t) => `<div class="row${t.name === ui.current ? " current" : ""}" data-table="${esc(t.name)}">
+  $("rows").innerHTML = rows.map((t) => `<div class="row${t.name === ui.current ? " current" : ""}${ui.draft && ui.draft.kind !== "metric" && ui.draft.name === t.name ? " unsaved" : ""}" data-table="${esc(t.name)}">
       <input type="checkbox" ${ui.selected.has(t.name) ? "checked" : ""} aria-label="Sélectionner ${esc(t.name)}">
       ${ui.step === "profile" ? `<span class="cell named" title="${esc(t.name)}"><span>${esc(t.name)}</span>`
         + `<small>${t.type_edited ? `${originMark("you", "Type corrigé par toi")} ` : ""}${typeName(t.type).toLowerCase()}</small></span>`
@@ -439,14 +456,14 @@ function renderActions() {
   $("run-secondary").hidden = !step.secondary;
   if (step.primary) $("run-primary").textContent = step.primary(ui.selected.size);
   if (step.secondary) $("run-secondary").textContent = step.secondary(ui.selected.size);
-  // "Ajouter une relation", the tests of the metrics and a change of the scope start no job
+  // "Ajouter une jointure", the tests of the metrics and a change of the scope start no job
   $("run-primary").toggleAttribute("data-job", ui.step !== "scope");
   $("run-secondary").toggleAttribute("data-job", !["relations", "metrics", "scope"].includes(ui.step));
   gateButtons();
 }
 
 // What a job is, in the title of a button it greys
-const JOB_WHAT = { profile: "profilage", semantics: "description", relations: "relations", metrics: "métriques", index: "index", eval: "évaluation" };
+const JOB_WHAT = { profile: "profilage", semantics: "description", relations: "jointures", metrics: "métriques", index: "index", eval: "évaluation" };
 
 // Why one of the two actions of the page has nothing to do now, or null
 function idleReason(button) {
@@ -482,6 +499,15 @@ function gateButtons() {
   });
 }
 
+// A decision only you can make, waiting on one control (the read mode, the type, the personal data, the scope): a pale
+// ring around it until it is made, two pulses the first time it shows in the session, not each time it is drawn again
+const decideSeen = new Set();
+function toDecide(key) {
+  const first = !decideSeen.has(key);
+  decideSeen.add(key);
+  return first ? " to-decide first" : " to-decide";
+}
+
 // Personal data: one rule for the whole database, not a correction to review table by table
 function renderPersonal() {
   if (!ui.data) return;
@@ -491,7 +517,7 @@ function renderPersonal() {
   bar.classList.toggle("warn", Boolean(visible));
   bar.innerHTML = visible
     ? `<span><b>${plural(visible, "donnée")} ${visible > 1 ? "personnelles" : "personnelle"}</b> ${visible > 1 ? "visibles" : "visible"} par l'agent</span>
-       <button class="btn small primary" id="personal-all" data-hide="1">Cacher partout</button>`
+       <button class="btn small primary${toDecide(`${ui.db}:personal`)}" id="personal-all" data-hide="1">Cacher partout</button>`
     : `<span>Données personnelles cachées (${fmt.format(hidden)})${kept ? ` · ${fmt.format(kept)} gardée${kept > 1 ? "s" : ""} visible${kept > 1 ? "s" : ""}` : ""}</span>
        <button class="btn small ghost" id="personal-all" data-hide="0">Tout montrer</button>`;
   $("personal-all").onclick = (e) => {
@@ -583,6 +609,7 @@ $("refresh").addEventListener("click", async () => {
 
 // again: the table open drawn again (a tab, a job, a change), or opened by openFirstRow, not a choice of yours
 async function openTable(name, { again = false } = {}) {
+  if (ui.draft && ui.draft.name !== name) { leaveDraft(() => openTable(name, { again })); return; }
   const fromList = !document.body.classList.contains("card-open");   // on a phone: the card comes in view, once
   if (!again) ui.autoOpened = false;   // chosen by you: it follows on Relations
   if (ui.step === "relations") { selectOnMap(name); renderRows(); showCurrentRow(); if (fromList) showCard(); return; }
@@ -621,7 +648,7 @@ $("back-to-list").addEventListener("click", () => {
 function renderDetail(message) {
   const d = ui.detail, el = $("detail");
   el.classList.toggle("bare", ui.step === "overview");   // the Vue d'ensemble holds two panels of its own
-  el.classList.remove("menu-open");   // drawn again, its menus closed
+  el.classList.remove("menu-open", "has-draft");   // drawn again, its menus closed; a draft says itself again (showDraft)
   if (ui.step === "relations") renderRelations(el, message);
   else if (ui.step === "scope") renderScope(el, message);
   else if (ui.step === "metrics") renderMetric(el, message);
@@ -631,7 +658,7 @@ function renderDetail(message) {
   else if (ui.step === "profile") renderProfile(d, el, message);
   else renderSemantics(d, el, message);
   // A card open: on a phone it takes the place of the list. On Relations, a table chosen or a path asked, whose way
-  // back is in the card ("← Toutes les relations")
+  // back is in the card ("← Toutes les jointures")
   const open = ui.step === "metrics" ? Boolean(ui.metric) : ui.step === "relations" ? Boolean(ui.current || ui.path.a) : Boolean(ui.current);
   document.body.classList.toggle("card-open", open);
   $("back-to-list").hidden = ui.step === "relations";
@@ -734,6 +761,7 @@ function renderProfile(d, el, message) {
     return;
   }
 
+  const shown = draftProps(d);   // its properties as chosen in the draft, over the saved ones
   // Figures of the profile, one line under the name (the key is said by its pill in the table); the partitions
   // said in the three cases, just above the read mode they explain (nothing on an engine without partitions)
   const r = d.reading, parts = r?.partitioned_by || [];
@@ -759,17 +787,18 @@ function renderProfile(d, el, message) {
   el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2><span class="figures">${figures.join(" · ")}</span>
       <span class="grow"></span><span class="save-state" id="save-state"></span>
       <button class="btn ghost small" id="profile-again" data-job>Re-profiler</button></div>`
-    + `<div class="table-text"><div class="props" aria-label="Propriétés de la table">${typeProp(d.table_type)}${readProp(d.reading)}${asOfProp(d)}</div>`
-    + `${readBand(d.reading)}</div>`
+    + `<div class="table-text"><div class="props" aria-label="Propriétés de la table">${typeProp(shown.table_type)}${readProp(shown.reading)}${asOfProp(shown)}</div>`
+    + `${readBand(shown.reading)}</div>`
     + old + error
     + `<div class="columns">
         <div class="line head"><span>Colonne</span><span>Type en base</span><span>Contenu détecté</span><span class="num">Remplissage</span><span class="num">Distinctes</span></div>
         ${lines}
-      </div>`;
+      </div>${DRAFT_BAR}`;
 
   $("profile-again").onclick = () => runJob("profile", { tables: [d.name] });
   if (missing.length) $("profile-complete").onclick = () => runJob("profile", { tables: [d.name], complete: true });
   setupProps(d);
+  bindDraftBar();
   el.querySelectorAll("button.pill[data-action]").forEach((pill) => pill.addEventListener("click", () => changeColumn(pill)));
 }
 
@@ -801,7 +830,7 @@ function semanticsFigures(d) {
 
 // ── Where a value comes from, the same marks and words on every tab: measured on the data (the profile, the rules,
 // the measure of a relation), proposed by the IA (both grey), decided by you (ink); an amber dot, rewritten by the
-// IA over a text: to read again; "— avant le suivi", written before the studio kept the origin ──
+// IA over a text: to read again; no mark when the origin is unknown (written before the studio kept it) ──
 
 const PENCIL = '<path d="M10.5 2.5l3 3L6 13l-3.5.5L3 10z"/>';
 const ORIGIN = {
@@ -809,7 +838,6 @@ const ORIGIN = {
   ai:   { word: "IA", says: "proposé par l'IA", path: '<path d="M8 1.8l1.45 4.2 4.25 1.5-4.25 1.5L8 13.2 6.55 9 2.3 7.5 6.55 6z"/>' },
   you:  { word: "toi", says: "décidé par toi", path: PENCIL },
 };
-const BEFORE_TRACKING = "Écrite avant que le studio note l'origine";
 
 // The mark of an origin (attrs: data attributes, hidden), its title said on hover
 const originMark = (kind, title = ORIGIN[kind].says, attrs = "") =>
@@ -820,8 +848,8 @@ const withOrigin = (kind, html, title) => `<span class="origin-item">${originMar
 // The legend of the tabs that show origins, in the footer (the marks say it on hover too)
 const ORIGIN_LEGEND = `<span>Origine :</span>${["data", "ai", "you"].map((kind) =>
   `<span class="${kind}">${originMark(kind)}${ORIGIN[kind].says}</span>`).join("")}`
-  + '<span class="review"><span class="todo-dot"></span>à relire</span><span>— avant le suivi</span>';
-const ORIGIN_STEPS = ["profile", "semantics", "relations"];
+  + '<span class="review"><span class="todo-dot"></span>à relire</span>';
+const ORIGIN_STEPS = ["profile", "semantics", "relations", "metrics"];
 
 // The marks of a description (column: its name, "" for the table): rewritten by the IA (an amber dot, to read
 // again), written by the IA or corrected by you (kept when the table is described again), none while it is empty;
@@ -841,6 +869,9 @@ function renderSemantics(d, el, message) {
   }
   // The columns the agent sees without a description (arrived since, or emptied): "Compléter" describes those only
   const missing = d.columns.filter((c) => !c.excluded && !c.description).map((c) => c.column);
+  // the values of the draft over the saved ones; a change goes to the draft, nothing is written before « Enregistrer »
+  const draft = draftFields("semantics", d.name), value = (key, saved) => (key in draft ? draft[key] : saved);
+  const change = (key, typed, saved) => setDraft("semantics", d.name, key, typed, saved);
   const lines = d.columns.map((c) => {
     const key = c.key ? ` <span class="pill key">${c.key === "unique" ? "clé unique" : "clé"}</span>` : "";
     if (c.excluded) {
@@ -849,11 +880,11 @@ function renderSemantics(d, el, message) {
         <span class="muted-text">cachée à l'agent : pas de description</span><span></span></div>`;
     }
     const values = c.distinct == null ? "" : `<span class="values" title="${c.sampled ? "Valeurs distinctes sur l'échantillon du profil" : "Valeurs distinctes de la table"}">${plural(c.distinct, "valeur")}</span>`;
-    return `<div class="sline">
+    return `<div class="sline" data-draft-row="${esc(c.column)}">
       <span class="cell">${esc(c.column)}${key}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
-      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited, c.description)}<textarea class="edit" rows="1" data-field="column" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(c.description)}</textarea></span>
-      <label class="switch-cell">${values}<input type="checkbox" class="switch" data-field="categorical" data-column="${esc(c.column)}" ${c.categorical ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
+      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited, c.description)}<textarea class="edit" rows="1" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(value(`column:${c.column}`, c.description))}</textarea></span>
+      <label class="switch-cell">${values}<input type="checkbox" class="switch" data-column="${esc(c.column)}" ${value(`categorical:${c.column}`, c.categorical) ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
     </div>`;
   }).join("");
 
@@ -865,27 +896,37 @@ function renderSemantics(d, el, message) {
     ${missing.length ? `<div class="note with-action"><span>${plural(missing.length, "colonne")} sans description : ${missing.map((c) => `<span class="mono">${esc(c)}</span>`).join(", ")}.</span>
       <button class="btn ghost small" id="describe-missing" data-job title="${COMPLETE_DESCRIPTIONS}">Compléter</button></div>` : ""}
     ${message ? `<p class="note error">${esc(message)}</p>` : ""}
-    <div class="table-text">
+    <div class="table-text" data-draft="description">
       <label class="field-label" for="sem-description">Description de la table</label>
-      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited, d.description)}<textarea class="edit block" id="sem-description" rows="2" data-field="description">${esc(d.description)}</textarea></span>
+      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited, d.description)}<textarea class="edit block" id="sem-description" rows="2">${esc(value("description", d.description))}</textarea></span>
     </div>
     <div class="columns">
       <div class="sline head"><span>Colonne</span><span>Type</span><span>Description</span><span class="num">Catégorielle</span></div>
       ${lines}
-    </div>`;
+    </div>
+    ${DRAFT_BAR}`;
 
-  $("describe-again").onclick = () => redescribeTable(d);
+  // the draft saved or dropped before the question of « Redécrire » (its job would ask after it)
+  $("describe-again").onclick = () => leaveDraft(() => redescribeTable(ui.detail));
   if (missing.length) $("describe-missing").onclick = () => runJob("semantics", { tables: [d.name] });
   $("mark-read").onclick = () => markRead(d);
+  const columns = new Map(d.columns.map((c) => [c.column, c]));
   el.querySelectorAll("textarea.edit").forEach((area) => {
     fitHeight(area);
-    area.addEventListener("input", () => fitHeight(area));
-    area.addEventListener("change", () => saveSemantics(area, area.value));
+    const column = area.dataset.column;
+    area.addEventListener("input", () => {
+      fitHeight(area);
+      if (column) change(`column:${column}`, area.value, columns.get(column).description);
+      else change("description", area.value, d.description);
+    });
   });
-  el.querySelectorAll("input.switch").forEach((box) => box.addEventListener("change", () => saveSemantics(box, box.checked)));
+  el.querySelectorAll("input.switch").forEach((box) => box.addEventListener("change", () => {
+    change(`categorical:${box.dataset.column}`, box.checked, columns.get(box.dataset.column).categorical);
+  }));
+  bindDraftBar();
 }
 
-// ── The properties of a table, in a bar under its name in the Contenu card (what it is and how to read it): a pill each
+// ── The properties of a table, in a bar under its name in the Profilage card (what it is and how to read it): a pill each
 // (its name in grey, its value), the explanation at the top of its menu; a band under the bar only when one asks for
 // something ──
 
@@ -899,9 +940,10 @@ function plainText(html) {
   return div.textContent;
 }
 
-// origin: the mark before the value (data, you; none when nothing was detected nor chosen)
-function propPill(name, key, value, { tone = "", title = "", origin = null } = {}) {
-  return `<button type="button" class="prop${tone ? ` ${tone}` : ""}" id="${name}-pill" aria-haspopup="true" aria-expanded="false" title="${esc(title)}">
+// origin: the mark before the value (data, you; none when nothing was detected nor chosen); decide: the ring of a
+// decision waiting on it (toDecide)
+function propPill(name, key, value, { tone = "", title = "", origin = null, decide = "" } = {}) {
+  return `<button type="button" class="prop${tone ? ` ${tone}` : ""}${decide}" id="${name}-pill" aria-haspopup="true" aria-expanded="false" title="${esc(title)}">
     <span class="prop-key">${key}</span>${tone === "warn" ? '<span class="prop-dot" aria-hidden="true"></span>' : ""}`
     + `${origin ? originMark(origin) : ""}<span class="prop-value">${value}</span>${CARET}</button>`;
 }
@@ -930,47 +972,18 @@ function typeProp(t) {
   const option = (type, [name, holds]) => `<button type="button" role="option" class="type-option${t.type === type ? " on" : ""}" data-type="${type}"
       aria-selected="${t.type === type}"><span class="type-check">${t.type === type ? CHECK : ""}</span>
       <span><b>${name}</b><small>${holds}</small></span><span class="type-tag">${t.detected === type ? "détecté" : ""}</span></button>`;
-  return `<span class="prop-wrap" id="type-wrap">
-      ${propPill("type", "Type", typeName(t.type), { tone: t.type ? "" : "none", title: why, origin: t.edited ? "you" : t.type ? "data" : null })}
+  return `<span class="prop-wrap" id="type-wrap" data-draft="table_type">
+      ${propPill("type", "Type", typeName(t.type), { tone: t.type ? "" : "none", title: why, origin: t.edited ? "you" : t.type ? "data" : null,
+        decide: t.type ? "" : toDecide(`${ui.db}:type:${ui.detail?.name}`) })}
       <div class="type-menu" id="type-menu" role="listbox" aria-label="Type de la table" hidden>
         <div class="menu-head">${esc(why)}${ui.data?.summary.relations ? ""
-          : '<span class="menu-fact">Les relations ne sont pas encore trouvées (onglet Relations) : le type peut encore changer.</span>'}</div>
+          : '<span class="menu-fact">Les jointures ne sont pas encore trouvées (onglet Jointures) : le type peut encore changer.</span>'}</div>
         ${Object.entries(TABLE_TYPES).map(([type, words]) => option(type, words)).join("")}
         ${t.edited ? `<button type="button" role="option" class="type-option" data-type=""><span class="type-check"></span>`
           + `<span><b>Revenir à la détection</b><small>${typeName(t.detected).toLowerCase()}</small></span><span></span></button>` : ""}
         <p>Ton choix est écrit dans tables.yaml et passe avant la détection.</p>
       </div>
     </span>`;
-}
-
-// A property written in tables.yaml (the type of the table, the date its data stops): the card gets the properties
-// back (the type may follow), the list its type; null when refused, the reason next to the save state
-async function saveProperty(field, value) {
-  const d = ui.detail, state = $("save-state");
-  state.textContent = "Enregistrement…";
-  state.className = "save-state";
-  try {
-    const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/properties`,
-      { method: "POST", body: { field, value, version: d.version } });
-    if (ui.detail?.name !== d.name) return null;
-    Object.assign(ui.detail, saved);
-    state.textContent = "Enregistré";
-    state.className = "save-state ok";
-    loadTables();
-    return saved;
-  } catch (e) {
-    state.textContent = e.status === 409 ? "tables.yaml a changé : rouvre la table" : e.message;
-    state.className = "save-state error";
-    return null;
-  }
-}
-
-// A type chosen (null: the detection again): the card drawn again, its menu closed
-async function saveTableType(type) {
-  if (!(await saveProperty("table_type", type))) return;
-  renderDetail();
-  $("save-state").textContent = "Enregistré";
-  $("save-state").className = "save-state ok";
 }
 
 // The read modes (offline/studio/reading.py): their name as the data teams say it (and tables.yaml, the document of
@@ -999,7 +1012,7 @@ function readingFacts(r) {
   const facts = [];
   if (r.partitioned_by.length) facts.push(`Partitionnée par ${names(r.partitioned_by)}${r.partitions ? ` · ${plural(r.partitions, "partition")}` : ""}, d'après le profil.`);
   else if (r.partitions === 0) facts.push("Pas de partition dans la table, d'après le profil.");
-  else if (r.unread) facts.push("Partitions pas encore lues : « Compléter » le profil les lit (onglet Contenu).");
+  else if (r.unread) facts.push("Partitions pas encore lues : « Compléter » le profil les lit (onglet Profilage).");
   if (r.suggested && r.suggested !== r.mode) facts.push(`Les données proposent ${modeName(r.suggested)} : ${esc(r.why)}.`);
   else if (!r.mode && r.partitioned_by.length && !r.suggested && r.why) facts.push(`Rien à proposer : ${esc(r.why)}.`);
   return facts.map((f) => `<span class="menu-fact">${f}</span>`).join("");
@@ -1019,9 +1032,9 @@ function readProp(r) {
       <span><b>${name} · ${means}</b><small>${does}</small>${on && columns ? `<span class="option-sub">${columns}<span class="link">Changer</span></span>` : ""}</span>
       <span class="type-tag">${r.suggested === mode ? "proposé" : ""}</span></button>`;
   };
-  return `<span class="prop-wrap" id="read-wrap">
+  return `<span class="prop-wrap" id="read-wrap" data-draft="read_mode">
       ${propPill("read", "Mode de lecture", modeName(r.mode), { tone: r.problems.length ? "bad" : r.warn ? "warn" : "", title: plainText(sentence),
-        origin: r.mode ? "you" : null })}
+        origin: r.mode ? "you" : null, decide: r.warn && !r.problems.length ? toDecide(`${ui.db}:read:${ui.detail?.name}`) : "" })}
       <div class="type-menu" id="read-menu" role="listbox" aria-label="Mode de lecture de la table" hidden>
         <div class="menu-head"><b>${modeName(r.mode)}</b> : ${sentence}.${readingFacts(r)}</div>
         ${Object.entries(READ_MODES).map(([mode, words]) => option(mode, words)).join("")}
@@ -1066,7 +1079,7 @@ function readFields(mode, d) {
     const chosen = r.partition_column || r.partitioned_by[0] || "";
     return `<label class="read-field">Colonne de partition<select id="read-partition">${chosen ? "" : '<option value="">choisir…</option>'}
         ${choices(chosen, r.partitioned_by)}</select></label>
-      <button type="button" class="btn primary small" id="read-save">Enregistrer</button>`;
+      <button type="button" class="btn primary small" id="read-save">Choisir</button>`;
   }
   const keys = new Set(r.key_columns);
   const version = r.version_column || d.column_facts.find((c) => c.kind === "date" && !r.partitioned_by.includes(c.column))?.column || "";
@@ -1074,7 +1087,7 @@ function readFields(mode, d) {
     <div class="read-keys">${columns.map((c) => `<label><input type="checkbox" value="${esc(c)}"${keys.has(c) ? " checked" : ""}>${esc(c)}</label>`).join("")}</div>
     <label class="read-field">Version : la plus grande est la plus récente<select id="read-version">${version ? "" : '<option value="">choisir…</option>'}
       ${choices(version)}</select></label>
-    <button type="button" class="btn primary small" id="read-save">Enregistrer</button>`;
+    <button type="button" class="btn primary small" id="read-save">Choisir</button>`;
 }
 
 // The date the data stops: a pill (dashed while there is none), a field under it
@@ -1083,7 +1096,7 @@ const dayMonthYear = (iso) => iso.split("-").reverse().join("/");
 const asOfPill = (d) => (d.data_as_of ? propPill("asof", "Arrêtée au", dayMonthYear(d.data_as_of), { title: AS_OF })
   : `<button type="button" class="prop empty" id="asof-pill" aria-haspopup="true" aria-expanded="false" title="${esc(AS_OF)}">+ Date d'arrêt</button>`);
 function asOfProp(d) {
-  return `<span class="prop-wrap" id="asof-wrap">
+  return `<span class="prop-wrap" id="asof-wrap" data-draft="data_as_of">
       ${asOfPill(d)}
       <div class="type-menu asof-menu" id="asof-menu" role="dialog" aria-label="Date d'arrêt des données" hidden>
         <label class="read-field" for="sem-as-of">Données arrêtées au
@@ -1094,84 +1107,76 @@ function asOfProp(d) {
     </span>`;
 }
 
+// The properties of a table as its card shows them: the saved ones, the draft's over them (a mode chosen is no longer
+// to decide); the saved value of each, to tell a change from a value put back
+const readModeOf = (r) => ({ mode: r?.mode || null, partition_column: r?.partition_column || null,
+  key_columns: r?.key_columns || [], version_column: r?.version_column || null });
+const savedProperty = (d, key) => ({ table_type: d.table_type?.edited ? d.table_type.type : "", data_as_of: d.data_as_of || "",
+  read_mode: readModeOf(d.reading) })[key];
+function draftProps(d) {
+  const f = draftFields("properties", d.name), shown = { ...d };
+  if ("table_type" in f) shown.table_type = { ...d.table_type, type: f.table_type || d.table_type.detected, edited: Boolean(f.table_type) };
+  if ("data_as_of" in f) shown.data_as_of = f.data_as_of;
+  if ("read_mode" in f && d.reading) shown.reading = { ...d.reading, ...f.read_mode, warn: f.read_mode.mode ? false : d.reading.warn, problems: [] };
+  return shown;
+}
+// A property chosen: to the draft, the card drawn again (its menu closed)
+const chooseProperty = (d, key, value) => { setDraft("properties", d.name, key, value, savedProperty(d, key)); renderDetail(); };
+
 function setupProps(d) {
+  const shown = draftProps(d);
   PROPS.forEach((p) => {
     if ($(`${p}-pill`)) $(`${p}-pill`).onclick = (e) => { e.stopPropagation(); toggleProp(p); };
   });
-  $("detail").querySelectorAll("[data-type]").forEach((b) => { b.onclick = () => saveTableType(b.dataset.type || null); });
-  // A mode with columns: they are chosen below the options, then saved; "Aucun" is saved at once
+  $("detail").querySelectorAll("[data-type]").forEach((b) => { b.onclick = () => chooseProperty(d, "table_type", b.dataset.type); });
+  // A mode with columns: they are chosen below the options, then « Choisir »; "Aucun" at once
   const pick = (mode) => {
     $("read-menu").querySelectorAll("[data-mode]").forEach((o) => o.classList.toggle("picked", o.dataset.mode === mode));
     const fields = $("read-fields");
-    fields.innerHTML = readFields(mode, d);
+    fields.innerHTML = readFields(mode, shown);
     fields.hidden = false;
-    $("read-save").onclick = () => saveReadMode(mode === "live"
+    $("read-save").onclick = () => chooseProperty(d, "read_mode", readModeOf(mode === "live"
       ? { mode, key_columns: [...fields.querySelectorAll(".read-keys input:checked")].map((box) => box.value), version_column: $("read-version").value || null }
-      : { mode, partition_column: $("read-partition").value || null });
+      : { mode, partition_column: $("read-partition").value || null }));
   };
   if (d.reading) {
     $("read-menu").querySelectorAll("[data-mode]").forEach((b) => {
-      b.onclick = () => (b.dataset.mode ? pick(b.dataset.mode) : saveReadMode({ mode: null }));
+      b.onclick = () => (b.dataset.mode ? pick(b.dataset.mode) : chooseProperty(d, "read_mode", readModeOf(null)));
     });
     $("detail").querySelectorAll("[data-open-read]").forEach((b) => {
-      b.onclick = (e) => { e.stopPropagation(); toggleProp("read", true); if (d.reading.mode) pick(d.reading.mode); };
+      b.onclick = (e) => { e.stopPropagation(); toggleProp("read", true); if (shown.reading.mode) pick(shown.reading.mode); };
     });
-    if ($("read-apply")) $("read-apply").onclick = () => saveReadMode({ mode: d.reading.suggested, partition_column: d.reading.partitioned_by[0] });
+    if ($("read-apply")) $("read-apply").onclick = () => savePropertiesNow({ read_mode: { mode: shown.reading.suggested, partition_column: shown.reading.partitioned_by[0] } });
   }
-  // The date: written when it is chosen, its pill redrawn alone (the field keeps the focus while it is typed)
   const asOf = $("sem-as-of");
   if (!asOf) return;
-  const saveAsOf = async (value) => {
-    if (!(await saveProperty("data_as_of", value)) || !$("asof-pill")) return;
-    flashSaved(asOf);
-    const open = !$("asof-menu").hidden;
-    $("asof-pill").outerHTML = asOfPill(ui.detail);
-    $("asof-pill").onclick = (e) => { e.stopPropagation(); toggleProp("asof"); };
-    $("asof-pill").setAttribute("aria-expanded", String(open));
-    $("asof-clear").hidden = !ui.detail.data_as_of;
-  };
-  asOf.addEventListener("change", () => saveAsOf(asOf.value));
-  $("asof-clear").onclick = () => { asOf.value = ""; saveAsOf(""); toggleProp(null); };
+  asOf.addEventListener("change", () => chooseProperty(d, "data_as_of", asOf.value));
+  $("asof-clear").onclick = () => chooseProperty(d, "data_as_of", "");
 }
 
-// A read mode chosen (mode null: the table read as it is), written in tables.yaml; refused when the agent could not
-// read it (a column missing), the reason shown next to the save state
-async function saveReadMode(body) {
-  const d = ui.detail, state = $("save-state");
-  state.textContent = "Enregistrement…";
-  state.className = "save-state";
+// A property written at once by an explicit button (« Appliquer LAST » of the band): the card drawn again; a mode of the
+// draft gives way to it, the rest of the draft stays
+async function savePropertiesNow(body) {
+  const d = ui.detail;
+  saving("Enregistrement…");
   try {
-    const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/read-mode`,
+    const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/properties`,
       { method: "POST", body: { ...body, version: d.version } });
     if (ui.detail?.name !== d.name) return;
     ui.detail = { ...ui.detail, ...saved };
-    renderDetail();
-    $("save-state").textContent = "Enregistré";
-    $("save-state").className = "save-state ok";
-    loadTables();
   } catch (e) {
+    const state = $("save-state");
     state.textContent = e.status === 409 ? "tables.yaml a changé : rouvre la table" : e.message;
     state.className = "save-state error";
+    return;
   }
-}
-
-// The marks of the page after a save, without drawing it again (the focus stays where it is)
-function updateMarks(d) {
-  const edited = new Set(d.columns.filter((c) => c.edited).map((c) => c.column));
-  const rewritten = new Set(d.columns.filter((c) => c.rewritten).map((c) => c.column));
-  $("detail").querySelectorAll("[data-dot]").forEach((dot) => {
-    dot.hidden = dot.dataset.dot ? !rewritten.has(dot.dataset.dot) : !d.description_rewritten;
-  });
-  // written by the IA until corrected by you: one mark or the other, none while the description is empty
-  const texts = new Map(d.columns.map((c) => [c.column, c.description]));
-  $("detail").querySelectorAll("[data-hand], [data-ai]").forEach((mark) => {
-    const column = mark.dataset.hand ?? mark.dataset.ai;
-    const yours = column ? edited.has(column) : d.description_edited;
-    const text = column ? texts.get(column) : d.description;
-    mark.toggleAttribute("hidden", !text || (mark.dataset.hand !== undefined ? !yours : yours));
-  });
-  $("sem-figures").textContent = semanticsFigures(d);
-  $("mark-read").hidden = !d.counts.rewritten;
+  if (ui.draft?.kind === "properties" && "read_mode" in body) {
+    delete ui.draft.fields.read_mode;
+    if (!Object.keys(ui.draft.fields).length) dropDraft();
+  }
+  renderDetail();
+  saidSaved("Enregistré");
+  loadTables();
 }
 
 // Describe a table again: straight away, unless it holds corrections made by hand (kept, or replaced on a click)
@@ -1234,7 +1239,7 @@ function closeConfirm(strip) {
 async function markRead(d) {
   try {
     ui.detail = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/semantics`,
-      { method: "POST", body: { field: "read", version: d.version } });
+      { method: "POST", body: { changes: [{ field: "read" }], version: d.version } });
   } catch (e) {
     renderDetail(e.status === 409 ? "tables.yaml a changé : rouvre la table" : e.message);
     return;
@@ -1247,34 +1252,6 @@ async function markRead(d) {
 function fitHeight(area) {
   area.style.height = "auto";
   area.style.height = `${area.scrollHeight}px`;
-}
-
-// A field just written: its frame turns green a moment, where the eye is (the header may be out of sight)
-function flashSaved(input) {
-  if (!input.classList.contains("edit")) return;
-  input.classList.add("saved");
-  setTimeout(() => input.classList.remove("saved"), 1200);
-}
-
-// One field written into tables.yaml as soon as it is left: the page is not re-drawn, the focus stays
-async function saveSemantics(input, value) {
-  const d = ui.detail, state = $("save-state");
-  const body = { field: input.dataset.field, column: input.dataset.column || null, value, version: d.version };
-  state.textContent = "Enregistrement…";
-  state.className = "save-state";
-  try {
-    const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(d.name)}/semantics`, { method: "POST", body });
-    if (ui.detail?.name !== d.name) return;
-    Object.assign(ui.detail, saved);
-    updateMarks(saved);
-    state.textContent = "Enregistré";
-    state.className = "save-state ok";
-    flashSaved(input);
-    loadTables();
-  } catch (e) {
-    state.textContent = e.status === 409 ? "tables.yaml a changé : rouvre la table" : e.message;
-    state.className = "save-state error";
-  }
 }
 
 // ── Relations: the map of the tables, the path of the agent, the evidence ──
@@ -1293,7 +1270,7 @@ async function loadRelations() {
     if (db !== ui.db) return;
     ui.rel = rel;
   } catch (e) {
-    showBanner(`Impossible de lire les relations : ${e.message}`, true);
+    showBanner(`Impossible de lire les jointures : ${e.message}`, true);
     return;
   }
   if (ui.data) { renderHeader(); renderRows(); }
@@ -1347,7 +1324,7 @@ function mapSvg() {
       <text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 + 4}" text-anchor="middle">${esc(table)}</text></g>`;
   }).join("");
   return `<svg class="map" id="map" viewBox="0 0 ${width} ${height}" role="img"
-      aria-label="Carte des tables et de leurs relations">${edges}${cardinalities(labels)}${boxes}</svg>`;
+      aria-label="Carte des tables et de leurs jointures">${edges}${cardinalities(labels)}${boxes}</svg>`;
 }
 
 // The curve of a relation, where it starts and where it ends (on the key): left to right between two columns,
@@ -1402,7 +1379,7 @@ function relationTip(r) {
   const measured = r.fanout ? `chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois`
     : r.empty ? `${esc(r.source)} est vide : rien à mesurer`
     : r.found == null ? "pas encore mesurée" : `${pct(r.found)} des valeurs trouvées${r.weak ? ", peu" : ""}`;
-  const origin = ` · ${ORIGINS[r.origin]?.[1] || "origine d'avant le suivi"}`;
+  const origin = ORIGINS[r.origin] ? ` · ${ORIGINS[r.origin][1]}` : "";
   return `<span class="mono">${esc(r.from)}</span> → <span class="mono">${esc(r.to)}</span><br>${esc(r.links)} · ${measured}${origin}`;
 }
 
@@ -1540,7 +1517,7 @@ function pathText() {
   const p = ui.path;
   if (!p.a || !p.b) return "";   // the lists say what is missing ("départ…", "arrivée…")
   if (!p.result) return '<span class="muted-text">…</span>';
-  if (p.result.joins == null) return '<span class="slow">aucun chemin : ces deux tables ne sont reliées par aucune suite de relations</span>';
+  if (p.result.joins == null) return '<span class="slow">aucun chemin : ces deux tables ne sont reliées par aucune suite de jointures</span>';
   // The tables of the path are on the map: the path itself in a bubble, on hover, focus or tap
   const steps = p.result.layers.map((tables) => tables.map((t) => `<span class="path-table">${esc(t)}</span>`).join(" | ")).join(" → ");
   return `<span class="muted-text">· <span class="path-joins" tabindex="0">${plural(p.result.joins, "jointure")}`
@@ -1548,34 +1525,34 @@ function pathText() {
     + (p.result.bridged ? "" : ` <span class="slow">· au-delà de 3 : l'agent ne fera pas ce chemin seul</span>`);
 }
 
+// A join of the list: its origin before it (no mark when unknown, its place kept so the names stay aligned), how much of
+// its values the data showed, how many rows on each side, the button that removes it
 function relationLine(r) {
-  const [origin, , title] = ORIGINS[r.origin] || [null, null, BEFORE_TRACKING];
+  const [origin, , title] = ORIGINS[r.origin] || [];
   // measured with nothing to compare (its table empty), or never measured
   const found = r.empty ? `<span class="muted-text" title="${esc(r.source)} n'a aucune ligne : rien à comparer, la vérifier à nouveau n'y change rien">table vide</span>`
     : r.found == null ? '<span class="muted-text" title="Pas encore mesurée sur les données">—</span>'
     : `<span class="bar"><i class="${r.found < KEY_OVERLAP ? "low" : ""}" style="width:${Math.round(r.found * 100)}%"></i></span>${pct(r.found)}`;
   const focus = ui.relFocus === `${r.from}|${r.to}`;
   return `<div class="rline${r.weak ? " weak" : ""}${focus ? " focus" : ""}">
-    <span class="cell mono rel" title="${esc(r.from)} → ${esc(r.to)}"><span>${esc(r.from)}</span> <span><span class="arrow">→</span> ${esc(r.to)}</span></span>
+    <span class="cell mono rel" title="${esc(r.from)} → ${esc(r.to)}"><span>${origin ? originMark(origin, title) : '<span class="origin-slot"></span>'}${esc(r.from)}</span> <span><span class="arrow">→</span> ${esc(r.to)}</span></span>
     <span class="fill">${found}</span>
     ${r.fanout ? `<span><span class="pill decide mono" title="${esc(r.to)} n'est pas une clé : chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois en moyenne">${esc(r.links)}</span></span>`
       : `<span><span class="pill links mono" title="Combien de lignes d'un côté pour une ligne de l'autre">${esc(r.links)}</span></span>`}
-    <span class="cell" title="${title}">${origin ? `<span class="origin-word ${origin}">${originMark(origin, title)}${ORIGIN[origin].word}</span>`
-      : '<span class="muted-text">— avant le suivi</span>'}</span>
-    <button class="icon-btn small" data-ignore="${esc(r.from)}|${esc(r.to)}" title="Retirer : la relation sort de la liste et ne reviendra pas" aria-label="Retirer ${esc(r.from)} vers ${esc(r.to)}">✕</button>
+    <button class="icon-btn small" data-ignore="${esc(r.from)}|${esc(r.to)}" title="Retirer : la jointure sort de la liste et ne reviendra pas" aria-label="Retirer ${esc(r.from)} vers ${esc(r.to)}">✕</button>
   </div>`;
 }
 
 function renderRelations(el, message) {
   const rel = ui.rel;
-  if (!rel) { el.innerHTML = '<p class="placeholder">Lecture des relations…</p>'; return; }
+  if (!rel) { el.innerHTML = '<p class="placeholder">Lecture des jointures…</p>'; return; }
   const cur = ui.current, tables = ui.data?.tables.map((t) => t.name) || [], layer = pathLayers();
   const mine = (r) => r.source === cur || r.target === cur;
   const shown = (layer.size ? rel.relations.filter((r) => onPath(r, layer)) : cur ? rel.relations.filter(mine) : rel.relations)
     .slice().sort((a, b) => (b.weak - a.weak) || ((a.found == null) - (b.found == null)));
   const ignored = layer.size ? [] : cur ? rel.ignored.filter(mine) : rel.ignored;
-  const heading = layer.size ? "Relations du chemin" : cur ? `Relations de ${esc(cur)}` : "Toutes les relations";
-  const figures = [plural(rel.relations.length, "relation"),
+  const heading = layer.size ? "Jointures du chemin" : cur ? `Jointures de ${esc(cur)}` : "Toutes les jointures";
+  const figures = [plural(rel.relations.length, "jointure"),
     rel.isolated.length ? `${plural(rel.isolated.length, "table")} ${rel.isolated.length > 1 ? "isolées" : "isolée"}` : "aucune table isolée",
     rel.weak ? `${fmt.format(rel.weak)} à vérifier` : null]   // the ones never measured: in the note over the map
     .filter(Boolean).join(" · ");
@@ -1587,7 +1564,7 @@ function renderRelations(el, message) {
 
   // One bar over the map: the table chosen and the path between two tables. The relations never measured in one note,
   // not on each line of the list. In the map: the zoom at the top right, what the lines mean at the bottom left
-  const measure = '<button class="btn small" id="check-relations" data-job title="Mesure sur les données la part des valeurs trouvées de chaque relation, sans l\'IA">';
+  const measure = '<button class="btn small" id="check-relations" data-job title="Mesure sur les données la part des valeurs trouvées de chaque jointure, sans l\'IA">';
   const line = (cls) => `<svg width="22" height="8" viewBox="0 0 22 8" aria-hidden="true"><path class="${cls}" d="M1 4 L21 4"/></svg>`;
   const fit = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
   el.innerHTML = `<div class="detail-head"><h2>Carte des tables</h2><span class="figures">${figures}</span>
@@ -1599,7 +1576,7 @@ function renderRelations(el, message) {
       <span class="arrow">→</span><select id="path-b" aria-label="Table d'arrivée">${options(ui.path.b, "arrivée…")}</select>
       <span class="path-result">${pathText()}</span>
     </div>
-    ${rel.unchecked ? `<div class="rule-note"><span>${rel.unchecked > 1 ? `${fmt.format(rel.unchecked)} relations jamais mesurées` : "Une relation jamais mesurée"} sur les données : `
+    ${rel.unchecked ? `<div class="rule-note"><span>${rel.unchecked > 1 ? `${fmt.format(rel.unchecked)} jointures jamais mesurées` : "Une jointure jamais mesurée"} sur les données : `
       + `rien ne prouve encore que leurs valeurs se retrouvent d'une table à l'autre.</span>${measure}Vérifier sur les données</button></div>` : ""}
     <div class="map-wrap" id="map-wrap">${mapSvg()}
       <div class="map-zoom"><button type="button" id="zoom-in" aria-label="Zoomer" title="Zoomer">+</button>`
@@ -1608,7 +1585,7 @@ function renderRelations(el, message) {
       <div class="map-legend"><span>${line("on")}vérifiée</span><span>${line("unchecked")}non mesurée</span><span>${line("weak")}faible</span></div>
       <div class="map-tip" id="map-tip" role="tooltip" hidden></div></div>
     <form class="add-form" id="add-form" ${ui.adding ? "" : "hidden"}>
-      <span class="muted-text">Nouvelle relation</span>
+      <span class="muted-text">Nouvelle jointure</span>
       <select id="add-source-table" aria-label="Table qui pointe">${options(chosen.source[0])}</select><select id="add-source-column" aria-label="Colonne qui pointe"></select>
       <span class="arrow">→</span>
       <select id="add-target-table" aria-label="Table pointée">${options(chosen.target[0])}</select><select id="add-target-column" aria-label="Colonne pointée"></select>
@@ -1617,10 +1594,10 @@ function renderRelations(el, message) {
     </form>
     ${ui.adding && ui.relCheck ? relationCheck(ui.relCheck) : ""}
     <div class="columns">
-      <div class="rline head"><span>${heading}</span><span class="num">Valeurs trouvées</span><span>Liens</span><span>Origine</span><span></span></div>
-      ${shown.map(relationLine).join("") || `<p class="placeholder">${cur ? "Aucune relation : l'agent ne peut joindre cette table à aucune autre." : "Aucune relation."}</p>`}
-      ${ignored.length ? `<details class="ignored"><summary>${plural(ignored.length, "relation retirée")}</summary>
-        ${ignored.map((r) => `<div class="rline"><span class="cell mono muted">${esc(r.from)} → ${esc(r.to)}</span><span></span><span></span><span></span>
+      <div class="rline head"><span>${heading}</span><span class="num">Valeurs trouvées</span><span>Liens</span><span></span></div>
+      ${shown.map(relationLine).join("") || `<p class="placeholder">${cur ? "Aucune jointure : l'agent ne peut joindre cette table à aucune autre." : "Aucune jointure."}</p>`}
+      ${ignored.length ? `<details class="ignored"><summary>${plural(ignored.length, "jointure retirée")}</summary>
+        ${ignored.map((r) => `<div class="rline"><span class="cell mono muted">${esc(r.from)} → ${esc(r.to)}</span><span></span><span></span>
           <button class="btn ghost small" data-restore="${esc(r.from)}|${esc(r.to)}">Rétablir</button></div>`).join("")}</details>` : ""}
     </div>`;
 
@@ -1757,9 +1734,10 @@ async function loadMetrics() {
   renderRows(); renderDetail();
 }
 
+// The state of a metric in the list; none before its test (the tests don't run on arrival: every metric would say it)
 const METRIC_PILLS = {
   ok: '<span class="pill done">vérifiée</span>', check: '<span class="pill decide">à revoir</span>',
-  error: '<span class="pill bad" title="L\'agent refusera de démarrer avec cette métrique">erreur</span>', untested: '<span class="pill todo">non testée</span>',
+  error: '<span class="pill bad" title="L\'agent refusera de démarrer avec cette métrique">erreur</span>', untested: "",
 };
 
 function renderMetricRows() {
@@ -1768,7 +1746,7 @@ function renderMetricRows() {
     && (ui.filter === "all" || m.state === "check" || m.state === "error"));
   const current = (name, kind) => (name === ui.metric && kind === ui.metricKind ? " current" : "");
   const opened = new Set(storedList(openedKey())), fresh = (name) => met.added.includes(name) && !opened.has(name);
-  $("rows").innerHTML = rows.map((m) => `<div class="row${current(m.name, "metric")}" data-metric="${esc(m.name)}">
+  $("rows").innerHTML = rows.map((m) => `<div class="row${current(m.name, "metric")}${ui.draft?.kind === "metric" && ui.draft.name === m.name ? " unsaved" : ""}" data-metric="${esc(m.name)}">
       <span></span><span class="cell" title="${esc(m.name)}">${fresh(m.name) ? '<span class="todo-dot" title="Ajoutée par l\'IA au dernier lancement, pas encore ouverte"></span>' : ""}${esc(m.name)}</span>
       ${ui.testing?.current === m.name ? '<span class="pill running">en cours</span>' : METRIC_PILLS[m.state]}
     </div>`).join("");
@@ -1795,6 +1773,7 @@ $("list-extra").addEventListener("click", (e) => {
 });
 
 function openMetric(name, kind) {
+  if (ui.draft && ui.draft.name !== name) { leaveDraft(() => openMetric(name, kind)); return; }
   const fromList = !document.body.classList.contains("card-open");
   ui.metric = name; ui.metricKind = kind;
   if (kind === "metric" && ui.met?.added.includes(name)) rememberOpened(name);
@@ -1836,7 +1815,7 @@ const IN_FRENCH = [
   [/write every column of expr as table\.column/, "écris chaque colonne sous la forme table.colonne"],
   [/write time_dimension as table\.column/, "écris la date sous la forme table.colonne"],
   [/'description' and 'expr' are required/, "la description et la formule sont obligatoires"],
-  [NOT_JOINED, "aucune relation ne relie $1 à $2"],
+  [NOT_JOINED, "aucune jointure ne relie $1 à $2"],
 ];
 const inFrench = (message) => IN_FRENCH.reduce((text, [english, french]) => text.replace(english, french), String(message ?? ""));
 
@@ -1845,7 +1824,7 @@ function skippedReason(s) {
   if (s.reason !== "rejected") return SKIPPED[s.reason] || SKIPPED.other;
   const joins = s.detail.match(NOT_JOINED);
   if (joins) {
-    return "Ses tables ne se rejoignent pas par une relation que la formule peut suivre : "
+    return "Ses tables ne se rejoignent pas par une jointure que la formule peut suivre : "
       + `<span class="mono">${esc(joins[1])}</span> et <span class="mono">${esc(joins[2])}</span>.`;
   }
   return `Refusée à la vérification : ${esc(inFrench(s.detail))}`;
@@ -1859,7 +1838,7 @@ function showPath(joins) {
 const ERRORS = {
   hidden: "Elle lit une colonne cachée à l'agent : il refusera de démarrer tant qu'elle y est.",
   invalid: "L'agent refusera de démarrer avec cette métrique.",
-  joins: "Ses tables ne sont reliées par aucune relation : elle ne peut pas être calculée. La relation s'ajoute dans Relations.",
+  joins: "Ses tables ne sont reliées par aucune jointure : elle ne peut pas être calculée. La jointure s'ajoute dans l'onglet Jointures.",
 };
 
 const at = (seconds) => new Date(seconds * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -1871,35 +1850,282 @@ const share = (x, warn) => (x == null ? '<span class="muted-text">—</span>'
 const checkLine = (label, measure, text, warn = false) => `<div class="mline${warn ? " warn" : ""}">
     <span>${label}</span><span class="fill">${measure}</span><span class="muted-text">${text}</span></div>`;
 
-function checkLines(m) {
-  const t = m.test;
-  if (!t) return checkLine("Pas encore testée", "", "« Tester » compte ses lignes sur la base, sans lire une valeur.");
-  if (t.error) return checkLine("Formule", '<span class="bad-text">refusée</span>', `<span class="mono">${esc(t.error)}</span>`, true);
-  const lines = [checkLine("Formule", `acceptée · ${decimal(t.seconds)} s`, m.joins ? "La base accepte la formule et ses jointures." : "Une seule table : pas de jointure.")];
-  for (const c of t.tables) {
-    const ratio = c.rows ? c.counted / c.rows : null;
-    const text = c.counted > c.rows ? `Chaque ligne de ${esc(c.table)} comptée ${decimal(ratio)} fois en moyenne : la jointure multiplie ses montants.`
-      : c.counted < c.rows ? `${plural(c.rows - c.counted, "ligne")} de ${esc(c.table)} sans correspondance, absentes du total.`
-      : `Chaque ligne de ${esc(c.table)} comptée une fois : la jointure n'en double ni n'en perd.`;
-    const bar = `<span class="bar"><i class="${c.warn ? "low" : ""}" style="width:${Math.round(Math.min(ratio ?? 0, 1) * 100)}%"></i></span>`;
-    lines.push(checkLine("Lignes comptées", `${bar}${fmt.format(c.counted)} / ${fmt.format(c.rows)}`, text, c.warn));
-  }
+// What the test found on the data, a check a line: its verdict, then a sentence with its figures and what they change.
+// tone "ok" (green), "warn" (amber: worth a look), "bad" (red: the database refuses the formula)
+const dataCheck = (tone, title, text) => `<div class="data-check ${tone}"><span class="check-icon">${tone === "ok" ? CHECK : BANG}</span>
+    <div><b>${title}</b><span>${text}</span></div></div>`;
+
+function dataChecks(m) {
+  const t = m.test, rows = t.rows, others = (table) => names(m.tables.filter((name) => name !== table));
+  const missing = (filled) => fmt.format(Math.max(rows - filled, 0));
+  const checks = t.tables.map((c) => (c.counted > c.rows
+    ? ["warn", "Lignes comptées plusieurs fois", `Chaque ligne de ${col(c.table)} est comptée ${decimal(c.counted / c.rows)} fois en moyenne : `
+      + "la jointure la répète, et ses valeurs entrent plusieurs fois dans le calcul."]
+    : c.counted < c.rows
+      ? [c.warn ? "warn" : "ok", "Lignes perdues par la jointure", `${plural(c.rows - c.counted, "ligne")} de ${col(c.table)} (${pct(1 - c.counted / c.rows)}) `
+        + `sans correspondance dans ${others(c.table)} : elles manquent au calcul.`]
+      : ["ok", "Aucune ligne comptée deux fois", `Les ${fmt.format(c.rows)} lignes de ${col(c.table)} sont comptées une fois chacune : `
+        + `la jointure avec ${others(c.table)} n'en ajoute ni n'en perd.`]));
+  // a measure named when there are several (a ratio), "la valeur calculée" otherwise
   for (const s of t.measures) {
-    const text = s.conditional ? "Vide hors de sa condition, exprès."
-      : s.share === 1 ? "Aucune ligne ignorée par le calcul."
-      : s.share == null ? "Aucune ligne à calculer." : `${pct(1 - s.share)} des lignes ignorées : <span class="mono">${esc(s.sql)}</span> y est vide.`;
-    lines.push(checkLine("Mesure remplie", share(s.share, s.warn), text, s.warn));
+    const what = t.measures.length > 1 ? col(s.sql) : "La valeur calculée";
+    checks.push(s.conditional ? ["ok", "Vide hors de sa condition, exprès",
+      "La valeur n'est calculée que sur les lignes qui remplissent sa condition (CASE WHEN) : les autres restent vides, c'est voulu."]
+      : s.share == null ? ["ok", "Aucune ligne à calculer", "La requête ne trouve aucune ligne sur la base."]
+      : s.share === 1 ? ["ok", "Calculée sur toutes les lignes", `${what} est remplie sur les ${fmt.format(rows)} lignes : aucune n'est sautée.`]
+      : [s.warn ? "warn" : "ok", `${pct(1 - s.share)} des lignes sautées`, `${what} est vide sur ${missing(s.filled)} lignes : le calcul les saute.`]);
   }
   if (t.date) {
-    const d = t.date, text = d.share === 1 || d.share == null ? `<span class="mono">${esc(d.column)}</span>`
-      : `<span class="mono">${esc(d.column)}</span> : ${pct(1 - d.share)} des lignes hors de toute période.`;
-    lines.push(checkLine("Date remplie", share(d.share, d.warn), text, d.warn));
+    const d = t.date;
+    checks.push(d.share === 1 || d.share == null ? ["ok", "Une date sur chaque ligne",
+      `${col(d.column)} est remplie partout : un mois ou une année demandés voient toutes les lignes.`]
+      : [d.warn ? "warn" : "ok", d.warn ? "Beaucoup de lignes sans date" : "Une date sur presque toutes les lignes",
+        `${col(d.column)} manque sur ${missing(d.filled)} lignes (${pct(1 - d.share)}) : elles comptent dans le total, pas quand on demande un mois ou une année.`]);
   }
-  const sign = { positive: "positif", negative: "négatif", zero: "zéro", empty: "vide" }[t.sign];
-  const said = { zero: "Zéro sur toute la base : sa condition ne trouve peut-être aucune ligne.",
-    empty: "Vide sur toute la base : aucune ligne à calculer." }[t.sign] || "La valeur n'est jamais affichée.";
-  lines.push(checkLine("Résultat", sign, said, t.sign === "zero" || t.sign === "empty"));
-  return lines.join("");
+  checks.push({
+    positive: ["ok", "Résultat positif", "Sur toute la base, le résultat n'est ni vide ni nul."],
+    negative: ["ok", "Résultat négatif", "Sur toute la base, le résultat est négatif."],
+    zero: ["warn", "Résultat nul", "Zéro sur toute la base : sa condition ne trouve peut-être aucune ligne."],
+    empty: ["warn", "Résultat vide", "Aucune ligne à calculer sur toute la base."],
+  }[t.sign] || ["ok", "Résultat", ""]);
+  // the checks to review first, then the ones that pass
+  const review = checks.filter(([tone]) => tone === "warn");
+  return [review.length, [...review, ...checks.filter(([tone]) => tone !== "warn")].map((c) => dataCheck(...c)).join("")];
+}
+
+// "Sur les données": before the test, one line and its button. After it, one line that says whether it passes, in the
+// words of the pills of the list (Vérifiée, À revoir, Erreur), its checks under it: folded when it passes (open on
+// demand, kept open from one metric to the next), open when it breaks
+function dataSection(m) {
+  const testing = ui.testing?.current === m.name, t = m.test;
+  const button = (label, ghost) => `<button class="btn small${ghost ? " ghost" : ""}" id="metric-test" ${testing ? "disabled" : ""}>${testing ? "Test en cours…" : label}</button>`;
+  if (!t) {
+    return `<div class="data-checks"><div class="data-head"><span class="field-label">Sur les données</span>
+      <span class="data-said">Pas encore testée</span>${button("Tester", false)}</div></div>`;
+  }
+  const tested = t.at ? `testée le ${when(t.at)}${t.seconds != null ? `, en ${decimal(t.seconds)} s` : ""}` : "testée";
+  const [review, checks] = t.error ? [0, dataCheck("bad", "Formule refusée", `<span class="mono">${esc(t.error)}</span>`)] : dataChecks(m);
+  const tone = t.error ? "bad" : review ? "warn" : "ok";
+  const title = { ok: "Vérifiée sur les données", warn: `À revoir · ${plural(review, "point")}`, bad: "Erreur · la base refuse la formule" }[tone];
+  const open = tone !== "ok" || ui.showChecks;
+  const toggle = tone === "ok" ? `<button type="button" class="link-btn" id="checks-toggle" aria-expanded="${open}">`
+    + `${open ? "Masquer les contrôles" : "Voir les contrôles"}</button>` : "";
+  return `<div class="data-checks"><div class="data-head data-verdict ${tone}"><span class="check-icon">${tone === "ok" ? CHECK : BANG}</span>
+      <span class="data-said"><b>${title}</b> · ${tested}<span data-stale hidden> · sur la version enregistrée</span></span>${toggle}${button("Retester", true)}</div>
+    ${open ? `<div class="data-details">${checks}</div>` : ""}</div>`;
+}
+
+const CROSS = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>';
+
+// The origin of a metric (metrics.yaml): proposed by the IA, its mark before its name; written before the studio noted
+// it, no mark (unknown); a field corrected by you, the pencil before its label
+const metricOrigin = (m) => (m.origin === "ai" ? originMark("ai", "Proposée par l'IA") : "");
+const editedMark = (m, field) => ((m.edited || []).includes(field) ? originMark("you", "Corrigé par toi") : "");
+
+// ── Drafts: what the card open changed and did not save yet (a metric, the descriptions of a table, its properties),
+// written at once by « Enregistrer », dropped by « Annuler »; a field put back to its saved value leaves it. Leaving
+// the card with a draft asks first ──
+
+const norm = (value) => JSON.stringify(typeof value === "string" ? value.trim() : value ?? "");
+const draftFields = (kind, name) => (ui.draft?.kind === kind && ui.draft.name === name ? ui.draft.fields : {});
+const dropDraft = () => { ui.draft = null; ui.draftError = null; };
+
+function setDraft(kind, name, key, value, saved) {
+  if (ui.draft?.kind !== kind || ui.draft.name !== name) ui.draft = { kind, name, fields: {} };
+  if (norm(value) === norm(saved)) delete ui.draft.fields[key];
+  else ui.draft.fields[key] = value;
+  if (!Object.keys(ui.draft.fields).length) ui.draft = null;
+  ui.draftError = null;
+  const state = $("save-state");
+  if (state) state.textContent = "";   // « Enregistré » of an earlier save no longer true
+  showDraft();
+}
+
+// What a draft changed, in words for its bar: fields of a metric or properties of a table; the description of a table
+// and how many of its columns (a column counted once, its text and its categorical switch changed or not)
+const draftColumns = (draft) => new Set(Object.keys(draft.fields).filter((k) => k !== "description").map((k) => k.slice(k.indexOf(":") + 1)));
+const draftCount = (draft) => (draft.kind === "semantics" ? ("description" in draft.fields) + draftColumns(draft).size : Object.keys(draft.fields).length);
+const DRAFT_WORDS = { description: "description", synonyms: "synonymes", expr: "formule", time_dimension: "date par défaut",
+  table_type: "type", read_mode: "mode de lecture", data_as_of: "date d'arrêt" };
+function draftWords(draft) {
+  const keys = Object.keys(draft.fields);
+  if (draft.kind !== "semantics") return Object.keys(DRAFT_WORDS).filter((k) => keys.includes(k)).map((k) => DRAFT_WORDS[k]);
+  const columns = draftColumns(draft).size;
+  return [keys.includes("description") && "description de la table", columns && plural(columns, "colonne")].filter(Boolean);
+}
+
+// The draft told on the card: « modifié » on each field changed (its frame in the accent), the tests of a metric said
+// to be on its saved version, the dot of its row in the list, the bar; refused, « Enregistrement refusé » first in the
+// bar, the reason under the field of a metric, in the bar otherwise
+function showDraft() {
+  const draft = ui.draft, fields = draft?.fields || {}, n = draft ? draftCount(draft) : 0, error = ui.draftError, el = $("detail");
+  el.classList.toggle("has-draft", n > 0);   // the bar sticks to the bottom of the screen, past the card
+  el.querySelectorAll("[data-draft]").forEach((field) => field.classList.toggle("modified", field.dataset.draft in fields));
+  el.querySelectorAll("[data-draft-row]").forEach((row) => {
+    row.classList.toggle("modified", `column:${row.dataset.draftRow}` in fields || `categorical:${row.dataset.draftRow}` in fields);
+  });
+  el.querySelectorAll("[data-refused]").forEach((note) => {
+    note.hidden = error?.field !== note.dataset.refused;
+    if (!note.hidden) note.textContent = `Rien n'est écrit : ${error.message}`;
+  });
+  el.querySelectorAll("[data-stale]").forEach((said) => { said.hidden = !("expr" in fields || "time_dimension" in fields); });
+  document.querySelectorAll("#rows .row.unsaved").forEach((row) => row.classList.remove("unsaved"));
+  if (draft) document.querySelector(`#rows .row[data-${draft.kind === "metric" ? "metric" : "table"}="${CSS.escape(draft.name)}"]`)?.classList.add("unsaved");
+  if (!$("draft-bar")) return;
+  $("draft-bar").hidden = !n;
+  if (!n) return;
+  const words = draftWords(draft);
+  $("draft-said").innerHTML = (error ? `<span class="bad-text">Enregistrement refusé${error.field ? "" : ` : ${esc(error.message)}`}</span> · ` : "")
+    + `${plural(n, "modification")} non ${n > 1 ? "enregistrées" : "enregistrée"} : `
+    + (words.length > 1 ? `${words.slice(0, -1).join(", ")} et ${words.at(-1)}` : words[0]);
+}
+
+// The bar of a draft at the bottom of its card, hidden while nothing is changed
+const DRAFT_BAR = `<div class="draft-bar" id="draft-bar" role="region" aria-label="Modifications non enregistrées" hidden>
+    <span class="draft-dot"></span><span class="draft-said" id="draft-said"></span>
+    <button class="btn ghost small" type="button" id="draft-cancel">Annuler</button>
+    <button class="btn primary small" type="button" id="draft-save">Enregistrer</button></div>`;
+function bindDraftBar() {
+  $("draft-cancel").onclick = () => { dropDraft(); renderRows(); renderDetail(); };
+  $("draft-save").onclick = () => saveDraft();
+  showDraft();
+}
+
+// The draft written at once, or nothing of it; true once written
+function saveDraft() {
+  const draft = ui.draft;
+  if (!draft) return Promise.resolve(true);
+  return { metric: saveMetricDraft, semantics: saveSemanticsDraft, properties: savePropertiesDraft }[draft.kind](draft);
+}
+
+// A save refused: why, kept on the card with the draft (409: the file changed meanwhile, the page to reload)
+function draftRefused(e, field = null, file = "tables.yaml") {
+  ui.draftError = e.status === 409 ? { field: null, message: `${file} a changé : recharge la page` } : { field, message: inFrench(e.message) };
+  const state = $("save-state");
+  if (state) state.textContent = "";
+  showDraft();
+  return false;
+}
+const saidSaved = (text) => { const state = $("save-state"); if (state) { state.textContent = text; state.className = "save-state ok"; } };
+const saving = (text) => { const state = $("save-state"); if (state) { state.textContent = text; state.className = "save-state"; } };
+
+// A metric: a new formula or date checked by the database first, then tested
+async function saveMetricDraft(draft) {
+  const changes = Object.fromEntries(Object.entries(draft.fields).map(([f, v]) => [f, f === "synonyms" ? v.join(", ") : v]));
+  const checked = "expr" in changes || "time_dimension" in changes;
+  saving(checked ? "Vérification sur la base…" : "Enregistrement…");
+  try {
+    ui.met = await api(`/api/db/${encodeURIComponent(ui.db)}/metrics/${encodeURIComponent(draft.name)}`,
+      { method: "POST", body: { changes, version: ui.met.version } });
+  } catch (e) {
+    return draftRefused(e, "expr" in changes ? "expr" : "time_dimension" in changes ? "time_dimension" : "description", "metrics.yaml");
+  }
+  dropDraft();
+  renderRows(); renderDetail();
+  saidSaved("Enregistrée · l'agent la lira à son prochain démarrage");   // metrics.yaml is read at startup, not from the index
+  if (checked) testMetrics([draft.name]);
+  return true;
+}
+
+// The descriptions of a table: "description", "column:<name>", "categorical:<name>"
+async function saveSemanticsDraft(draft) {
+  const changes = Object.entries(draft.fields).map(([key, value]) => {
+    const at = key.indexOf(":");
+    return at < 0 ? { field: key, value } : { field: key.slice(0, at), column: key.slice(at + 1), value };
+  });
+  saving("Enregistrement…");
+  try {
+    ui.detail = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(draft.name)}/semantics`,
+      { method: "POST", body: { changes, version: ui.detail.version } });
+  } catch (e) {
+    return draftRefused(e);
+  }
+  dropDraft();
+  renderRows(); renderDetail();
+  saidSaved("Enregistré");
+  loadTables();
+  return true;
+}
+
+// The properties of a table: its type ("": the detection again), its read mode, the date its data stops
+async function savePropertiesDraft(draft) {
+  const f = draft.fields;
+  saving("Enregistrement…");
+  try {
+    const saved = await api(`/api/db/${encodeURIComponent(ui.db)}/tables/${encodeURIComponent(draft.name)}/properties`, {
+      method: "POST", body: { ...f, ...("table_type" in f ? { table_type: f.table_type || null } : {}), version: ui.detail.version } });
+    ui.detail = { ...ui.detail, ...saved };
+  } catch (e) {
+    return draftRefused(e);
+  }
+  dropDraft();
+  renderRows(); renderDetail();
+  saidSaved("Enregistré");
+  loadTables();
+  return true;
+}
+
+// Leaving the card open (another metric or table, a tab, a database, the home, a job on the table) with a draft:
+// Rester, Abandonner or Enregistrer first; then() once the draft is gone
+function leaveDraft(then) {
+  if (!ui.draft) { then(); return; }
+  const strip = $("confirm"), n = draftCount(ui.draft);
+  strip.innerHTML = `<p>${ui.draft.kind === "metric" ? "" : "La table "}<b>${esc(ui.draft.name)}</b> a ${plural(n, "modification")} non ${n > 1 ? "enregistrées" : "enregistrée"}.</p>
+    <span class="confirm-actions"><button class="btn small ghost" type="button" data-stay>Rester</button>
+      <button class="btn small" type="button" data-drop>Abandonner</button>
+      <button class="btn small primary" type="button" data-save>Enregistrer</button></span>`;
+  strip.hidden = false;
+  strip.scrollIntoView({ block: "nearest" });
+  strip.querySelector("[data-stay]").onclick = () => closeConfirm(strip);
+  strip.querySelector("[data-drop]").onclick = () => { closeConfirm(strip); dropDraft(); then(); };
+  strip.querySelector("[data-save]").onclick = async () => { closeConfirm(strip); if (await saveDraft()) then(); };
+  strip.querySelector("[data-save]").focus();
+}
+window.addEventListener("beforeunload", (e) => { if (ui.draft) e.preventDefault(); });
+
+// A metric in its card: the values of its draft over the saved ones
+const draftValue = (m, field) => (field in draftFields("metric", m.name) ? draftFields("metric", m.name)[field] : m[field]);
+const setMetricDraft = (m, field, value) => setDraft("metric", m.name, field, value, m[field]);
+
+// The words of the questions that mean this metric, a pill each. A word another metric has too, as a synonym or as
+// its name, in amber with that metric: on that word the agent can't choose between them
+function synonymPills(m, words) {
+  const others = new Map();
+  for (const o of ui.met.metrics) {
+    if (o.name === m.name) continue;
+    for (const word of [o.name, ...o.synonyms]) if (!others.has(word.trim().toLowerCase())) others.set(word.trim().toLowerCase(), o.name);
+  }
+  return words.map((word, i) => {
+    const other = others.get(word.trim().toLowerCase());
+    return `<span class="syn${other ? " shared" : ""}"${other ? ' title="L\'agent ne peut pas choisir entre les deux métriques sur ce mot"' : ""}>${esc(word)}`
+      + (other ? `<small>· aussi dans <span class="mono">${esc(other)}</span></small>` : "")
+      + `<button type="button" class="syn-x" data-syn="${i}" aria-label="Retirer ${esc(word)}">${CROSS}</button></span>`;
+  }).join("");
+}
+
+// The synonyms of the draft drawn again, the input kept focused when a word was just added
+function drawSynonyms(m, { focus = false } = {}) {
+  const box = $("met-syn-box"), words = [...draftValue(m, "synonyms")];
+  box.querySelectorAll(".syn").forEach((pill) => pill.remove());
+  $("met-syn-add").insertAdjacentHTML("beforebegin", synonymPills(m, words));
+  box.querySelectorAll("[data-syn]").forEach((x) => x.addEventListener("click", () => {
+    words.splice(Number(x.dataset.syn), 1);
+    setMetricDraft(m, "synonyms", words);
+    drawSynonyms(m);
+  }));
+  if (focus) $("met-syn-add").focus();
+}
+
+// What was typed in the input of the synonyms, added to the draft: one word or several separated by commas, a word
+// already there (whatever its case) not twice
+function addSynonyms(m) {
+  const input = $("met-syn-add"), words = [...draftValue(m, "synonyms")], known = new Set(words.map((w) => w.toLowerCase()));
+  let added = false;
+  for (const word of input.value.split(",").map((w) => w.trim())) {
+    if (word && !known.has(word.toLowerCase())) { known.add(word.toLowerCase()); words.push(word); added = true; }
+  }
+  input.value = "";
+  if (added) { setMetricDraft(m, "synonyms", words); drawSynonyms(m, { focus: true }); }
 }
 
 function renderMetric(el, message) {
@@ -1913,7 +2139,7 @@ function renderMetric(el, message) {
       el.innerHTML = `<div class="detail-head"><h2>${esc(s.name)}</h2><span class="figures">proposée par l'IA · pas ajoutée</span></div>
         <div class="metric-fields"><p class="said">${skippedReason(s)}</p>
         ${s.reason === "other" ? `<pre class="sql">${esc(inFrench(s.detail))}</pre>` : ""}
-        ${joins ? '<div><button class="btn ghost small" id="skipped-path">Voir le chemin dans Relations</button></div>' : ""}
+        ${joins ? '<div><button class="btn ghost small" id="skipped-path">Voir le chemin dans Jointures</button></div>' : ""}
         <p class="muted-text">Rien n'a été écrit dans metrics.yaml.</p></div>`;
       if (joins) $("skipped-path").onclick = () => showPath(joins);
       return;
@@ -1930,81 +2156,62 @@ function renderMetric(el, message) {
   const m = met.metrics.find((x) => x.name === ui.metric);
   if (!m) { el.innerHTML = '<p class="placeholder">Choisis une métrique pour voir sa formule et ses tests.</p>'; return; }
 
-  const figures = [m.tables.join(", "), m.sql ? (m.joins ? plural(m.joins, "jointure") : "sans jointure") : null,
-    m.test && !m.test.error ? `testée à ${at(m.test.at)}` : null].filter(Boolean).join(" · ");
-  const testing = ui.testing?.current === m.name;
   const error = m.error ? `<div class="error-note"><span>${ERRORS[m.error.kind]}</span><code>${esc(inFrench(m.error.detail))}</code></div>` : "";
   const rule = m.rule ? `<div class="rule-note"><span>${RULES[m.rule](m)}</span><button class="btn small" data-retire="1" title="Elle sort de metrics.yaml et l'IA ne la proposera plus">Retirer</button></div>` : "";
-  const dates = dateOptions(m);
-  el.innerHTML = `<div class="detail-head"><h2>${esc(m.name)}</h2><span class="figures">${esc(figures)}</span>
+  const expr = draftValue(m, "expr"), refused = (field) => `<p class="note error refused" data-refused="${field}" hidden></p>`;
+  // the query on demand, in the style of the formula: its joins are those of the tables of the header, by their relations
+  const query = m.sql ? `<div class="query-line">
+      <button type="button" class="link-btn" id="met-query">${ui.showQuery ? "Masquer la requête" : "Voir la requête"}</button></div>
+    ${ui.showQuery ? `<pre class="sql">${sqlHtml(m.sql)}</pre>` : ""}` : "";
+  el.innerHTML = `<div class="detail-head"><h2 class="origin-item">${metricOrigin(m)}${esc(m.name)}</h2><span class="figures">${esc(m.tables.join(", "))}</span>
       <span class="grow"></span><span class="save-state" id="save-state"></span>
-      ${m.sql ? `<button class="btn ghost small" id="metric-test" ${testing ? "disabled" : ""}>${testing ? "Test en cours…" : "Tester"}</button>` : ""}
-      ${m.rule ? "" : '<button class="btn ghost small" data-retire="1" title="Elle sort de metrics.yaml et l\'IA ne la proposera plus">Retirer</button>'}</div>
+      ${m.rule ? "" : '<button class="btn ghost small quiet" data-retire="1" title="Elle sort de metrics.yaml et l\'IA ne la proposera plus">Retirer</button>'}</div>
     ${note}${error}${rule}
     <div class="metric-fields">
-      <div><label class="field-label" for="met-description">Description</label>
-        <textarea class="edit block" id="met-description" rows="1" data-field="description">${esc(m.description)}</textarea></div>
-      <div><label class="field-label" for="met-synonyms">Synonymes</label>
-        <textarea class="edit block" id="met-synonyms" rows="1" data-field="synonyms" placeholder="d'autres mots pour la même chose, séparés par des virgules">${esc(m.synonyms.join(", "))}</textarea></div>
+      <div data-draft="description"><label class="field-label" for="met-description">${editedMark(m, "description")}Description</label>
+        <textarea class="edit block" id="met-description" rows="1">${esc(draftValue(m, "description"))}</textarea>${refused("description")}</div>
+      <div data-draft="synonyms"><label class="field-label" for="met-syn-add">${editedMark(m, "synonyms")}Synonymes</label>
+        <div class="syn-box" id="met-syn-box"><input type="text" id="met-syn-add" placeholder="+ ajouter" autocomplete="off"></div></div>
       <div class="formula-line">
-        <div><label class="field-label" for="met-expr">Formule</label>
-          <textarea class="edit block mono" id="met-expr" rows="1" data-field="expr" spellcheck="false">${esc(m.expr)}</textarea></div>
-        <div><label class="field-label" for="met-date">Date par défaut</label>
-          <select class="edit-select" id="met-date" data-field="time_dimension">${dates}</select></div>
+        <div data-draft="expr"><label class="field-label" for="met-expr">${editedMark(m, "expr")}Formule</label>
+          <div class="code-edit"><pre class="sql" id="met-expr-hl" aria-hidden="true">${sqlHtml(expr)}\n</pre>
+            <textarea class="sql" id="met-expr" rows="1" spellcheck="false">${esc(expr)}</textarea></div>
+          ${refused("expr")}${query}</div>
+        <div data-draft="time_dimension"><label class="field-label" for="met-date">${editedMark(m, "time_dimension")}Date par défaut</label>
+          <select class="edit-select" id="met-date">${dateOptions(m, draftValue(m, "time_dimension"))}</select>${refused("time_dimension")}</div>
       </div>
-      <p class="note error refused" id="metric-refused" hidden></p>
-      ${m.sql ? `<div><span class="field-label">Requête testée</span><pre class="sql">${sqlHtml(m.sql)}</pre></div>` : ""}
     </div>
-    ${m.sql ? `<div class="columns"><div class="mline head"><span>Sur les données</span><span class="num">Mesure</span><span>Ce que ça veut dire</span></div>
-      ${checkLines(m)}</div>` : ""}`;
+    ${m.sql ? dataSection(m) : ""}
+    ${DRAFT_BAR}`;
 
-  el.querySelectorAll("textarea.edit").forEach((area) => {
-    fitHeight(area);
-    area.addEventListener("input", () => fitHeight(area));
-    area.addEventListener("change", () => saveMetric(m.name, area));
-  });
-  $("met-date").addEventListener("change", (e) => saveMetric(m.name, e.target));
+  // every change goes to the draft, nothing is written before « Enregistrer »
+  const description = $("met-description");
+  fitHeight(description);
+  description.addEventListener("input", () => { fitHeight(description); setMetricDraft(m, "description", description.value); });
+  const formula = $("met-expr");
+  formula.addEventListener("input", () => { $("met-expr-hl").innerHTML = `${sqlHtml(formula.value)}\n`; setMetricDraft(m, "expr", formula.value); });
+  $("met-date").addEventListener("change", (e) => setMetricDraft(m, "time_dimension", e.target.value));
+  drawSynonyms(m);
+  $("met-syn-add").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addSynonyms(m); } });
+  $("met-syn-add").addEventListener("blur", () => addSynonyms(m));
+  $("met-syn-box").addEventListener("click", (e) => { if (e.target === e.currentTarget) $("met-syn-add").focus(); });
+  bindDraftBar();
+  if ($("met-query")) $("met-query").onclick = () => { ui.showQuery = !ui.showQuery; renderDetail(); };
+  if ($("checks-toggle")) $("checks-toggle").onclick = () => { ui.showChecks = !ui.showChecks; renderDetail(); };
   if ($("metric-test")) $("metric-test").onclick = () => testMetrics([m.name]);
   el.querySelectorAll("[data-retire]").forEach((b) => b.addEventListener("click", () => moveMetric(m.name, false)));
 }
 
 // The dates a metric can take: the ones of its own tables, then the ones a join would bring (a table more in each
-// question that asks for it), "aucune" last; the current one selected
-function dateOptions(m) {
-  const option = (d) => `<option value="${esc(d)}" ${d === m.time_dimension ? "selected" : ""}>${d ? esc(d) : "aucune"}</option>`;
+// question that asks for it), "aucune" last; the one of the draft, else the saved one, selected
+function dateOptions(m, chosen = m.time_dimension) {
+  const option = (d) => `<option value="${esc(d)}" ${d === chosen ? "selected" : ""}>${d ? esc(d) : "aucune"}</option>`;
   const dates = [...new Set([m.time_dimension, ...m.dates].filter(Boolean))];
   const own = dates.filter((d) => m.tables.includes(d.split(".")[0])), joined = dates.filter((d) => !own.includes(d));
   if (!own.length || !joined.length) return [...dates, ""].map(option).join("");
   const via = [...new Set(joined.map((d) => d.split(".")[0]))];
   return `<optgroup label="Dans ${esc(m.tables.join(", "))}">${own.map(option).join("")}</optgroup>`
     + `<optgroup label="Par une jointure (ajoute ${esc(via.join(", "))})">${joined.map(option).join("")}</optgroup>${option("")}`;
-}
-
-// One field written into metrics.yaml as soon as it is left; a new formula or date is checked by the base first, then tested
-async function saveMetric(name, input) {
-  const field = input.dataset.field, state = $("save-state"), refused = $("metric-refused");
-  state.textContent = field === "expr" || field === "time_dimension" ? "Vérification sur la base…" : "Enregistrement…";
-  state.className = "save-state";
-  refused.hidden = true;
-  try {
-    ui.met = await api(`/api/db/${encodeURIComponent(ui.db)}/metrics/${encodeURIComponent(name)}`,
-      { method: "POST", body: { field, value: input.value, version: ui.met.version } });
-  } catch (e) {
-    state.textContent = e.status === 409 ? "metrics.yaml a changé : recharge la page" : "Refusée";
-    state.className = "save-state error";
-    // Why, under the fields: nothing is written, the text stays to be corrected
-    if (e.status !== 409) { refused.innerHTML = `Rien n'est écrit : <span class="mono">${esc(inFrench(e.message))}</span>`; refused.hidden = false; }
-    return;
-  }
-  if (field === "expr" || field === "time_dimension") {
-    renderRows(); renderDetail();
-    testMetrics([name]);
-    return;
-  }
-  // metrics.yaml is read by the agent at startup, not from the index
-  state.textContent = "Enregistrée · l'agent la lira à son prochain démarrage";
-  state.className = "save-state ok";
-  flashSaved(input);
 }
 
 // The metrics tested one after the other (a query of counts each); "Arrêter les tests" stops after the current one.
@@ -2064,6 +2271,7 @@ async function moveMetric(name, back) {
   }
   ui.metricKind = back ? "metric" : "ignored";
   if (back) ui.metric = null;
+  if (ui.draft?.kind === "metric" && ui.draft.name === name) dropDraft();   // retired: its draft goes with it
   loadTables(); renderRows(); renderDetail();
 }
 
@@ -2150,7 +2358,7 @@ function scopeMode(sc) {
   const stale = ["all", "list"].includes(sc.origin) && sc.config_tables ? `<p class="note"><span class="mono">include_tables</span> de la
     configuration n'est plus lu : retire-le de <span class="mono">config.local.yaml</span>.</p>` : "";
   return `<div class="${sc.origin === "config" ? "rule-note" : "note with-action"} scope-mode"><span>${says}</span>
-    <div class="seg scope-seg" role="group" aria-label="Tables lues">${mode(true, "Toutes les tables, même les futures")}${mode(false, "Une liste de tables")}</div></div>${stale}`;
+    <div class="seg scope-seg${sc.origin === "none" || sc.origin === "config" ? toDecide(`${ui.db}:scope`) : ""}" role="group" aria-label="Tables lues">${mode(true, "Toutes les tables, même les futures")}${mode(false, "Une liste de tables")}</div></div>${stale}`;
 }
 
 // Every table or a list: a list keeps the tables of today; every table brings in the ones out of the scope, said before
@@ -2318,6 +2526,27 @@ function names(list, max = 4) {
 const indexTile = (label, value, text, tone = "") => `<div class="tile${tone ? ` ${tone}` : ""}">
     <span class="tile-label">${label}</span><span class="tile-value">${value}</span><span class="tile-foot">${text}</span></div>`;
 
+// The tables whose document the next index changes, in sentences: changed since, not indexed yet, leaving it
+function indexChanges(idx) {
+  const changed = idx.tables.filter((t) => t.status === "changed").map((t) => t.name);
+  const missing = idx.tables.filter((t) => t.status === "missing").map((t) => t.name);
+  const parts = [];
+  if (changed.length) {
+    parts.push(`${names(changed)} ${changed.length > 1 ? "ont" : "a"} changé depuis l'index : `
+      + `l'agent lit encore ${changed.length > 1 ? "leurs anciennes fiches" : "son ancienne fiche"}.`);
+  }
+  if (missing.length) parts.push(`${names(missing)} ${missing.length > 1 ? "ne sont pas" : "n'est pas"} dans l'index : l'agent ne ${missing.length > 1 ? "les" : "la"} voit pas.`);
+  if (idx.gone.length) {
+    parts.push(`${names(idx.gone)} ${idx.gone.length > 1 ? "ne sont plus" : "n'est plus"} dans la base : `
+      + `${idx.gone.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
+  }
+  if (idx.unscoped.length) {
+    parts.push(`${names(idx.unscoped)} ${idx.unscoped.length > 1 ? "sont sorties" : "est sortie"} du périmètre : `
+      + `${idx.unscoped.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
+  }
+  return parts;
+}
+
 // The verdict of the Index screen (and of a card of the home), in a sentence or two: is the agent ready, what to do
 // next, then what the tiles flag in amber. Tone "bad" (red: the agent won't start), "warn" (amber: to do or to
 // look at), none when it is ready
@@ -2329,31 +2558,15 @@ function indexVerdict(idx, db = ui.db) {
     return box("warn", `Index construit avant que le studio en garde la trace${newer.length
       ? ` : ${newer.join(" et ")} ${newer.length > 1 ? "ont" : "a"} changé depuis` : ""}. Réindexe une fois pour voir ce que l'agent lit, table par table.`);
   }
-  const errors = idx.metrics.errors.map((e) => e.name);
-  const changed = idx.tables.filter((t) => t.status === "changed").map((t) => t.name);
-  const missing = idx.tables.filter((t) => t.status === "missing").map((t) => t.name);
+  const errors = idx.metrics.errors.map((e) => e.name), changes = indexChanges(idx);
   const e = idx.eval, documents = idx.documents > 1 ? `Les ${fmt.format(idx.documents)} fiches sont à jour` : "La fiche est à jour";
   let tone = "", text;
   if (errors.length) {
     tone = "bad";
-    text = `L'agent ne démarrera pas : il refuse ${errors.length > 1 ? "les métriques" : "la métrique"} ${names(errors)} (détail dans la tuile Métriques).`;
-  } else if (changed.length || missing.length || leavingIndex(idx).length) {
+    text = `L'agent ne démarrera pas : il refuse ${errors.length > 1 ? "les métriques" : "la métrique"} ${names(errors)} (détail dans l'onglet Métriques).`;
+  } else if (changes.length) {
     tone = "warn";
-    const parts = [];
-    if (changed.length) {
-      parts.push(`${changed.length > 1 ? `${fmt.format(changed.length)} tables ont changé` : "Une table a changé"} depuis l'index (${names(changed)}) : `
-        + `l'agent lit encore ${changed.length > 1 ? "leurs anciennes fiches" : "son ancienne fiche"}.`);
-    }
-    if (missing.length) parts.push(`${names(missing)} ${missing.length > 1 ? "ne sont pas" : "n'est pas"} dans l'index : l'agent ne ${missing.length > 1 ? "les" : "la"} voit pas.`);
-    if (idx.gone.length) {
-      parts.push(`${names(idx.gone)} ${idx.gone.length > 1 ? "ne sont plus" : "n'est plus"} dans la base : `
-        + `${idx.gone.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
-    }
-    if (idx.unscoped.length) {
-      parts.push(`${names(idx.unscoped)} ${idx.unscoped.length > 1 ? "sont sorties" : "est sortie"} du périmètre : `
-        + `${idx.unscoped.length > 1 ? "leurs fiches partiront" : "sa fiche partira"} à la prochaine indexation.`);
-    }
-    text = `${parts.join(" ")} ${idx.dataset ? "Réindexe, puis relance l'évaluation." : "Réindexe."}`;
+    text = `${changes.join(" ")} ${idx.dataset ? "Réindexe, puis relance l'évaluation." : "Réindexe."}`;
   } else if (!idx.dataset) {
     text = `L'agent est prêt : ${plural(idx.documents, "fiche")} à jour. Pas de questions d'évaluation pour cette base.`;
   } else if (!e) {
@@ -2380,96 +2593,110 @@ function indexVerdict(idx, db = ui.db) {
   return box(tone, text);
 }
 
-// The categorical columns, by where the agent finds their values: in the document, searched on demand, or nowhere
-// (empty or too varied); one bar of columns, what each part means in a bubble on hover, focus or tap
-function valuesTile(idx) {
-  const d = idx.dropped, many = d.length > 1;
-  const columns = idx.inline.columns + idx.searched.columns + d.length;
+// One figure of what the agent reads: the figure, its name, a word under it (amber or red only when that figure needs
+// looking at); what it is in a bubble on hover, focus or tap, what is wrong first
+function agentFigure({ value, label, note, tone = "", issue = "", tip, extra = "" }) {
+  return `<div class="figure" tabindex="0"><span class="figure-value">${value}</span><span class="figure-label">${label}</span>
+    <span class="figure-note${tone ? ` ${tone}` : ""}">${note}</span>
+    <div class="figure-tip" role="tooltip">${issue ? `<p class="issue">${issue}</p>` : ""}<p>${tip}</p>${extra}</div></div>`;
+}
+
+// The categorical columns in the bubble of the values: one bar, the columns without values left as the empty track,
+// then where the agent finds the values (in the document, searched on demand)
+function valuesSplit(idx) {
+  const columns = idx.inline.columns + idx.searched.columns + idx.dropped.length;
+  if (!columns) return "";
   const parts = [
-    ["listed", idx.inline.columns, "dans les fiches",
-      `Peu de valeurs : les ${fmt.format(idx.inline.values)} sont écrites dans les fiches, l'agent les a toutes sous les yeux.`],
-    ["searched", idx.searched.columns, `cherchée${idx.searched.columns > 1 ? "s" : ""} à la demande`,
-      `Trop de valeurs pour la fiche : l'agent cherche parmi les ${fmt.format(idx.searched.values)} celles que la question cite.`],
-    ["none", d.length, "sans valeurs",
-      `${names(d)} ${many ? "sont vides ou trop variées" : "est vide ou trop variée"} : l'agent n'en connaît aucune valeur.`],
+    ["listed", idx.inline.columns, idx.inline.values, "dans les fiches", "de peu de valeurs"],
+    ["searched", idx.searched.columns, idx.searched.values, "cherchées à la demande", "trop riches pour la fiche"],
   ].filter(([, n]) => n);
-  const bar = parts.map(([key, n, label]) => `<span class="${key}" style="width:${n / columns * 100}%" title="${fmt.format(n)} ${label}"></span>`);
-  const keys = parts.map(([key, n, label, tip]) => `<span class="split-key ${key}" tabindex="0"><span class="swatch ${key}"></span>
-      <span class="key-text"><b>${fmt.format(n)}</b> ${label}</span><span class="key-tip" role="tooltip">${tip}</span></span>`);
-  return `<div class="tile wide"><span class="tile-label">Colonnes catégorielles</span>
-    <span class="tile-value">${fmt.format(columns)}<small>· ${plural(idx.inline.values + idx.searched.values, "valeur")}</small></span>
-    <span class="tile-why">${columns ? "L'agent connaît leurs valeurs réelles : il filtre avec l'orthographe exacte de la base."
-      : "Aucune colonne catégorielle : l'agent ne connaît aucune valeur de la base."}</span>
-    ${columns ? `<div class="split" role="img" aria-label="${parts.map(([, n, label]) => `${fmt.format(n)} ${label}`).join(", ")}">${bar.join("")}</div>
-    <div class="split-keys">${keys.join("")}</div>` : ""}</div>`;
+  const bar = parts.map(([key, n]) => `<span class="${key}" style="width:${n / columns * 100}%"></span>`).join("");
+  const keys = parts.map(([key, n, values, where, why]) => `<span class="swatch ${key}"></span><b>${fmt.format(values)}</b>
+    <span>${where}, ${plural(n, "colonne")} ${why}</span>`).join("");
+  return `<div class="split" aria-hidden="true">${bar}</div><div class="split-keys">${keys}</div>`;
 }
 
-// What the agent receives: the documents and their joins, the columns hidden from it, the sample rows, the metrics
-// it checks at startup, then the categorical columns
-function indexTiles(idx) {
-  const raw = idx.raw.filter((t) => !leavingIndex(idx).includes(t)), m = idx.metrics, hidden = idx.hidden.length;
-  const rows = idx.sample_rows, now = idx.sample_rows_now;
-  const perDocument = rows ? `${fmt.format(rows)}<small>par fiche</small>` : "aucune";
-  return [
-    indexTile("Fiches", fmt.format(idx.documents), raw.length
-      ? `${names(raw)} sans description : la structure brute seulement. L'onglet Descriptions les décrit.`
-      : `Une par table, toutes décrites, ${idx.joins ? `reliées par ${plural(idx.joins, "jointure")}` : "sans jointure entre elles"}.`, raw.length ? "warn" : ""),
-    hidden
-      ? indexTile("Cachées à l'agent", `${fmt.format(hidden)}<small>sur ${plural(idx.shown + hidden, "colonne")}</small>`,
-        "Vides, techniques ou personnelles : hors des fiches et des exemples de lignes.")
-      : indexTile("Cachées à l'agent", "aucune", "L'agent voit toutes les colonnes : rien n'est caché."),
-    rows !== now
-      ? indexTile("Exemples de lignes", perDocument, `La configuration en demande ${now ? fmt.format(now) : "aucune"} : réindexer pour l'appliquer.`, "warn")
-      : indexTile("Exemples de lignes", perDocument,
-        rows ? "Envoyés au modèle sous la structure, colonnes cachées retirées." : "Aucune ligne de la base dans les fiches."),
-    m.errors.length
-      ? indexTile("Métriques", `${fmt.format(m.total - m.errors.length)}<small>valides sur ${fmt.format(m.total)}</small>`, "L'agent refusera de démarrer : "
-        + m.errors.map((e) => `<span class="mono">${esc(e.name)}</span> (${esc(inFrench(e.detail))})`).join(", ") + ".", "bad")
-      : indexTile("Métriques", m.total ? `${fmt.format(m.total)}<small>valides sur ${fmt.format(m.total)}</small>` : "aucune",
-        m.total ? "Leurs colonnes sont toutes dans les fiches : l'agent démarrera." : "Pas de métrique : rien à vérifier."),
-    valuesTile(idx),
-  ].join("");
+// What the agent reads, in two groups of three figures: the structure (the tables of its documents, their columns,
+// joins), then the data and the calculations (sample rows, values of the categorical columns, metrics). What to do
+// about them is said by the Mise en place
+function agentFigures(idx) {
+  const sc = idx.scope, m = idx.metrics, hidden = idx.hidden.length, d = idx.dropped, leaving = leavingIndex(idx);
+  const changed = idx.tables.filter((t) => t.status === "changed").length, missing = idx.tables.filter((t) => t.status === "missing").length;
+  const raw = idx.raw.filter((t) => !leaving.includes(t)), rows = idx.sample_rows, now = idx.sample_rows_now;
+  const tables = [
+    changed && `${plural(changed, "fiche")} ${changed > 1 ? "anciennes" : "ancienne"}`,
+    missing && `${fmt.format(missing)} à indexer`,
+    leaving.length && `${fmt.format(leaving.length)} à retirer`,
+    raw.length && `${fmt.format(raw.length)} sans description`,
+    sc.origin === "config" && "liste dans la configuration",
+  ].filter(Boolean);
+  const outside = sc.base == null ? null : sc.base - sc.tables;
+  const values = idx.inline.values + idx.searched.values, columns = idx.inline.columns + idx.searched.columns;
+  const figures = [
+    agentFigure({ value: fmt.format(idx.documents), label: idx.documents > 1 ? "tables" : "table",
+      note: tables.length ? tables.join(" · ")
+        : sc.origin === "all" || sc.origin === "none" ? "toutes, même les futures"
+        : outside ? `sur ${fmt.format(sc.base)} dans la base` : outside === 0 ? "toutes celles d'aujourd'hui" : "celles de la liste",
+      tone: tables.length ? "warn" : "",
+      issue: [...indexChanges(idx), raw.length && `${names(raw)} sans description : l'agent n'en a que la structure brute.`,
+        sc.origin === "config" && `Le périmètre est encore lu dans <span class="mono">include_tables</span> de la configuration.`].filter(Boolean).join(" "),
+      tip: "Une fiche par table du périmètre : sa description, ses colonnes, ses jointures." }),
+    agentFigure({ value: fmt.format(idx.shown), label: idx.shown > 1 ? "colonnes" : "colonne",
+      note: hidden ? `${fmt.format(hidden)} ${hidden > 1 ? "cachées" : "cachée"}` : "aucune cachée",
+      tip: "Les colonnes écrites dans les fiches. Une colonne vide, technique ou personnelle peut être cachée : "
+        + "l'agent ne la voit plus, ni dans les exemples de lignes." + (hidden ? ` Cachées : ${names(idx.hidden)}.` : "") }),
+    agentFigure({ value: fmt.format(idx.joins), label: idx.joins > 1 ? "jointures" : "jointure",
+      note: idx.joins ? "entre les tables" : "tables isolées",
+      tip: "Les jointures écrites dans les fiches : l'agent relie les tables par ces colonnes, sans les deviner." }),
+    agentFigure({ value: fmt.format(rows), label: rows > 1 ? "lignes d'exemple" : "ligne d'exemple",
+      note: rows !== now ? "à réappliquer" : rows ? "par fiche" : "aucune ligne de la base", tone: rows !== now ? "warn" : "",
+      issue: rows !== now ? `La configuration en demande ${now ? fmt.format(now) : "aucune"} par fiche : réindexer pour l'appliquer.` : "",
+      tip: "Des lignes réelles de chaque table sous sa structure, pour que le modèle voie à quoi ressemblent les données. "
+        + "Les colonnes cachées en sont retirées." }),
+    agentFigure({ value: fmt.format(values), label: values > 1 ? "valeurs connues" : "valeur connue",
+      note: d.length ? `${plural(d.length, "colonne")} sans valeurs` : columns ? `dans ${plural(columns, "colonne")}` : "aucune colonne catégorielle",
+      tone: d.length ? "warn" : "",
+      issue: d.length ? `${names(d)} ${d.length > 1 ? "sont vides ou trop variées" : "est vide ou trop variée"} : l'agent n'en connaît aucune valeur.` : "",
+      tip: "Les valeurs réelles des colonnes catégorielles : l'agent filtre avec l'orthographe exacte de la base.", extra: valuesSplit(idx) }),
+    agentFigure({ value: fmt.format(m.total), label: m.total > 1 ? "métriques" : "métrique",
+      note: m.errors.length ? `${fmt.format(m.errors.length)} refusée${m.errors.length > 1 ? "s" : ""}`
+        : m.total ? (m.total > 1 ? "toutes valides" : "valide") : "aucune écrite",
+      tone: m.errors.length ? "bad" : "",
+      issue: m.errors.length ? `L'agent ne démarrera pas : il refuse ${names(m.errors.map((e) => e.name))}.` : "",
+      tip: "Les calculs métier écrits une fois pour toutes. L'agent vérifie leurs colonnes à son démarrage." }),
+  ];
+  return [["Structure", figures.slice(0, 3)], ["Données et calculs", figures.slice(3)]];
 }
 
-// The tables the agent and the pipeline see, out of the ones of the database: the Périmètre opens from here
-function scopeTile(idx) {
-  const sc = idx.scope, outside = sc.base == null ? null : sc.base - sc.tables;
-  const every = sc.origin === "all" || sc.origin === "none";
-  const value = every ? `${fmt.format(sc.tables)}<small>toutes</small>`
-    : `${fmt.format(sc.tables)}<small>${sc.base == null ? (sc.tables > 1 ? "tables" : "table") : `sur ${fmt.format(sc.base)}`}</small>`;
-  const text = sc.origin === "none" ? "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront."
-    : sc.origin === "all" ? "Toutes les tables de la base, celles qui y arriveront aussi."
-    : sc.origin === "config" ? `Encore lu dans <span class="mono">include_tables</span> de la configuration : enregistre-le dans le studio.`
-    : outside == null ? "Les tables de la liste, que l'agent et le pipeline voient."
-    : outside ? `Les tables de la liste : ${plural(outside, "autre")} de la base ${outside > 1 ? "restent" : "reste"} dehors, et celles qui y arriveront aussi.`
-    : "Les tables de la liste, toutes celles de la base aujourd'hui : une table qui y arrivera restera dehors.";
-  return `<div class="tile scope${sc.origin === "config" ? " warn" : ""}">
-    <div class="scope-figure"><span class="tile-label">Tables lues</span><span class="tile-value">${value}</span></div>
-    <div class="scope-body"><span>${text}</span></div>
-    <button class="btn ghost small" type="button" data-setup="scope">${sc.origin === "none" ? "Choisir le périmètre" : "Voir les tables"} →</button></div>`;
-}
-
-// The last eval: its score in large, a meter of the exact answers (grey when it measured an older index), the dashboard of the database
-function evalTile(idx) {
+// The last eval: the share of exact answers, one box per scored question (green exact, red wrong), the day it was
+// measured. Whether it still measures this index is said by the Mise en place
+function evalPanel(idx, db) {
+  const head = (extra) => `<div class="detail-head"><h2>Évaluation</h2>${extra}</div>`;
   if (!idx.dataset) {
-    return indexTile("Questions", "aucune", `Pas de questions pour cette base : <span class="mono">offline/eval/datasets/${esc(ui.db.toLowerCase())}.yaml</span>.`);
+    return `<section class="panel eval-panel">${head("")}<p class="panel-text">Pas de questions pour cette base : `
+      + `<span class="mono">offline/eval/datasets/${esc(db.toLowerCase())}.yaml</span>.</p></section>`;
   }
   const e = idx.eval;
-  if (!e) return indexTile("Dernière mesure", "—", "Jamais évaluée : « Évaluer l'agent » lui pose les questions de la base.");
-  const built = idx.built_at ?? idx.values_at, before = built != null && e.at < built;
-  const rate = e.scored ? e.exact / e.scored : null;
-  const text = `${fmt.format(e.exact)} réponses exactes sur ${fmt.format(e.scored)} comparées aux lignes attendues`
-    + (e.questions > e.scored ? ` (${fmt.format(e.questions)} questions)` : "");
-  return `<div class="tile eval${before ? " warn" : ""}">
-    <div class="eval-score"><span class="tile-label">Dernière mesure</span>
-      <span class="hero">${rate == null ? "—" : `${fmt.format(Math.round(rate * 100))}<small>%</small>`}</span><span class="hero-unit">résultats exacts</span></div>
-    <div class="eval-body"><div class="meter${before ? " stale" : ""}" aria-hidden="true"><span style="width:${(rate ?? 0) * 100}%"></span></div>
-      <span>${text}</span><span class="tile-foot">Mesurée le ${when(e.at)}${before ? " · avant cet index : à refaire" : ""}</span></div>
-    <a class="btn ghost small" href="/eval/${encodeURIComponent(ui.db)}" target="_blank" rel="noopener">Ouvrir le tableau ↗</a></div>`;
+  if (!e) return `<section class="panel eval-panel">${head(`<span class="muted-text">${plural(idx.questions, "question")}</span>`)}<p class="panel-text">Jamais évaluée.</p></section>`;
+  const wrong = e.scored - e.exact, unscored = e.questions - e.scored;
+  const count = unscored ? `<span class="muted-text" title="${plural(unscored, "question")} sans lignes attendues : l'agent y répond, rien ne le note.">`
+    + `${plural(e.questions, "question")}, ${fmt.format(e.scored)} notée${e.scored > 1 ? "s" : ""}</span>` : `<span class="muted-text">${plural(e.questions, "question")}</span>`;
+  const link = `<span class="grow"></span><a class="btn ghost small" href="/eval/${encodeURIComponent(db)}" target="_blank" rel="noopener">Ouvrir le tableau ↗</a>`;
+  // one box per question while they stay wider than a few pixels, else one bar in two parts
+  const boxes = e.scored <= 60
+    ? `<div class="eval-boxes">${'<span class="exact"></span>'.repeat(e.exact)}${'<span class="wrong"></span>'.repeat(wrong)}</div>`
+    : `<div class="eval-boxes bar"><span class="exact" style="flex:${e.exact}"></span>${wrong ? `<span class="wrong" style="flex:${wrong}"></span>` : ""}</div>`;
+  const key = (cls, n, word) => `<span class="eval-key"><span class="swatch ${cls}"></span><b>${fmt.format(n)}</b> ${word}${n > 1 ? "s" : ""}</span>`;
+  return `<section class="panel eval-panel">${head(count + link)}
+    <div class="eval-body"><div class="eval-score"><span class="score">${e.scored ? `${fmt.format(Math.round(e.exact / e.scored * 100))}<small>%</small>` : "—"}</span>
+      <span>réponses exactes</span></div>
+      <div class="eval-detail">${e.scored ? `<div role="img" aria-label="${fmt.format(e.exact)} exactes, ${fmt.format(wrong)} fausses">${boxes}</div>` : ""}
+        <div class="eval-keys">${e.scored ? key("exact", e.exact, "exacte") + (wrong ? key("wrong", wrong, "fausse") : "") : "<span>Aucune question notée</span>"}
+          <span class="eval-when">Mesurée le ${when(e.at)}</span></div></div></div></section>`;
 }
 
-// The Vue d'ensemble: what the agent reads of the database and its last eval, its setup on the side. The Fiches:
-// the document of the table chosen
+// The Vue d'ensemble: what the agent reads, its last eval, the setup on the side (the one place that says what to do).
+// The Fiches: the document of the table chosen
 function renderIndex(el, message) {
   const idx = ui.idx;
   if (!idx) { el.innerHTML = '<p class="placeholder">Lecture de l\'index…</p>'; return; }
@@ -2478,40 +2705,48 @@ function renderIndex(el, message) {
     else el.innerHTML = '<p class="placeholder">Choisis une table pour voir sa fiche, telle que l\'agent la lit.</p>';
     return;
   }
-  const figures = idx.trace ? `${plural(idx.documents, "fiche")} · ${plural(idx.inline.values + idx.searched.values, "valeur")}`
-    : idx.values_at ? `index du ${when(idx.values_at)}` : "jamais indexée";
+  const read = idx.trace ? `<div class="agent-groups">${agentFigures(idx).map(([title, figures]) => `<div class="agent-group">
+      <h3>${title}</h3><div class="agent-figures">${figures.join("")}</div></div>`).join("")}</div>`
+    : `<p class="panel-text">${idx.values_at ? `Index du ${when(idx.values_at)}, construit avant que le studio en garde la trace : `
+      + "ses chiffres viendront à la prochaine indexation." : "Pas encore indexée : l'agent ne voit aucune table de cette base."}</p>`;
   el.innerHTML = `<div class="overview">
-    <section class="panel overview-main">
-      <div class="detail-head"><h2>Ce que l'agent lit</h2><span class="figures">${figures}</span></div>
-      ${message ? `<p class="note error">${esc(message)}</p>` : ""}${baseVerdict(idx, ui.data?.db === ui.db ? ui.data.summary : null, ui.db)}
-      <div class="dash"><section><h3 class="dash-title">Périmètre</h3>${scopeTile(idx)}</section>
-        ${idx.trace ? `<section><h3 class="dash-title">Ce que l'agent reçoit</h3><div class="tiles">${indexTiles(idx)}</div></section>` : ""}
-        <section><h3 class="dash-title">Évaluation</h3>${evalTile(idx)}</section></div>
-    </section>
+    <div class="overview-main">
+      <section class="panel agent-panel">
+        <div class="detail-head"><h2>Ce que l'agent lit</h2><span class="grow"></span>
+          ${idx.trace ? '<button class="btn ghost small" type="button" data-setup="documents">Lire les fiches →</button>' : ""}</div>
+        ${message ? `<p class="note error">${esc(message)}</p>` : ""}${read}
+      </section>
+      ${evalPanel(idx, ui.db)}
+    </div>
     <aside class="panel setup">${setupCard()}</aside>
   </div>`;
   el.querySelectorAll("[data-setup]").forEach((button) => { button.onclick = () => setupGo(button.dataset.setup); });
   $("setup-wizard")?.addEventListener("click", () => openWizard());
 }
 
-// The setup of the database on its Vue d'ensemble: each step done or not, opening its tab; the guided setup
+// The setup of the database on its Vue d'ensemble: each step on a line, opening its tab (the index: the Fiches); the
+// step to do now open in place, with why and the button that does it (the index and the eval too); the guided setup
 function setupCard() {
   if (ui.data?.db !== ui.db || !ui.idx) return '<p class="placeholder">Lecture des étapes…</p>';
-  const steps = pipelineSteps({ summary: ui.data.summary, index: ui.idx }), done = steps.filter((p) => p.state === "done").length;
-  const need = indexNeed(ui.idx);
-  const row = (p) => `<li><button type="button" class="setup-step" data-setup="${p.key}">
-      <span class="dot ${p.state}">${p.state === "done" ? CHECK : p.state === "bad" ? BANG : ""}</span>
-      <span class="setup-name">${STAGES[p.key]}<small class="${p.state}">${esc(p.tip)}</small></span>
-      <span class="setup-go">${p.key !== "index" ? "→" : need === "reindex" ? "Réindexer →" : need === "eval" ? "Évaluer →" : ""}</span></button></li>`;
-  return `<div class="setup-head"><h2>Mise en place</h2><span class="muted-text">${fmt.format(done)} ${done > 1 ? "étapes" : "étape"} sur ${steps.length}</span></div>
-    <p class="setup-text">Ce qui prépare la base pour l'agent. Chaque étape s'ouvre dans son onglet.</p>
+  const base = { summary: ui.data.summary, index: ui.idx }, steps = pipelineSteps(base), next = nextStep(base, steps);
+  const done = steps.filter((p) => p.state === "done").length;
+  const dot = (p) => `<span class="dot ${p.state}">${p.state === "done" ? CHECK : p.state === "bad" ? BANG : ""}</span>`;
+  const count = (p) => `<span class="setup-count ${p.state}">${esc(p.count)}</span>`;
+  const row = (p) => (p.key === next?.key
+    ? `<li class="setup-open"><div class="setup-line">${dot(p)}<span class="setup-name">${STAGES[p.key]}</span>${count(p)}</div>
+        <p>${next.detail}</p><button class="btn primary" type="button" data-setup="${p.key}">${next.label} →</button></li>`
+    : `<li><button type="button" class="setup-step" data-setup="${p.key === "index" ? "documents" : p.key}" title="${esc(p.tip)}">${dot(p)}
+        <span class="setup-name">${STAGES[p.key]}</span>${count(p)}<span class="setup-go">→</span></button></li>`);
+  return `<div class="setup-head"><h2 title="Ce qui prépare la base pour l'agent. Chaque étape s'ouvre dans son onglet.">Mise en place</h2>
+      <span class="muted-text">${fmt.format(done)} sur ${fmt.format(steps.length)}</span></div>
     <ol class="setup-steps">${steps.map(row).join("")}</ol>
-    <div class="setup-foot"><button class="btn" type="button" id="setup-wizard">Lancer la mise en place guidée</button>
-      <span>Repasse les étapes une à une, à partir de la première qui n'est pas finie.</span></div>`;
+    <div class="setup-foot"><button class="btn" type="button" id="setup-wizard"
+      title="Repasse les étapes une à une, à partir de la première qui n'est pas finie.">Lancer la mise en place guidée</button></div>`;
 }
 
-// A step of the setup: its tab; the index and the eval are done from here
+// A step of the setup: its tab, the documents in the Fiches; the index and the eval are done from here
 function setupGo(key) {
+  if (key === "documents") { goTo("index"); return; }
   if (key !== "index") { goTo(key); return; }
   const need = indexNeed(ui.idx);
   if (need === "reindex") runJob("index/run", {});
@@ -2646,8 +2881,7 @@ function documentText(d) {
     if (line.startsWith("*/")) note = false;
     return out;
   });
-  return `<p class="doc-text-note">Le texte que l'agent reçoit pour cette table, tel que l'index l'a écrit. `
-    + `Les données sont masquées : le studio ne montre jamais une valeur.</p>`
+  return `<p class="doc-text-note">Le texte que l'agent reçoit pour cette table, tel que l'index l'a écrit.</p>`
     + `<div class="code-block"><pre class="sql doc-text">${lines.join("\n")}</pre>`
     + `<button type="button" class="copy-btn" id="doc-copy" title="Copier le texte" aria-label="Copier le texte">${COPY_ICON}</button></div>`
     + documentFoot(d.columns);
@@ -2674,7 +2908,7 @@ const DIALECTS = { hive: "Hive", impala: "Impala", sqlite: "SQLite", postgresql:
 const CHECK = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2l2.3 2.3 4.7-4.9"/></svg>';
 const BANG = '<svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.8v4"/><circle cx="6" cy="9.2" r="1"/></svg>';
 // The steps of the setup of a database, by the name of what they make
-const STAGES = { scope: "Périmètre", profile: "Contenu", semantics: "Descriptions", relations: "Relations", metrics: "Métriques", index: "Index et évaluation" };
+const STAGES = { scope: "Périmètre", profile: "Profilage", semantics: "Descriptions", relations: "Jointures", metrics: "Métriques", index: "Index et évaluation" };
 
 // What the index of a database needs: "reindex" (never built, built before its trace, files changed since), "eval"
 // (no score of this index while there are questions), or nothing
@@ -2694,6 +2928,7 @@ function baseVerdict(idx, s, db) {
 }
 
 function openHome() {
+  if (ui.draft) { leaveDraft(openHome); return; }
   if (ui.wizard) leaveWizard();
   ui.home = true;
   document.body.dataset.view = "home";
@@ -2724,7 +2959,7 @@ async function loadHome() {
 
 function renderHome() {
   const bases = ui.overview || [];
-  $("bases-count").textContent = `${fmt.format(bases.length)} · lues dans les fichiers du studio, sans interroger les bases`;
+  $("bases-count").textContent = fmt.format(bases.length);
   $("bases").innerHTML = bases.map(baseCard).join("") || '<p class="placeholder">Aucune base dans la configuration.</p>';
 }
 
@@ -2749,7 +2984,7 @@ function pipelineSteps(base) {
       tip: `${fmt.format(s.described)} tables décrites sur ${fmt.format(s.tables)}`
         + (s.rewritten ? `, ${fmt.format(s.rewritten)} à relire` : "") + (s.partial ? `, ${fmt.format(s.partial)} à compléter` : "") },
     { key: "relations", state: s.relations || s.tables < 2 ? "done" : "todo", count: s.relations ? fmt.format(s.relations) : "—",
-      tip: s.relations ? `${plural(s.relations, "relation")}${s.isolated ? `, ${plural(s.isolated, "table")} sans relation` : ""}` : "Pas encore cherchées" },
+      tip: s.relations ? `${plural(s.relations, "jointure")}${s.isolated ? `, ${plural(s.isolated, "table")} sans jointure` : ""}` : "Pas encore cherchées" },
     { key: "metrics", state: errors.length ? "bad" : s.metrics ? "done" : "todo",
       count: errors.length ? `${fmt.format(errors.length)} refusée${errors.length > 1 ? "s" : ""}` : s.metrics ? fmt.format(s.metrics) : "—",
       tip: errors.length ? `L'agent refuse ${names(errors.map((m) => m.name)).replace(/<[^>]+>/g, "")}`
@@ -2763,49 +2998,67 @@ function pipelineSteps(base) {
   ];
 }
 
-// The first step of the setup that is not done, in words, and the button that does it on this database: its tab, or
-// the guided setup while the database is being prepared (never indexed)
+// The step of the setup to do now: the first one that stops the agent, else the first one not done. What to do and why,
+// short for a card of the home (title, why) and in a sentence for the Mise en place (detail), and the button that does
+// it (label; action for the index and the eval); null when everything is done
 function nextStep(base, steps) {
-  const s = base.summary, idx = base.index, step = steps.find((p) => p.state !== "done");
-  const go = (key, label, action = "") => `<button class="btn primary" type="button" data-step="${key}"${action ? ` data-action="${action}"` : ""}>${label} →</button>`;
-  const say = (title, why) => `<span class="lead">Prochaine étape · </span><b>${title}</b> : ${why}`;
-  const open = '<button class="btn" type="button" data-step="overview">Ouvrir la base</button>';
-  if (!step) return { text: "<b>Tout est à jour</b> : l'agent lit la dernière version de chaque fiche, et son score la mesure.", buttons: open };
-  const preparing = !idx.trace && !idx.values_at;
-  const tab = (key, label) => open + (preparing
-    ? `<button class="btn primary" type="button" data-wizard="1">${steps[0].state === "todo" ? "Lancer" : "Reprendre"} la mise en place →</button>`
-    : go(key, label));
+  const s = base.summary, idx = base.index;
+  const step = steps.find((p) => p.state === "bad") || steps.find((p) => p.state !== "done");
+  if (!step) return null;
+  const next = (title, why, label, { action = "", detail = `${title} : ${why}` } = {}) => ({ key: step.key, title, why, detail, label, action });
   if (step.key === "scope") {
-    return { text: idx.scope.origin === "config" ? say("Enregistrer le périmètre", "il est encore lu dans la configuration.")
-      : say("Choisir le périmètre", "toutes les tables, celles qui arriveront aussi, ou une liste."), buttons: tab("scope", "Ouvrir le périmètre") };
+    return idx.scope.origin === "config"
+      ? next("Enregistrer le périmètre", "il est encore lu dans la configuration.", "Ouvrir le périmètre",
+        { detail: `La liste des tables est encore lue dans <span class="mono">include_tables</span> de la configuration : enregistre-la dans le studio.` })
+      : next("Choisir le périmètre", "toutes les tables, celles qui arriveront aussi, ou une liste.", "Ouvrir le périmètre",
+        { detail: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, celles qui y arriveront aussi." });
   }
   if (step.key === "profile") {
-    return { text: say(`Profiler ${plural(s.tables - s.profiled, "table")}`, "le studio ne sait pas encore ce qu'elles contiennent."),
-      buttons: tab("profile", "Ouvrir le contenu") };
+    return next(`Profiler ${plural(s.tables - s.profiled, "table")}`, "le studio ne sait pas encore ce qu'elles contiennent.", "Ouvrir le profilage");
   }
   if (step.key === "semantics") {
     const undescribed = s.tables - s.described;
-    const text = undescribed ? say(`Décrire ${plural(undescribed, "table")}`, "l'agent n'en aurait que la structure brute.")
-      : s.rewritten ? say(`Relire ${plural(s.rewritten, "table")}`, "l'IA a réécrit des descriptions.")
-      : say(`Compléter ${plural(s.partial, "table")}`, "des colonnes sont arrivées depuis leur description.");
-    return { text, buttons: tab("semantics", "Ouvrir les descriptions") };
+    return undescribed ? next(`Décrire ${plural(undescribed, "table")}`, "l'agent n'en aurait que la structure brute.", "Ouvrir les descriptions")
+      : s.rewritten ? next(`Relire ${plural(s.rewritten, "table")}`, "l'IA a réécrit des descriptions.", "Ouvrir les descriptions")
+      : next(`Compléter ${plural(s.partial, "table")}`, "des colonnes sont arrivées depuis leur description.", "Ouvrir les descriptions");
   }
-  if (step.key === "relations") {
-    return { text: say("Chercher les relations", "l'agent ne sait pas encore passer d'une table à l'autre."), buttons: tab("relations", "Ouvrir les relations") };
-  }
+  if (step.key === "relations") return next("Chercher les jointures", "l'agent ne sait pas encore passer d'une table à l'autre.", "Ouvrir les jointures");
   if (step.key === "metrics") {
     const errors = idx.metrics?.errors || [];
-    return { text: errors.length ? say(`Corriger ${names(errors.map((m) => m.name))}`, "l'agent refuse de démarrer tant qu'elle lit une colonne absente des fiches.")
-      : say("Proposer des métriques", "sans elles, l'agent refait ses calculs à chaque question."), buttons: tab("metrics", "Ouvrir les métriques") };
+    return errors.length
+      ? next(`Corriger ${names(errors.map((m) => m.name))}`, "l'agent refuse de démarrer tant qu'elle lit une colonne absente des fiches.", "Ouvrir les métriques",
+        { detail: `L'agent ne démarrera pas : il refuse ${errors.map((e) => `<span class="mono">${esc(e.name)}</span> (${esc(inFrench(e.detail))})`).join(", ")}.` })
+      : next("Proposer des métriques", "sans elles, l'agent refait ses calculs à chaque question.", "Ouvrir les métriques");
   }
-  if (preparing) return { text: say("Indexer la base", "l'agent ne la voit pas encore."), buttons: tab("overview", "") };
-  const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + leavingIndex(idx).length : 0;
+  if (!idx.trace && !idx.values_at) return next("Indexer la base", "l'agent ne la voit pas encore.", "Indexer", { action: "reindex" });
   if (indexNeed(idx) === "reindex") {
-    return { text: say("Réindexer", toIndex ? `${plural(toIndex, "fiche")} à mettre à jour : l'agent lit encore l'ancienne version.`
-      : "pour voir ce que l'agent lit, table par table."), buttons: open + go("overview", "Réindexer", "reindex") };
+    const toIndex = idx.trace ? idx.counts.changed + idx.counts.missing + leavingIndex(idx).length : 0;
+    return next("Réindexer", toIndex ? `${plural(toIndex, "fiche")} à mettre à jour : l'agent lit encore l'ancienne version.`
+      : "pour voir ce que l'agent lit, table par table.", "Réindexer", {
+      action: "reindex",
+      detail: toIndex ? indexChanges(idx).join(" ")
+        : "L'index a été construit avant que le studio en garde la trace : réindexe une fois pour voir ce que l'agent lit, table par table.",
+    });
   }
-  return { text: say("Évaluer l'agent", idx.eval ? "son score date d'avant l'index." : "il n'a jamais été évalué."),
-    buttons: open + go("overview", "Évaluer l'agent", "eval") };
+  const e = idx.eval;
+  return next("Évaluer l'agent", e ? "son score date d'avant l'index." : "il n'a jamais été évalué.", "Évaluer l'agent", {
+    action: "eval",
+    detail: !e ? "L'agent n'a jamais été évalué : l'évaluation lui pose les questions de la base."
+      : `${e.scored ? `Le score de ${pct(e.exact / e.scored)}` : "La dernière évaluation"} date d'avant l'index du ${when(idx.built_at ?? idx.values_at)} : `
+        + "relance l'évaluation pour le confirmer.",
+  });
+}
+
+// The next step on a card of the home, in words, then the base to open and the button that does it: its tab, the index
+// or the eval on the Vue d'ensemble, or the guided setup while the database is being prepared (never indexed)
+function nextBlock(base, steps) {
+  const idx = base.index, next = nextStep(base, steps);
+  const open = '<button class="btn" type="button" data-step="overview">Ouvrir la base</button>';
+  if (!next) return `<p><b>Tout est à jour</b> : l'agent lit la dernière version de chaque fiche, et son score la mesure.</p>${open}`;
+  const button = !idx.trace && !idx.values_at
+    ? `<button class="btn primary" type="button" data-wizard="1">${steps[0].state === "todo" ? "Lancer" : "Reprendre"} la mise en place →</button>`
+    : `<button class="btn primary" type="button" data-step="${next.action ? "overview" : next.key}"${next.action ? ` data-action="${next.action}"` : ""}>${next.label} →</button>`;
+  return `<p><span class="lead">Prochaine étape · </span><b>${next.title}</b> : ${next.why}</p>${open}${button}`;
 }
 
 // The score of the last eval in large, or why there is none
@@ -2827,7 +3080,7 @@ function minis(base) {
     return [
       mini(fmt.format(s.profiled), many(s.profiled, "table profilée", "tables profilées")),
       mini(`${fmt.format(s.described)}<small>sur ${fmt.format(s.tables)}</small>`, many(s.described, "table décrite", "tables décrites")),
-      mini(s.relations ? fmt.format(s.relations) : "aucune", many(s.relations, "relation", "relations")),
+      mini(s.relations ? fmt.format(s.relations) : "aucune", many(s.relations, "jointure", "jointures")),
       mini(s.metrics ? fmt.format(s.metrics) : "aucune", many(s.metrics, "métrique", "métriques")),
     ];
   }
@@ -2850,7 +3103,7 @@ const pipeStep = (p) => `<li><button type="button" data-step="${p.key === "index
     <span class="pipe-name">${p.key === "index" ? "Index" : STAGES[p.key]}</span><span class="pipe-count ${p.state}">${p.count}</span></button></li>`;
 
 function baseCard(base) {
-  const idx = base.index, s = base.summary, steps = pipelineSteps(base), next = nextStep(base, steps);
+  const idx = base.index, s = base.summary, steps = pipelineSteps(base);
   const indexed = idx.trace ? `indexée le ${when(idx.built_at)}` : idx.values_at ? `index du ${when(idx.values_at)}` : "jamais indexée";
   const verdict = baseVerdict(idx, s, base.name);
   return `<article class="base" data-db="${esc(base.name)}">
@@ -2859,7 +3112,7 @@ function baseCard(base) {
     ${verdict}
     <div class="base-figures">${scoreBlock(idx)}<div class="minis">${minis(base).join("")}</div></div>
     <div class="pipeline"><span class="pipeline-title">Pipeline</span><ol class="pipe">${steps.map(pipeStep).join("")}</ol></div>
-    <div class="base-next"><p>${next.text}</p>${next.buttons}</div>
+    <div class="base-next">${nextBlock(base, steps)}</div>
   </article>`;
 }
 
@@ -2906,7 +3159,7 @@ async function runSearch(query) {
   const more = found.total - found.results.length;
   box.hidden = false;
   box.innerHTML = !found.total ? `<div class="results-head">Aucune table ni colonne ne parle de « ${esc(query.trim())} ».</div>`
-    : `<div class="results-head">${plural(found.total, "résultat")} dans ${plural(found.bases, "base")} · noms et descriptions, jamais les valeurs</div>`
+    : `<div class="results-head">${plural(found.total, "résultat")} dans ${plural(found.bases, "base")}</div>`
       + found.results.map(resultRow).join("")
       + (more ? `<div class="results-more">et ${plural(more, "autre")} : précise la recherche pour les voir</div>` : "");
 }
@@ -2930,7 +3183,7 @@ const GUIDE = {
   profile: { title: "Profiler les tables", text: STEPS.profile.text },
   semantics: { title: "Décrire les tables", text: "L'agent choisit ses tables et écrit ses requêtes à partir de ces descriptions. L'IA les rédige à partir de la structure des tables et de leur profil ; tu pourras les relire et les corriger ensuite dans l'onglet Descriptions." },
   relations: { title: "Relier les tables", text: STEPS.relations.text },
-  metrics: { title: "Proposer des métriques", text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose et chacune est testée sur les données, sans jamais en montrer le résultat. Une base peut s'en passer : l'agent calcule alors lui-même." },
+  metrics: { title: "Proposer des métriques", text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose et chacune est testée sur les données. Une base peut s'en passer : l'agent calcule alors lui-même." },
   index: { title: "Indexer et évaluer", text: "L'index écrit la fiche de chaque table, ce que l'agent lit vraiment, et les valeurs des colonnes catégorielles lues dans la base. L'évaluation pose ensuite les questions de test à l'agent et compare ses réponses aux lignes attendues." },
 };
 const GUIDE_STEPS = ["scope", "profile", "semantics", "relations", "metrics", "index"];
@@ -3014,7 +3267,7 @@ function guideStep(key, base, p) {
   } else if (key === "profile") {
     const missing = rows.filter((t) => t.status.profile === "none"), n = missing.length;
     body = progress(s.profiled, s.tables, "tables profilées") + done
-      + (n ? `<div class="guide-action">${action(n > 1 ? `Profiler les ${fmt.format(n)} manquantes` : "Profiler la manquante", "profile", "Des comptes seulement, jamais une valeur.")}</div>` : "")
+      + (n ? `<div class="guide-action">${action(n > 1 ? `Profiler les ${fmt.format(n)} manquantes` : "Profiler la manquante", "profile")}</div>` : "")
       + list("À profiler", missing.map((t) => ({ name: t.name, size: size(t), pill: '<span class="pill todo">à profiler</span>' })));
   } else if (key === "semantics") {
     const todo = rows.filter((t) => t.status.semantics !== "done"), n = undescribed(s);
@@ -3027,8 +3280,8 @@ function guideStep(key, base, p) {
   } else if (key === "relations") {
     const isolated = rows.filter((t) => t.status.relations !== "done");
     body = progress(s.tables - s.isolated, s.tables, "tables reliées") + done
-      + `<div class="guide-action">${action("Chercher les relations", "relations", "L'IA propose les liens, chacun est mesuré sur les données.", p.state !== "done")}</div>`
-      + list("Sans relation", isolated.map((t) => ({ name: t.name, size: size(t), pill: '<span class="pill decide">isolée</span>' })));
+      + `<div class="guide-action">${action("Chercher les jointures", "relations", "L'IA propose les jointures, chacune est mesurée sur les données.", p.state !== "done")}</div>`
+      + list("Sans jointure", isolated.map((t) => ({ name: t.name, size: size(t), pill: '<span class="pill decide">isolée</span>' })));
   } else if (key === "metrics") {
     const errors = idx.metrics?.errors || [];
     body = `<div class="guide-progress"><div class="guide-count"><span>${s.metrics ? `<b>${plural(s.metrics, "métrique")}</b> dans metrics.yaml` : "Aucune métrique pour l'instant"}</span></div></div>` + done
@@ -3082,6 +3335,8 @@ function runGuide(job) {
 // ── Jobs ─────────────────────────────────────────────────
 
 async function runJob(step, request) {
+  // a job reads or rewrites the files a draft would change: the draft is saved or dropped first
+  if (ui.draft) { leaveDraft(() => runJob(step, request)); return; }
   try {
     setJob(await api(`/api/db/${encodeURIComponent(ui.db)}/${step}`, { method: "POST", body: request }));
   } catch (e) {
@@ -3319,10 +3574,10 @@ function semanticsJobTitle(job, now) {
 // A relations run: the measured ones, the LLM (phase llm), then the relations without evidence checked on the data
 // (phase check, out of to_check); --check: only that. Done: what the search added, what the check found weak
 function relationsJobTitle(job, now) {
-  const checkOnly = job.command.includes("--check"), n = job.checked, checked = `${plural(n, "relation")} ${n > 1 ? "vérifiées" : "vérifiée"}`;
-  const what = checkOnly ? "Vérification des relations" : "Recherche des relations";
+  const checkOnly = job.command.includes("--check"), n = job.checked, checked = `${plural(n, "jointure")} ${n > 1 ? "vérifiées" : "vérifiée"}`;
+  const what = checkOnly ? "Vérification des jointures" : "Recherche des jointures";
   if (job.running && job.stopped) return [`Arrêt en cours… ${duration(now - job.stopped_at)}`, "running"];
-  if (job.running && job.phase === "llm") return [`L'IA cherche des liens entre les tables… ${duration(now - job.started)}`, "running"];
+  if (job.running && job.phase === "llm") return [`L'IA cherche des jointures entre les tables… ${duration(now - job.started)}`, "running"];
   if (job.running && job.to_check) {
     return [`Vérification sur les données · ${fmt.format(n)}/${fmt.format(job.to_check)} · ${duration(now - job.started)}`, "running"];
   }
@@ -3332,7 +3587,7 @@ function relationsJobTitle(job, now) {
   const rel = job.db === ui.db ? ui.rel : null;
   if (checkOnly) return [`Vérification terminée · ${checked}${rel?.weak ? ` · ${fmt.format(rel.weak)} à vérifier` : ""}`, ""];
   const added = job.added ?? 0;
-  const found = added > 1 ? `${fmt.format(added)} nouvelles relations` : added ? "1 nouvelle relation" : "aucune nouvelle relation";
+  const found = added > 1 ? `${fmt.format(added)} nouvelles jointures` : added ? "1 nouvelle jointure" : "aucune nouvelle jointure";
   return [`Recherche terminée · ${found}${rel ? ` · ${fmt.format(rel.relations.length)} au total` : ""}`, ""];
 }
 

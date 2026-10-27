@@ -488,38 +488,44 @@ def test_a_description_edited_from_the_page(client, tmp_path):
     detail = client.get("/api/db/awb/tables/dossier/semantics").json()
     assert detail["described"] and detail["description"] == "Dossiers"
 
-    edit = lambda field, value, column=None: client.post(  # noqa: E731
-        "/api/db/awb/tables/dossier/semantics",
-        json={"field": field, "value": value, "column": column, "version": detail["version"]})
-    detail = edit("column", "Date de déblocage du prêt.", "date_deblocage").json()
-    detail = edit("categorical", True, "date_deblocage").json()
+    edit = lambda *changes: client.post(  # noqa: E731
+        "/api/db/awb/tables/dossier/semantics", json={"changes": list(changes), "version": detail["version"]})
+    # the draft of the card written at once: a column described and made categorical
+    detail = edit({"field": "column", "column": "date_deblocage", "value": "Date de déblocage du prêt."},
+                  {"field": "categorical", "column": "date_deblocage", "value": True}).json()
     written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())
     assert written["dossier"]["columns"] == {"date_deblocage": "Date de déblocage du prêt."}
     assert written["dossier"]["categorical_columns"] == ["date_deblocage"]
-    assert edit("column", "x", "inconnue").status_code == 400
+    # one change refused: nothing of the draft is written
+    assert edit({"field": "description", "value": "Les dossiers de prêt."},
+                {"field": "column", "column": "inconnue", "value": "x"}).status_code == 400
+    assert yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]["description"] == "Dossiers"
 
 
 def test_the_type_and_the_date_chosen_in_the_contenu_card(client, tmp_path):
     detail = client.get("/api/db/awb/tables/dossier").json()
     assert detail["table_type"]["edited"] is False and detail["data_as_of"] == ""
 
-    choose = lambda field, value: client.post("/api/db/awb/tables/dossier/properties",  # noqa: E731
-                                              json={"field": field, "value": value, "version": detail["version"]})
-    detail = choose("table_type", "events").json()
+    choose = lambda **fields: client.post("/api/db/awb/tables/dossier/properties",  # noqa: E731
+                                          json={**fields, "version": detail["version"]})
+    # the type and the date of the draft written at once
+    detail = choose(table_type="events", data_as_of="2026-06-30").json()
     assert (detail["table_type"]["type"], detail["table_type"]["edited"]) == ("events", True)
-    detail = choose("data_as_of", "2026-06-30").json()
     assert detail["data_as_of"] == "2026-06-30"
     written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]
     assert (written["table_type"], str(written["data_as_of"])) == ("events", "2026-06-30")
-    assert choose("data_as_of", "demain").status_code == 400
-    assert choose("table_type", "fact").status_code == 400
+    assert choose(data_as_of="demain").status_code == 400
+    # a type refused leaves the date of the same draft out
+    assert choose(table_type="fact", data_as_of="2026-07-31").status_code == 400
+    assert str(yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]["data_as_of"]) == "2026-06-30"
 
 
 def test_a_read_mode_chosen_from_the_page(client, tmp_path):
     detail = client.get("/api/db/awb/tables/dossier").json()   # the Contenu card
     assert detail["reading"]["mode"] is None and detail["reading"]["unread"]   # a profile older than the partitions
 
-    choose = lambda **body: client.post("/api/db/awb/tables/dossier/read-mode", json={**body, "version": detail["version"]})  # noqa: E731
+    choose = lambda **mode: client.post("/api/db/awb/tables/dossier/properties",  # noqa: E731
+                                        json={"read_mode": mode, "version": detail["version"]})
     detail = choose(mode="live", key_columns=["id_dossier"], version_column="date_cloture").json()
     assert detail["reading"]["mode"] == "live" and detail["reading"]["problems"] == []
     written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())

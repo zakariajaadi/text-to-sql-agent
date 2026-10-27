@@ -203,8 +203,8 @@ def ignore_relation(entry: dict, source: str, target: str, ignore: bool = True) 
     take, put = ("relations", "ignore") if ignore else ("ignore", "relations")
     moved = [r for r in entry[take] if (r["from"], r["to"]) == (source, target)]
     if not moved:
-        where = "dans les relations" if ignore else "parmi les relations retirées"
-        raise ValueError(f"Pas de relation {source} → {target} {where}")
+        where = "dans les jointures" if ignore else "parmi les jointures retirées"
+        raise ValueError(f"Pas de jointure {source} → {target} {where}")
     entry[take] = [r for r in entry[take] if (r["from"], r["to"]) != (source, target)]
     entry[put].extend(moved)
     return entry

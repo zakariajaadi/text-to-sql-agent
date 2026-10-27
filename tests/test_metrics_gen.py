@@ -2,7 +2,9 @@
 
 import pytest
 
-from offline.semantic_gen.utils import skip_reason
+import yaml
+
+from offline.semantic_gen.utils import dump_metrics, skip_reason
 
 KNOWN   = {"revenue": {"expr": "SUM(invoice_line.unitprice * invoice_line.quantity)"}}
 IGNORED = ["order_count"]
@@ -31,3 +33,9 @@ IGNORED = ["order_count"]
 ])
 def test_skip_reason(name, expr, skipped):
     assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped
+
+
+def test_dump_metrics_writes_what_the_agent_reads_then_the_origin():
+    """origin (the generator) and edited (the studio) come after the fields the agent reads, whatever their order."""
+    text = dump_metrics({"revenue": {"edited": ["expr"], "origin": "ai", "expr": "SUM(t.x)", "description": "Sold"}}, [])
+    assert list(yaml.safe_load(text)["revenue"]) == ["description", "expr", "origin", "edited"]

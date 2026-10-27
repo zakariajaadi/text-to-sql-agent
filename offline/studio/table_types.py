@@ -122,7 +122,7 @@ def table_types(tables: list[str], columns: dict[str, dict[str, str | None]], pr
                      _count(n, "colonne")]
             detected, reason = "entity", ", ".join(p for p in parts if p)
         else:
-            detected, reason = None, "ni clé unique ni relation : rien ne dit son rôle"
+            detected, reason = None, "ni clé unique ni jointure : rien ne dit son rôle"
         chosen = entry.get("table_type") if entry.get("table_type") in TABLE_TYPES else None
         types[t] = {"type": chosen or detected, "detected": detected, "reason": reason, "edited": chosen is not None}
     return types

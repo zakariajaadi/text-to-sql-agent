@@ -279,7 +279,7 @@ def tables(db: str, refresh: bool = False):
 
 @app.get("/api/db/{db}/tables/{table}")
 def table_detail(db: str, table: str):
-    """The profile of a table and its proposals, for the Contenu card, with the properties of the table (_properties)."""
+    """The profile of a table and its proposals, for the Profilage card, with the properties of the table (_properties)."""
     db_cfg  = _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
@@ -292,7 +292,7 @@ def table_detail(db: str, table: str):
 
 def _properties(db: str, table: str) -> dict:
     """
-    What a table is and how to read it, shown and chosen in the Contenu card: its type (detected or corrected,
+    What a table is and how to read it, shown and chosen in the Profilage card: its type (detected or corrected,
     offline/studio/table_types.py), its read mode checked against its columns (offline/studio/reading.py) and
     the date its data stops.
     """
@@ -317,86 +317,87 @@ def table_semantics(db: str, table: str):
     return {**detail, "version": _version(db)}
 
 
-class SemanticsEdit(BaseModel):
+class SemanticsChange(BaseModel):
     field: Literal["description", "column", "categorical", "read"]
     value: str | bool | None = None
     column: str | None = None
+
+
+class SemanticsEdit(BaseModel):
+    changes: list[SemanticsChange]
     version: str
 
 
 @app.post("/api/db/{db}/tables/{table}/semantics")
 def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
     """
-    One field corrected in the Descriptions tab (the description of the table or of a column, categorical),
-    or the descriptions the LLM rewrote marked read.
+    The draft of the Descriptions card saved (the description of the table, of its columns, categorical), written
+    at once or not at all; or the descriptions the LLM rewrote marked read.
     """
     _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
         raise HTTPException(404, f"Table inconnue : {table}")
     order = [c["name"] for c in listing["columns"].get(table) or []]
-    if request.field in ("column", "categorical") and order and request.column not in order:
-        raise HTTPException(400, f"Colonne inconnue : {table}.{request.column}")
+    for change in request.changes:
+        if change.field in ("column", "categorical") and order and change.column not in order:
+            raise HTTPException(400, f"Colonne inconnue : {table}.{change.column}")
+
+    def edit(entry: dict | None) -> dict:
+        for change in request.changes:
+            entry = state.edit_semantics(entry, change.field, change.value, change.column, order)
+        return entry
+
     try:
-        _update_semantics(db, request.version, lambda semantics: {
-            **semantics, table: state.edit_semantics(semantics.get(table), request.field, request.value,
-                                                     request.column, order)})
+        _update_semantics(db, request.version, lambda semantics: {**semantics, table: edit(semantics.get(table))})
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    logger.info(f"[studio] {db}.{table}: {request.field} {request.column or ''} edited")
+    logger.info(f"[studio] {db}.{table}: {', '.join(f'{c.field} {c.column or ""}'.strip() for c in request.changes)} edited")
     return table_semantics(db, table)
 
 
-class PropertyEdit(BaseModel):
-    field: Literal["table_type", "data_as_of"]
-    value: str | None = None
-    version: str
-
-
-@app.post("/api/db/{db}/tables/{table}/properties")
-def edit_table_property(db: str, table: str, request: PropertyEdit):
-    """
-    The type of a table (empty: the detection again) or the date its data stops (YYYY-MM-DD, empty: none), chosen
-    in the Contenu card. Returns the properties of the table and the version of tables.yaml.
-    """
-    _db_config(db)
-    if table not in _listing(db)["tables"]:
-        raise HTTPException(404, f"Table inconnue : {table}")
-    try:
-        _update_semantics(db, request.version, lambda semantics: {
-            **semantics, table: state.edit_semantics(semantics.get(table), request.field, request.value)})
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-    logger.info(f"[studio] {db}.{table}: {request.field} edited")
-    return {**_properties(db, table), "version": _version(db)}
-
-
-class ReadModeEdit(BaseModel):
+class ReadMode(BaseModel):
     mode: Literal["last", "all", "live"] | None = None
     partition_column: str | None = None
     key_columns: list[str] = []
     version_column: str | None = None
+
+
+class PropertiesEdit(BaseModel):
+    table_type: str | None = None   # empty: the detection again
+    data_as_of: str | None = None   # YYYY-MM-DD, empty: none
+    read_mode: ReadMode | None = None
     version: str
 
 
-@app.post("/api/db/{db}/tables/{table}/read-mode")
-def edit_table_read_mode(db: str, table: str, request: ReadModeEdit):
+@app.post("/api/db/{db}/tables/{table}/properties")
+def edit_table_properties(db: str, table: str, request: PropertiesEdit):
     """
-    The read mode of a table chosen in the Contenu tab (offline/studio/reading.py), None: the table read as it is.
-    Returns the properties of the table (the type follows the mode) and the version of tables.yaml.
+    The properties of a table chosen in the Profilage card, the ones sent written at once or not at all: its type,
+    the date its data stops, its read mode (offline/studio/reading.py; mode None: the table read as it is). Returns
+    the properties of the table (the type follows the mode) and the version of tables.yaml.
     """
     _db_config(db)
     listing = _listing(db)
     if table not in listing["tables"]:
         raise HTTPException(404, f"Table inconnue : {table}")
     columns = [c["name"] for c in listing["columns"].get(table) or []]
+    sent = request.model_fields_set - {"version"}
+
+    def edit(entry: dict | None) -> dict:
+        for field in ("table_type", "data_as_of"):
+            if field in sent:
+                entry = state.edit_semantics(entry, field, getattr(request, field))
+        if "read_mode" in sent:
+            mode = request.read_mode or ReadMode()
+            entry = edit_read_mode(entry, mode.mode, mode.partition_column, mode.key_columns, mode.version_column, columns)
+        return entry
+
     try:
-        _update_semantics(db, request.version, lambda semantics: {
-            **semantics, table: edit_read_mode(semantics.get(table), request.mode, request.partition_column,
-                                               request.key_columns, request.version_column, columns)})
+        _update_semantics(db, request.version, lambda semantics: {**semantics, table: edit(semantics.get(table))})
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    logger.info(f"[studio] {db}.{table}: read mode {request.mode or 'none'}")
+    logger.info(f"[studio] {db}.{table}: {', '.join(sorted(sent))} edited")
     return {**_properties(db, table), "version": _version(db)}
 
 
@@ -589,12 +590,12 @@ def add(db: str, request: RelationRequest):
     if source.split(".")[0] == target.split(".")[0]:
         raise HTTPException(400, "Choisis deux colonnes de deux tables différentes")
     if db not in _databases:
-        raise HTTPException(503, "La base ne répond pas : la relation ne peut pas être vérifiée")
+        raise HTTPException(503, "La base ne répond pas : la jointure ne peut pas être vérifiée")
     try:
         found  = key_overlap(_databases[db], source, target)
         spread = key_spread(_databases[db], source, target)
     except Exception as e:
-        raise HTTPException(502, f"La vérification de la relation a échoué : {str(e).splitlines()[0][:200]}") from e
+        raise HTTPException(502, f"La vérification de la jointure a échoué : {str(e).splitlines()[0][:200]}") from e
     found = None if found is None else round(found, 3)
     check = {"source": source, "target": target, "found": found, **spread}
     if spread["per_value"][1] > 1 and not request.force:
@@ -733,25 +734,30 @@ def test_one_metric(db: str, name: str):
 
 
 class MetricEdit(BaseModel):
-    field: Literal["description", "synonyms", "expr", "time_dimension"]
-    value: str | None = None
+    changes: dict[Literal["description", "synonyms", "expr", "time_dimension"], str | None]   # synonyms: comma-separated
     version: str
 
 
 @app.post("/api/db/{db}/metrics/{name}")
 def edit_one_metric(db: str, name: str, request: MetricEdit):
     """
-    One field of a metric corrected in the studio. A new expression or date is checked first: the
-    startup validation of the agent, its joins, then the database compiles it on an empty result.
+    The draft of a metric saved from the studio: its fields written at once, or none of them. A new expression
+    or date is checked first: the startup validation of the agent, its joins, then the database compiles it on
+    an empty result.
     """
     context = _metrics_context(db)
     entries, ignored = read_metrics_file(db)
-    change = lambda entries, ignored: (edit_metric(entries, name, request.field, request.value), ignored)  # noqa: E731
+
+    def change(entries: dict, ignored: list) -> tuple[dict, list]:
+        for field, value in request.changes.items():
+            entries = edit_metric(entries, name, field, value)
+        return entries, ignored
+
     try:
         edited, _ = change(entries, ignored)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    if request.field in ("expr", "time_dimension"):
+    if {"expr", "time_dimension"} & request.changes.keys():
         row = _metric(db, name, edited, ignored, context)
         if row["error"]:
             detail = row["error"]["detail"]
@@ -763,7 +769,7 @@ def edit_one_metric(db: str, name: str, request: MetricEdit):
         except Exception as e:
             raise HTTPException(400, f"La base refuse la métrique : {_first_line(e)}") from e
     _update_metrics(db, request.version, change)
-    logger.info(f"[studio] {db}: metric {name} {request.field} edited")
+    logger.info(f"[studio] {db}: metric {name} {', '.join(request.changes)} edited")
     return metrics_screen(db)
 
 

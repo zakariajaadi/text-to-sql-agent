@@ -23,6 +23,7 @@ from offline.semantic_gen.utils import (
     COUNT_ONLY,
     DISTINCT_SUM,
     KNOWN_NAME,
+    METRICS_KEY_ORDER,
     SAME_EXPRESSION,
     metric_from_clause,
     skip_reason,
@@ -58,6 +59,7 @@ def metric_row(name: str, entry: dict | None, entries: dict[str, dict], ignored:
     row = {
         "name": name, "description": entry.get("description") or "", "synonyms": list(entry.get("synonyms") or []),
         "expr": entry.get("expr") or "", "time_dimension": entry.get("time_dimension") or "",
+        "origin": entry.get("origin"), "edited": list(entry.get("edited") or []),
         "tables": [], "joins": 0, "sql": None, "from": None, "dates": [], "error": None, "rule": None, "rule_with": None,
     }
     others = {n: e for n, e in entries.items() if n != name}
@@ -219,10 +221,14 @@ def last_run(lines: list[dict]) -> dict:
 
 
 def edit_metric(entries: dict[str, dict], name: str, field: str, value) -> dict[str, dict]:
-    """metrics.yaml with one field of a metric corrected in the studio (synonyms: a comma-separated list)."""
+    """
+    metrics.yaml with one field of a metric corrected in the studio (synonyms: a comma-separated list), the field
+    added to `edited` when its value changed (the studio marks it corrected by you).
+    """
     if name not in entries:
         raise ValueError(f"Métrique inconnue : {name}")
     entry = dict(entries[name])
+    before = entry.get(field)
     text  = str(value or "").strip()
     if field == "synonyms":
         entry["synonyms"] = [s.strip() for s in text.split(",") if s.strip()]
@@ -234,6 +240,9 @@ def edit_metric(entries: dict[str, dict], name: str, field: str, value) -> dict[
         raise ValueError(f"{FIELDS.get(field, field)} d'une métrique ne peut pas être vide")
     else:
         entry[field] = text
+    if entry.get(field) != before:
+        edited = {*(entry.get("edited") or []), field}
+        entry["edited"] = [key for key in METRICS_KEY_ORDER if key in edited]
     return {**entries, name: entry}
 
 

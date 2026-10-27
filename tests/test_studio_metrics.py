@@ -152,6 +152,13 @@ def test_edit_and_ignore_a_metric():
     with pytest.raises(ValueError):
         edit_metric(METRICS, "revenue", "description", "  ")
 
+    # a field corrected is noted in `edited`, in the order of the block; a value left as it was is not
+    assert edited["revenue"]["edited"] == ["synonyms"]
+    again = edit_metric(edited, "revenue", "description", "Amount invoiced, every invoice line.")
+    assert again["revenue"]["edited"] == ["description", "synonyms"]
+    same = edit_metric(METRICS, "revenue", "expr", METRICS["revenue"]["expr"])
+    assert "edited" not in same["revenue"]
+
     entries, ignored = ignore_metric(METRICS, [], "invoice_count")
     assert "invoice_count" not in entries and ignored == ["invoice_count"]
     assert ignore_metric(entries, ignored, "invoice_count", ignore=False) == (entries, [])
@@ -189,12 +196,17 @@ def test_a_metric_tested_edited_and_ignored_from_the_page(client, tmp_path):
     assert view["metrics"][0]["state"] == "check" and view["metrics"][0]["test"]["rows"] == 6
 
     # A new expression is checked by the database before it is written; the test of the old one is dropped
-    post = lambda field, value, version=view["version"]: client.post(  # noqa: E731
-        "/api/db/shop/metrics/revenue", json={"field": field, "value": value, "version": version})
-    assert post("expr", "SUM(invoiceline.price)").status_code == 400
-    assert post("expr", "SUM(invoiceline.unitprice * invoiceline.quantity)", "1").status_code == 409
-    view = post("expr", "SUM(invoiceline.quantity)").json()
-    assert view["metrics"][0]["expr"] == "SUM(invoiceline.quantity)" and view["metrics"][0]["test"] is None
+    post = lambda changes, version=view["version"]: client.post(  # noqa: E731
+        "/api/db/shop/metrics/revenue", json={"changes": changes, "version": version})
+    assert post({"expr": "SUM(invoiceline.price)"}).status_code == 400
+    # a draft is written whole or not at all: its description stays out while its expression is refused
+    assert post({"description": "Sold", "expr": "SUM(invoiceline.price)"}).status_code == 400
+    assert yaml.safe_load((tmp_path / "shop" / "metrics.yaml").read_text())["revenue"]["description"] != "Sold"
+    assert post({"expr": "SUM(invoiceline.unitprice * invoiceline.quantity)"}, "1").status_code == 409
+    view = post({"description": "Units sold", "expr": "SUM(invoiceline.quantity)"}).json()
+    saved = view["metrics"][0]
+    assert saved["expr"] == "SUM(invoiceline.quantity)" and saved["description"] == "Units sold" and saved["test"] is None
+    assert saved["edited"] == ["description", "expr"]
 
     view = client.post("/api/db/shop/metrics/invoice_count/ignore", json={"version": view["version"]}).json()
     assert [m["name"] for m in view["metrics"]] == ["revenue"] and view["ignored"] == ["invoice_count"]

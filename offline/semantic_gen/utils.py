@@ -198,13 +198,15 @@ METRICS_HEADER = """\
 #   synonyms       : other words for it in the questions, any language
 #   expr           : aggregate SQL expression, every column written table.column
 #   time_dimension : default date for periods and trends (optional)
+#   origin         : (generator) "ai" on a metric it proposed; none on one written before the studio tracked it
+#   edited         : (studio) the fields corrected by hand since, out of description, synonyms, expr, time_dimension
 # To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
 # Checked at startup: an unknown table or column stops the app.
 
 """
 
-# Key order of a metric block in the YAML
-METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension"]
+# Key order of a metric block in the YAML: what the agent reads, then where it comes from
+METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension", "origin", "edited"]
 
 # Never proposed, whatever the name: two rows with the same amount are two amounts
 DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
