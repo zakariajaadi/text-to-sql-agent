@@ -505,10 +505,33 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .map-zoom svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .map-legend {
   position: absolute; left: 10px; bottom: 10px; z-index: 2; display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap;
-  max-width: calc(100% - 20px); padding: 5px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  font-size: var(--fs-xs); color: var(--ink-2); pointer-events: none;
+  max-width: calc(100% - 64px); padding: 5px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  font-size: var(--fs-xs); color: var(--ink-2); pointer-events: none;   /* the button to enlarge at its right */
 }
 .map-legend > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* the button to open the map large, at the bottom right; the map large over the page, its bar and its note with it */
+.map-expand {
+  position: absolute; right: 10px; bottom: 10px; z-index: 2; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); color: var(--ink-2); cursor: pointer;
+}
+.map-expand:hover { background-image: linear-gradient(var(--hover), var(--hover)); color: var(--ink); }
+.map-expand svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.map-open { overflow: hidden; }
+.map-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(15, 15, 14, 0.5); }
+.map-frame.big {
+  position: fixed; inset: 24px; z-index: 51; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
+}
+/* its appearance, only when it opens (a table chosen in it draws it again) */
+.map-backdrop.opening { animation: map-fade 0.18s ease; }
+.map-frame.big.opening { animation: map-open 0.22s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.map-frame.big .map-wrap { flex: 1; min-height: 0; }
+.map-frame.big .map { height: 100%; }
+@keyframes map-fade { from { opacity: 0; } }
+@keyframes map-open { from { opacity: 0; transform: scale(0.985); } }
+@media (max-width: 640px) { .map-frame.big { inset: 8px; } }
+@media (prefers-reduced-motion: reduce) { .map-backdrop.opening, .map-frame.big.opening { animation: none; } }
 .map-legend path { fill: none; stroke-width: 2; }
 .map-legend path.on { stroke: var(--edge-on); }
 .map-legend path.unchecked { stroke: var(--edge); }
@@ -628,7 +651,7 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .join-group-head .meta .mono { font-family: var(--font-mono); }
 .join-group-head .st { grid-column: 5; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
 .join-group-head .st.warn { color: var(--warn-ink); }
-.join-names { columns: 210px; column-gap: 28px; padding: 0 18px 12px 42px; }
+.join-names { columns: 210px; column-gap: 28px; padding: 0 18px 12px 22px; }   /* the marks under the chevron, the names under the title */
 .join-name { display: block; width: 100%; padding: 4px 0; border: 0; background: none; break-inside: avoid; cursor: pointer; text-align: left;
   font: 400 var(--fs-sm) var(--font-sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.15s; }
 .join-name .label { text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color 0.12s; }
@@ -636,6 +659,7 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .join-name:focus-visible { outline: none; }
 .join-name.open .label { text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
 .join-name .via { margin-left: 6px; font: var(--fs-xs) var(--font-mono); color: var(--muted); }
+.join-name > .origin, .join-name > .slot { display: inline-block; width: 12px; margin-right: 8px; }
 .join-name.weak .label::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--warn); vertical-align: 2px; }
 .join-name.unchecked { color: var(--muted); }
 .join-group-detail .join-detail { margin: 0 18px 14px 42px; padding: 14px 16px; border-radius: var(--radius); background: var(--hover); }

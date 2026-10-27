@@ -77,6 +77,7 @@ const ui = {
   dbs: [], db: null, step: "profile", data: null, filter: "all", query: "", selected: new Set(),
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
   joins: { db: null, open: new Set(), detail: null, current: null, focus: null, decided: [], shown: 0, next: null },   // its list (joinQueue)
+  mapBig: null,                                                        // the map opened large over the page: {height} it left in the panel, opening
   relCheck: null,                                                      // a relation measured, not added (its target is no key)
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop, panel, done, total})
   showQuery: false,                                                    // the query of a metric shown under its formula
@@ -190,7 +191,7 @@ function remember() {
 // Another database: the screens of the previous one are forgotten
 function switchDb(db) {
   ui.db = db; store("studio.db", db); $("db-select").value = db;
-  ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null };
+  ui.selected.clear(); ui.current = null; ui.detail = null; ui.rel = null; ui.path = { a: null, b: null, result: null }; ui.mapBig = null;
   ui.relCheck = null; closeConfirm($("confirm"));
   ui.met = null; ui.metric = null; if (ui.testing) ui.testing.stop = true; ui.idx = null; ui.scope = null; dropDraft();
   ui.tested = null;   // the tests of the other database leave the panel
@@ -278,7 +279,8 @@ function goTo(step, force = false) {
   if (ui.wizard) leaveWizard();
   ui.step = step;
   remember();
-  ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false; ui.relCheck = null;
+  ui.filter = "all"; ui.selected.clear(); ui.detail = null; ui.adding = false; ui.relCheck = null; ui.mapBig = null;
+  document.body.classList.remove("map-open");
   [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   renderStep();
   const tables = ui.data?.db !== ui.db ? loadTables() : null;
@@ -1402,6 +1404,14 @@ function firstView(cw, ch) {
   return height * scale <= ch ? frameBox(mapBox(), cw, ch) : { scale, x: (width - w / scale) / 2, y: 0 };
 }
 
+// The view the map opens on, large: the table chosen and the tables it joins, or the whole map when its names stay
+// readable (75 %); a map taller than that from its top, centred, the rest a drag away
+function bigView(cw, ch, table) {
+  const fit = frameBox(mapBox(table), cw, ch);
+  if (table || fit.scale >= 0.75) return fit;
+  return { scale: 0.75, x: ui.rel.layout.width / 2 - (cw - ZOOM_SPACE) / 0.75 / 2, y: 0 };
+}
+
 // The whole map, or the table chosen and the tables it joins
 function mapBox(table = null) {
   const { nodes, width, height } = ui.rel.layout;
@@ -1425,14 +1435,25 @@ function zoomMap(factor, px = null, py = null) {
   applyView();
 }
 
+// The map opened large over the page, or back in its panel: the height it leaves there kept (the page does not move
+// under it), its view framed again for its new size
+function bigMap(open) {
+  if (open === Boolean(ui.mapBig)) return;
+  ui.mapBig = open ? { height: $("map-frame").offsetHeight, opening: true } : null;
+  ui.mapView = null;
+  renderDetail();
+  $("map-expand")?.focus({ preventScroll: true });
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ui.mapBig && !e.defaultPrevented) bigMap(false); });
+
 // The map once drawn: its height (the whole map at the width of the panel, at most 600 px), its view, the table
 // chosen brought into it, then a drag that moves it, the zoom, the hover of a table and the bubble of a relation
 function setupMap() {
   const wrap = $("map-wrap"), svg = $("map"), { width, height } = ui.rel.layout, cur = ui.current;
   const cw = wrap.clientWidth || 800;
-  svg.style.height = `${Math.max(260, Math.min(600, Math.round(height * Math.min(cw / width, 1.25))))}px`;
+  svg.style.height = ui.mapBig ? "" : `${Math.max(260, Math.min(600, Math.round(height * Math.min(cw / width, 1.25))))}px`;
   const ch = svg.clientHeight;
-  if (ui.mapView?.db !== ui.db) ui.mapView = { db: ui.db, focus: null, ...firstView(cw, ch) };
+  if (ui.mapView?.db !== ui.db) ui.mapView = ui.mapBig ? { db: ui.db, focus: cur, ...bigView(cw, ch, cur) } : { db: ui.db, focus: null, ...firstView(cw, ch) };
   const node = cur && ui.rel.layout.nodes[cur], v = ui.mapView;
   if (node && v.focus !== cur) {   // a table chosen out of view: the view goes to it, the zoom stays
     const vw = cw / v.scale, vh = ch / v.scale;
@@ -1443,6 +1464,8 @@ function setupMap() {
   ui.mapView.focus = cur;
   applyView();
 
+  $("map-expand").onclick = () => bigMap(!ui.mapBig);
+  if (ui.mapBig) { $("map-backdrop").onclick = () => bigMap(false); $("map-close").onclick = () => bigMap(false); }
   $("zoom-in").onclick = () => zoomMap(1.25);
   $("zoom-out").onclick = () => zoomMap(0.8);
   $("zoom-fit").onclick = () => { ui.mapView = { ...ui.mapView, ...frameBox(mapBox(cur), svg.clientWidth, svg.clientHeight) }; applyView(); };
@@ -1637,9 +1660,11 @@ function joinGroups(lit, sel, cur, path) {
       const label = id ? esc(r.source) : `${esc(r.source)}<span class="arrow">→</span>${esc(r.target)}`;
       const cls = ["join-name", r.weak ? "weak" : "", neverMeasured(r) ? "unchecked" : "", lit(r) ? "lit" : "",
         lit(r) && !path && (r.source === cur || (!id && r.target === cur)) ? "me" : "", here(r) ? "open" : ""].filter(Boolean).join(" ");
-      const tip = r.weak ? `${pct(r.found)} des valeurs retrouvées` : neverMeasured(r) ? "jamais mesurée" : "";
+      const tip = r.weak ? `${pct(r.found)} des valeurs retrouvées` : neverMeasured(r) ? "jamais mesurée" : via ? `par ${via}` : "";   // a key cut at the end of its column
+      // its origin before it, a kept one yours; an unknown one keeps its place, empty, so that the names stay aligned
+      const [kind, , title] = r.kept ? ["you", "", "Gardée par toi malgré ses valeurs"] : ORIGINS[r.origin] || [];
       return `<button class="${cls}" type="button" data-rel="${rel.relations.indexOf(r)}" data-key="${esc(joinKey(r))}" aria-expanded="${here(r)}"${tip ? ` title="${tip}"` : ""}>`
-        + `<span class="label">${label}</span>${via ? `<span class="via">${esc(via)}</span>` : ""}</button>`;
+        + `${kind ? originMark(kind, title) : '<span class="slot"></span>'}<span class="label">${label}</span>${via ? `<span class="via">${esc(via)}</span>` : ""}</button>`;
     }).join("");
     const shown = sorted.find(here);
     return `<div class="join-group${open ? " open" : ""}${on ? " lit" : ""}" data-group="${esc(id)}">
@@ -1818,9 +1843,20 @@ function renderRelations(el, message) {
   const measure = '<button class="btn small" id="check-relations" data-job title="Mesure sur les données la part des valeurs trouvées de chaque jointure, sans l\'IA">';
   const line = (cls) => `<svg width="22" height="8" viewBox="0 0 22 8" aria-hidden="true"><path class="${cls}" d="M1 4 L21 4"/></svg>`;
   const fit = '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+  // large: the map, its bar and its note over the page, a title of their own; a block of their height left in the panel
+  const big = ui.mapBig;
+  const expand = big ? '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>' : '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>';
+  document.body.classList.toggle("map-open", Boolean(big));
+  // its appearance played once, when it opens: a table chosen in it draws the panel again, not the opening
+  const opening = big?.opening ? " opening" : "";
+  if (big) big.opening = false;
   el.innerHTML = `<div class="detail-head"><h2>Carte des tables</h2><span class="figures">${figures}</span>
       <span class="grow"></span><span class="save-state" id="rel-state">${message ? esc(message) : ""}</span>
       ${rel.unchecked ? "" : `${measure.replace('btn small"', 'btn ghost small"')}Revérifier</button>`}</div>
+    ${big ? `<div class="map-spacer" style="height:${big.height}px"></div><div class="map-backdrop${opening}" id="map-backdrop"></div>` : ""}
+    <div class="map-frame${big ? ` big${opening}` : ""}" id="map-frame"${big ? ' role="dialog" aria-modal="true" aria-label="Carte des tables"' : ""}>
+    ${big ? `<div class="detail-head"><h2>Carte des tables</h2><span class="figures">${figures}</span><span class="grow"></span>
+      <button class="icon-btn" type="button" id="map-close" aria-label="Fermer la carte" title="Fermer (Échap)">✕</button></div>` : ""}
     <div class="map-tools">
       ${cur ? `<span class="sel-chip">${esc(cur)}<button type="button" id="relations-all" aria-label="Voir toutes les tables">×</button></span><span class="tools-sep"></span>` : ""}
       <span class="muted-text">Chemin</span><select id="path-a" aria-label="Table de départ">${options(ui.path.a, "départ…")}</select>
@@ -1834,7 +1870,10 @@ function renderRelations(el, message) {
       + `<button type="button" id="zoom-out" aria-label="Dézoomer" title="Dézoomer">−</button>`
       + `<button type="button" id="zoom-fit" aria-label="Ajuster" title="${cur ? `Ajuster sur ${esc(cur)} et les tables qu'elle joint` : "Ajuster sur toute la carte"}">${fit}</button></div>
       <div class="map-legend"><span>${line("on")}vérifiée</span><span>${line("unchecked")}non mesurée</span><span>${line("weak")}faible</span></div>
+      <button class="map-expand" type="button" id="map-expand" aria-label="${big ? "Réduire la carte" : "Agrandir la carte"}" title="${big ? "Réduire (Échap)" : "Agrandir la carte"}">`
+      + `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${expand}</svg></button>
       <div class="map-tip" id="map-tip" role="tooltip" hidden></div></div>
+    </div>
     <form class="add-form" id="add-form" ${ui.adding ? "" : "hidden"}>
       <span class="muted-text">Nouvelle jointure</span>
       <select id="add-source-table" aria-label="Table qui pointe">${options(chosen.source[0])}</select><select id="add-source-column" aria-label="Colonne qui pointe"></select>
