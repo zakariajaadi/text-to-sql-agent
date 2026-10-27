@@ -7,6 +7,7 @@ import types
 
 import pytest
 from langchain_core.documents import Document
+from loguru import logger
 
 # schema_indexer imports the runtime resources (API keys, databases, Chroma index): stubbed here
 sys.modules.setdefault("resources", types.SimpleNamespace(db_registry={}, vector_store=None))
@@ -319,3 +320,24 @@ def test_the_data_version_of_a_table():
     assert data_version(database("hive", ICEBERG), "client") is None
     assert data_version(database("impala4", PARQUET, RuntimeError("AuthorizationException")), "t") is None
     assert files_version([]) == files_version([])
+
+
+def test_a_view_or_a_storage_handler_has_no_version_and_no_warning():
+    # awb_silver.connaissance_client_automobile: a view over another database, SHOW FILES refused on it
+    view  = [("# Detailed Table Information", None, None), ("Table Type:", "VIRTUAL_VIEW      ", None),
+             ("Table Parameters:", None, None), ("", "transient_lastDdlTime", "1790610338"), ("", None, None),
+             ("# Storage Information", None, None)]
+    hbase = [("Table Type:", "EXTERNAL_TABLE", None), ("Table Parameters:", None, None),
+             ("", "storage_handler", "org.apache.hadoop.hive.hbase.HBaseStorageHandler")]
+    refused = RuntimeError("AnalysisException: SHOW FILES not applicable to a non hdfs table")
+    warnings = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        assert data_version(database("impala4", view, refused), "connaissance_client_automobile") is None
+        assert data_version(database("impala4", hbase, refused), "t") is None
+        assert warnings == []
+        # a real error still says so
+        assert data_version(database("impala4", PARQUET, refused), "t") is None
+        assert len(warnings) == 1 and "non hdfs table" in warnings[0]
+    finally:
+        logger.remove(sink)

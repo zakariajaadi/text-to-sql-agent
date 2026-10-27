@@ -8,8 +8,10 @@ of the database it gives staying the same.
     - Impala, an Iceberg table: its current snapshot (current-snapshot-id), which every write changes
     - Impala, another table on files (Parquet, ORC, text): its files and their sizes (SHOW FILES). A file on
       HDFS is never changed in place: a load writes new files, under new names
-    - Kudu (rows changed in place), Hive (its statistics are not kept up to date by a job writing files),
-      SQLite and the others, or the least doubt: None, the values are read again
+    - a view (no data of its own), a table of a storage handler other than Iceberg (Kudu and HBase change rows
+      in place, JDBC reads elsewhere), Hive (its statistics are not kept up to date by a job writing files),
+      SQLite and the others: None, the values are read again, as expected (no warning)
+    - the least doubt (Impala did not answer): None too, with a warning
 
 Read from what Impala itself serves: a load its catalog does not see yet is not seen by the agent either.
 Used by: offline/indexer/schema_indexer.py (fetch_values)
@@ -34,11 +36,13 @@ def data_version(db: SQLDatabase, table: str) -> str | None:
             return None
         quote = db._engine.dialect.identifier_preparer.quote
         with db._engine.connect() as conn:
-            parameters = table_parameters(conn.execute(text(f"DESCRIBE FORMATTED {quote(table)}")).fetchall())
+            described  = conn.execute(text(f"DESCRIBE FORMATTED {quote(table)}")).fetchall()
+            parameters = table_parameters(described)
             if parameters.get("table_type", "").upper() == "ICEBERG":
                 snapshot = parameters.get("current-snapshot-id")
                 return f"iceberg:{snapshot}" if snapshot else None
-            if "kudu" in parameters.get("storage_handler", "").lower():
+            # A view, or rows kept by a storage handler (Kudu, HBase, JDBC...): no files of its own to list
+            if table_type(described) == "VIRTUAL_VIEW" or parameters.get("storage_handler"):
                 return None
             return files_version(conn.execute(text(f"SHOW FILES IN {quote(table)}")).fetchall())
     except Exception as e:
@@ -61,6 +65,11 @@ def table_parameters(rows) -> dict[str, str]:
         elif inside and (key := str(row[1] or "").strip()):
             parameters[key] = str(row[2] or "").strip()
     return parameters
+
+
+def table_type(rows) -> str:
+    """The "Table Type:" of DESCRIBE FORMATTED (MANAGED_TABLE, EXTERNAL_TABLE, VIRTUAL_VIEW), "" when not said."""
+    return next((str(row[1] or "").strip().upper() for row in rows if str(row[0] or "").strip() == "Table Type:"), "")
 
 
 def files_version(rows) -> str:
