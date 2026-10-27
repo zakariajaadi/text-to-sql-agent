@@ -5,20 +5,20 @@
 # Table and column names must match the engine (lowercase for Hive).
 
 relations:
-- {from: album.artistid, to: artist.artistid}
-- {from: customer.supportrepid, to: employee.employeeid}
-- {from: employee.reportsto, to: employee.employeeid}
-- {from: invoice.customerid, to: customer.customerid}
-- {from: invoiceline.invoiceid, to: invoice.invoiceid}
-- {from: invoiceline.trackid, to: track.trackid}
-- {from: playlisttrack.playlistid, to: playlist.playlistid}
-- {from: playlisttrack.trackid, to: track.trackid}
-- {from: track.albumid, to: album.albumid}
-- {from: track.mediatypeid, to: mediatype.mediatypeid}
-- {from: track.genreid, to: genre.genreid}
-- {from: customer_cdc.customerid, to: customer.customerid}
-- {from: customer_snapshot.customerid, to: customer.customerid}
-- {from: customer_snapshot.supportrepid, to: employee.employeeid}
-- {from: invoice_delta.invoiceid, to: invoice.invoiceid}
-- {from: invoice_delta.customerid, to: customer.customerid}
+- {from: album.artistid, to: artist.artistid, found: 1.0, origin: profile}
+- {from: customer.supportrepid, to: employee.employeeid, found: 1.0}
+- {from: employee.reportsto, to: employee.employeeid, found: 1.0}
+- {from: invoice.customerid, to: customer.customerid, found: 1.0, origin: profile}
+- {from: invoiceline.invoiceid, to: invoice.invoiceid, found: 1.0, origin: profile}
+- {from: invoiceline.trackid, to: track.trackid, found: 1.0, origin: profile}
+- {from: playlisttrack.playlistid, to: playlist.playlistid, found: 1.0, origin: profile}
+- {from: playlisttrack.trackid, to: track.trackid, found: 1.0, origin: profile}
+- {from: track.albumid, to: album.albumid, found: 1.0, origin: profile}
+- {from: track.mediatypeid, to: mediatype.mediatypeid, found: 1.0, origin: profile}
+- {from: track.genreid, to: genre.genreid, found: 1.0, origin: profile}
+- {from: customer_cdc.customerid, to: customer.customerid, found: 1.0, origin: profile}
+- {from: customer_snapshot.customerid, to: customer.customerid, found: 1.0, origin: profile}
+- {from: customer_snapshot.supportrepid, to: employee.employeeid, found: 1.0}
+- {from: invoice_delta.invoiceid, to: invoice.invoiceid, found: 1.0, origin: profile}
+- {from: invoice_delta.customerid, to: customer.customerid, found: 1.0, origin: profile}
 ignore: []
