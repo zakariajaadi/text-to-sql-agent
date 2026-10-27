@@ -29,6 +29,8 @@ offline/eval/datasets/*
 offline/eval/results/*
 !offline/eval/results/chinook.json
 !offline/eval/results/northwind.json
+!offline/eval/results/chinook.history.jsonl
+!offline/eval/results/northwind.history.jsonl
 # Chainlit: keep the app config and the customized English and French translations
 .chainlit/*
 !.chainlit/config.toml

@@ -242,7 +242,8 @@ function renderTabs() {
   const counts = { relations: s?.relations, metrics: s?.metrics, index: ui.idx?.trace ? ui.idx.documents : null };
   const current = ui.step === "scope" ? "overview" : ui.step;   // the Périmètre opens from the Vue d'ensemble
   $("tabs").innerHTML = TABS.map((key) => `<button type="button" data-step="${key}"${key === current ? ' aria-current="page"' : ""}>`
-    + `${STEPS[key].title}${counts[key] != null ? `<span class="tab-count">${fmt.format(counts[key])}</span>` : ""}</button>`).join("");
+    + `${STEPS[key].title}${counts[key] != null ? `<span class="tab-count">${rollSlot(`tab-${key}`, fmt.format(counts[key]))}</span>` : ""}</button>`).join("");
+  rollFigures($("tabs"));
 }
 $("tabs").addEventListener("click", (e) => {
   const tab = e.target.closest("button[data-step]");
@@ -2897,13 +2898,96 @@ function indexVerdict(idx, db = ui.db) {
   return box(tone, text);
 }
 
-// One figure of what the agent reads: the figure, its name, a word under it (amber or red only when that figure needs
-// looking at); what it is in a bubble on hover, focus or tap, what is wrong first
-function agentFigure({ value, label, note, tone = "", issue = "", tip, extra = "" }) {
-  return `<div class="figure" tabindex="0"><span class="figure-value">${value}</span><span class="figure-label">${label}</span>
-    <span class="figure-note${tone ? ` ${tone}` : ""}">${note}</span>
-    <div class="figure-tip" role="tooltip">${issue ? `<p class="issue">${issue}</p>` : ""}<p>${tip}</p>${extra}</div></div>`;
+// ── The Vue d'ensemble: the eval of the agent, what it reads in six cards, the setup on the side ──
+
+// What moved since the overview was last drawn: the database, its index, its eval (what plays when the page is drawn
+// again), the default word of each card, the table under the pointer ({tables, col, q, metric}), the observer that
+// draws the chart and the joins again at another width
+const OV = { db: null, built: null, eval: null, notes: {}, focus: null, resize: null };
+const ROLLED = new Map();   // the text each rolling figure last showed, by its key: {text, db}
+const DIGITS = [..."0123456789"].map((d) => `<span>${d}</span>`).join("");
+const stillPage = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const rollSlot = (key, text) => `<span class="roll" data-roll="${key}">${esc(text)}</span>`;
+
+// The figures of a part of the page roll from what they showed to their new value, digit by digit, the units first
+// (another database, a new index, a new eval); on the same database, a figure that changed says by how much for a few
+// seconds (its [data-delta]). Drawn the first time, a figure just shows
+function rollFigures(root) {
+  root.querySelectorAll("[data-roll]").forEach((el) => {
+    const key = el.dataset.roll, text = el.textContent, before = ROLLED.get(key);
+    ROLLED.set(key, { text, db: ui.db });
+    if (!before || before.text === text || stillPage()) return;
+    const change = Number(text.replace(/\D/g, "")) - Number(before.text.replace(/\D/g, "")), delta = root.querySelector(`[data-delta="${key}"]`);
+    if (delta && before.db === ui.db && change) { delta.textContent = `${change > 0 ? "+" : "−"}${fmt.format(Math.abs(change))}`; delta.hidden = false; }
+    const chars = [...text], old = [...before.text], shift = chars.length - old.length;
+    el.setAttribute("aria-label", text);
+    el.innerHTML = chars.map((c) => (/\d/.test(c) ? `<span class="roll-digit" aria-hidden="true"><span>${DIGITS}</span></span>`
+      : `<span aria-hidden="true">${esc(c)}</span>`)).join("");
+    [...el.children].forEach((child, i) => {
+      if (!child.classList.contains("roll-digit")) return;
+      const strip = child.firstChild, was = old[i - shift];
+      strip.style.transition = "none";
+      strip.style.transform = `translateY(${-(/\d/.test(was ?? "") ? Number(was) : 0) * 1.2}em)`;
+      strip.getBoundingClientRect();
+      strip.style.transition = "";
+      strip.style.transitionDelay = `${(chars.length - 1 - i) * 55}ms`;
+      strip.style.transform = `translateY(${-Number(chars[i]) * 1.2}em)`;
+    });
+  });
 }
+
+// What the agent reads, six figures: the structure (the tables of its documents, their columns, joins), then the data
+// and the calculations (sample rows, values of the categorical columns, metrics). Each with a word under it (amber or
+// red only when that figure needs looking at) and what it is in a bubble, what is wrong first. What to do about them
+// is said by the Mise en place
+function agentFigures(idx) {
+  const sc = idx.scope, m = idx.metrics, hidden = idx.hidden.length, d = idx.dropped, leaving = leavingIndex(idx);
+  const changed = idx.tables.filter((t) => t.status === "changed").length, missing = idx.tables.filter((t) => t.status === "missing").length;
+  const raw = idx.raw.filter((t) => !leaving.includes(t)), rows = idx.sample_rows, now = idx.sample_rows_now;
+  const tables = [
+    changed && `${plural(changed, "fiche")} ${changed > 1 ? "anciennes" : "ancienne"}`,
+    missing && `${fmt.format(missing)} à indexer`,
+    leaving.length && `${fmt.format(leaving.length)} à retirer`,
+    raw.length && `${fmt.format(raw.length)} sans description`,
+  ].filter(Boolean);
+  const outside = sc.base == null ? null : sc.base - sc.tables;
+  const values = idx.inline.values + idx.searched.values, columns = idx.inline.columns + idx.searched.columns;
+  const example = sampleTable(idx);
+  return [
+    { key: "tables", value: idx.documents, label: idx.documents > 1 ? "tables" : "table",
+      note: tables.length ? tables.join(" · ")
+        : sc.origin === "all" || sc.origin === "none" ? "toutes, même les futures"
+        : outside ? `sur ${fmt.format(sc.base)} dans la base` : outside === 0 ? "toutes celles d'aujourd'hui" : "celles de la liste",
+      tone: tables.length ? "warn" : "",
+      issue: [...indexChanges(idx), raw.length && `${names(raw)} sans description : l'agent n'en a que la structure brute.`].filter(Boolean).join(" "),
+      tip: "Une fiche par table du périmètre : sa description, ses colonnes, ses jointures. Une barre par table, haute de ses lignes." },
+    { key: "columns", value: idx.shown, label: idx.shown > 1 ? "colonnes" : "colonne",
+      note: hidden ? `${fmt.format(hidden)} ${hidden > 1 ? "cachées" : "cachée"}` : "aucune cachée",
+      tip: "Les colonnes écrites dans les fiches, hachurées celles cachées. Une colonne vide, technique ou personnelle peut être cachée : "
+        + "l'agent ne la voit plus, ni dans les exemples de lignes." + (hidden ? ` Cachées : ${names(idx.hidden)}.` : "") },
+    { key: "joins", value: idx.joins, label: idx.joins > 1 ? "jointures" : "jointure",
+      note: idx.joins ? "entre les tables" : "tables isolées",
+      tip: "Les jointures écrites dans les fiches, un arc chacune entre ses deux tables : l'agent relie les tables par ces colonnes, sans les deviner." },
+    { key: "samples", value: rows, label: rows > 1 ? "lignes d'exemple" : "ligne d'exemple",
+      note: rows !== now ? "à réappliquer" : !rows ? "aucune ligne de la base" : example ? `par fiche, ici <b>${esc(example.name)}</b>` : "par fiche",
+      tone: rows !== now ? "warn" : "",
+      issue: rows !== now ? `La configuration en demande ${now ? fmt.format(now) : "aucune"} par fiche : réindexer pour l'appliquer.` : "",
+      tip: "Des lignes réelles de chaque table sous sa structure, pour que le modèle voie à quoi ressemblent les données. "
+        + "Les colonnes cachées en sont retirées." },
+    { key: "values", value: values, label: values > 1 ? "valeurs connues" : "valeur connue",
+      note: d.length ? `${plural(d.length, "colonne")} sans valeurs` : columns ? `dans ${plural(columns, "colonne")}` : "aucune colonne catégorielle",
+      tone: d.length ? "warn" : "",
+      issue: d.length ? `${names(d)} ${d.length > 1 ? "sont vides ou trop variées" : "est vide ou trop variée"} : l'agent n'en connaît aucune valeur.` : "",
+      tip: "Les valeurs réelles des colonnes catégorielles, une barre par colonne : l'agent filtre avec l'orthographe exacte de la base.", extra: valuesSplit(idx) },
+    { key: "metrics", value: m.total, label: m.total > 1 ? "métriques" : "métrique",
+      note: m.errors.length ? `${fmt.format(m.errors.length)} refusée${m.errors.length > 1 ? "s" : ""}`
+        : m.total ? (m.total > 1 ? "toutes valides" : "valide") : "aucune écrite",
+      tone: m.errors.length ? "bad" : "",
+      issue: m.errors.length ? `L'agent ne démarrera pas : il refuse ${names(m.errors.map((e) => e.name))}.` : "",
+      tip: "Les calculs métier écrits une fois pour toutes. L'agent vérifie leurs colonnes à son démarrage." },
+  ];
+}
+const CARD_GROUPS = [["Structure", ["tables", "columns", "joins"]], ["Données et calculs", ["samples", "values", "metrics"]]];
 
 // The categorical columns in the bubble of the values: one bar, the columns without values left as the empty track,
 // then where the agent finds the values (in the document, searched on demand)
@@ -2920,58 +3004,92 @@ function valuesSplit(idx) {
   return `<div class="split" aria-hidden="true">${bar}</div><div class="split-keys">${keys}</div>`;
 }
 
-// What the agent reads, in two groups of three figures: the structure (the tables of its documents, their columns,
-// joins), then the data and the calculations (sample rows, values of the categorical columns, metrics). What to do
-// about them is said by the Mise en place
-function agentFigures(idx) {
-  const sc = idx.scope, m = idx.metrics, hidden = idx.hidden.length, d = idx.dropped, leaving = leavingIndex(idx);
-  const changed = idx.tables.filter((t) => t.status === "changed").length, missing = idx.tables.filter((t) => t.status === "missing").length;
-  const raw = idx.raw.filter((t) => !leaving.includes(t)), rows = idx.sample_rows, now = idx.sample_rows_now;
-  const tables = [
-    changed && `${plural(changed, "fiche")} ${changed > 1 ? "anciennes" : "ancienne"}`,
-    missing && `${fmt.format(missing)} à indexer`,
-    leaving.length && `${fmt.format(leaving.length)} à retirer`,
-    raw.length && `${fmt.format(raw.length)} sans description`,
-  ].filter(Boolean);
-  const outside = sc.base == null ? null : sc.base - sc.tables;
-  const values = idx.inline.values + idx.searched.values, columns = idx.inline.columns + idx.searched.columns;
-  const figures = [
-    agentFigure({ value: fmt.format(idx.documents), label: idx.documents > 1 ? "tables" : "table",
-      note: tables.length ? tables.join(" · ")
-        : sc.origin === "all" || sc.origin === "none" ? "toutes, même les futures"
-        : outside ? `sur ${fmt.format(sc.base)} dans la base` : outside === 0 ? "toutes celles d'aujourd'hui" : "celles de la liste",
-      tone: tables.length ? "warn" : "",
-      issue: [...indexChanges(idx), raw.length && `${names(raw)} sans description : l'agent n'en a que la structure brute.`].filter(Boolean).join(" "),
-      tip: "Une fiche par table du périmètre : sa description, ses colonnes, ses jointures." }),
-    agentFigure({ value: fmt.format(idx.shown), label: idx.shown > 1 ? "colonnes" : "colonne",
-      note: hidden ? `${fmt.format(hidden)} ${hidden > 1 ? "cachées" : "cachée"}` : "aucune cachée",
-      tip: "Les colonnes écrites dans les fiches. Une colonne vide, technique ou personnelle peut être cachée : "
-        + "l'agent ne la voit plus, ni dans les exemples de lignes." + (hidden ? ` Cachées : ${names(idx.hidden)}.` : "") }),
-    agentFigure({ value: fmt.format(idx.joins), label: idx.joins > 1 ? "jointures" : "jointure",
-      note: idx.joins ? "entre les tables" : "tables isolées",
-      tip: "Les jointures écrites dans les fiches : l'agent relie les tables par ces colonnes, sans les deviner." }),
-    agentFigure({ value: fmt.format(rows), label: rows > 1 ? "lignes d'exemple" : "ligne d'exemple",
-      note: rows !== now ? "à réappliquer" : rows ? "par fiche" : "aucune ligne de la base", tone: rows !== now ? "warn" : "",
-      issue: rows !== now ? `La configuration en demande ${now ? fmt.format(now) : "aucune"} par fiche : réindexer pour l'appliquer.` : "",
-      tip: "Des lignes réelles de chaque table sous sa structure, pour que le modèle voie à quoi ressemblent les données. "
-        + "Les colonnes cachées en sont retirées." }),
-    agentFigure({ value: fmt.format(values), label: values > 1 ? "valeurs connues" : "valeur connue",
-      note: d.length ? `${plural(d.length, "colonne")} sans valeurs` : columns ? `dans ${plural(columns, "colonne")}` : "aucune colonne catégorielle",
-      tone: d.length ? "warn" : "",
-      issue: d.length ? `${names(d)} ${d.length > 1 ? "sont vides ou trop variées" : "est vide ou trop variée"} : l'agent n'en connaît aucune valeur.` : "",
-      tip: "Les valeurs réelles des colonnes catégorielles : l'agent filtre avec l'orthographe exacte de la base.", extra: valuesSplit(idx) }),
-    agentFigure({ value: fmt.format(m.total), label: m.total > 1 ? "métriques" : "métrique",
-      note: m.errors.length ? `${fmt.format(m.errors.length)} refusée${m.errors.length > 1 ? "s" : ""}`
-        : m.total ? (m.total > 1 ? "toutes valides" : "valide") : "aucune écrite",
-      tone: m.errors.length ? "bad" : "",
-      issue: m.errors.length ? `L'agent ne démarrera pas : il refuse ${names(m.errors.map((e) => e.name))}.` : "",
-      tip: "Les calculs métier écrits une fois pour toutes. L'agent vérifie leurs colonnes à son démarrage." }),
-  ];
-  return [["Structure", figures.slice(0, 3)], ["Données et calculs", figures.slice(3)]];
+// A card of what the agent reads: its figure (rolling), its name (what it is in a bubble), the word under it, its picture
+function readCard(f, viz) {
+  return `<article class="panel read-card" data-card="${f.key}">
+    <div class="read-top"><span class="read-value">${rollSlot(f.key, fmt.format(f.value))}</span><span class="read-label" tabindex="0">${f.label}</span>
+      <div class="figure-tip" role="tooltip">${f.issue ? `<p class="issue">${f.issue}</p>` : ""}<p>${f.tip}</p>${f.extra || ""}</div>
+      <span class="delta" data-delta="${f.key}" hidden></span></div>
+    <div class="read-note${f.tone ? ` ${f.tone}` : ""}"><span>${f.note}</span></div>
+    <div class="read-viz">${viz}</div></article>`;
 }
 
-// The last eval: the share of exact answers, one box per scored question (green exact, red wrong), the day it was
-// measured. Whether it still measures this index is said by the Mise en place
+// A bar of a card, its height a share of the tallest (at least a sliver), the table (and column) it draws in data-*
+const vizBar = (h, cls, attrs, i) => `<span class="b${cls ? ` ${cls}` : ""}" style="height:${Math.max(h * 100, 6).toFixed(1)}%;--i:${i}" ${attrs}></span>`;
+// rows and values on a log scale: a table of 8 rows stays visible next to one of 600 000
+const logShare = (n, max) => (n ? Math.log10(n + 1) / Math.log10(max + 1) : 0);
+
+// The picture of each card, the tables in the same order in all of them (the joined ones side by side)
+function cardViz(key, idx) {
+  const c = idx.cards, tables = c.tables, leaving = leavingIndex(idx);
+  const status = Object.fromEntries(idx.tables.map((t) => [t.name, t.status]));
+  if (key === "tables") {
+    const max = Math.max(1, ...tables.map((t) => t.rows || 0));
+    return `<div class="bars">${tables.map((t, i) => vizBar(Math.max(logShare(t.rows, max), 0.06),
+      leaving.includes(t.name) ? "leaving" : status[t.name] === "changed" ? "changed" : t.rows ? "" : "nil", `data-table="${esc(t.name)}"`, i)).join("")}</div>`;
+  }
+  if (key === "columns") {
+    const max = Math.max(1, ...tables.map((t) => t.kinds.length + t.hidden));
+    return `<div class="bars">${tables.map((t, i) => `<span class="b stack" style="height:${Math.max((t.kinds.length + t.hidden) / max * 100, 6).toFixed(1)}%;--i:${i}" data-table="${esc(t.name)}">`
+      + `${t.hidden ? `<i class="hid" style="flex-grow:${t.hidden}"></i>` : ""}${t.kinds.length ? `<i style="flex-grow:${t.kinds.length}"></i>` : ""}</span>`).join("")}</div>`;
+  }
+  if (key === "joins") return '<div class="arcs-box" data-arcs></div>';
+  if (key === "samples") { const t = sampleTable(idx); return `<div class="sgrid" data-samples="${esc(t?.name || "")}">${sampleGrid(t, idx.sample_rows)}</div>`; }
+  if (key === "values") {
+    const cols = tables.flatMap((t) => t.values.map(([column, count, where]) => ({ table: t.name, column, count, where })));
+    if (!cols.length) return "";
+    const max = Math.max(1, ...cols.map((v) => v.count)), total = (where) => cols.filter((v) => v.where === where).reduce((n, v) => n + v.count, 0);
+    const bars = cols.map((v, i) => vizBar(v.count ? logShare(v.count, max) : 0.3, `${v.where}${i && cols[i - 1].table !== v.table ? " grp" : ""}`,
+      `data-table="${esc(v.table)}" data-col="${esc(v.column)}"`, i)).join("");
+    return `<div class="bars short">${bars}</div><div class="viz-keys"><span><i class="sw listed"></i>dans les fiches <b>${fmt.format(total("listed"))}</b></span>`
+      + `<span><i class="sw searched"></i>cherchées <b>${fmt.format(total("searched"))}</b></span></div>`;
+  }
+  // the metrics, the refused ones first
+  const list = [...c.metrics].sort((a, b) => b.refused - a.refused), room = list.length > 4 ? 3 : 4;
+  return `<ul class="mlist">${list.slice(0, room).map((m) => `<li data-metric="${esc(m.name)}"><span class="m-dot${m.refused ? " bad" : ""}"></span>`
+    + `<span class="nm">${esc(m.name)}</span><span class="tb">${esc(m.tables.join(", "))}</span></li>`).join("")}`
+    + `${list.length > room ? `<li class="more">+ ${plural(list.length - room, "autre")}</li>` : ""}</ul>`;
+}
+
+// The table whose sample rows the card draws when no table is under the pointer: the largest one with a few columns
+function sampleTable(idx) {
+  const tables = idx.cards?.tables || [];
+  return [...tables].filter((t) => t.kinds.length >= 6 && t.rows).sort((a, b) => b.rows - a.rows)[0]
+    || [...tables].sort((a, b) => b.kinds.length - a.kinds.length)[0];
+}
+
+// Its header then its sample rows, one cell per column shown: a text wider than a date, wider than a number
+function sampleGrid(table, rows) {
+  if (!table) return "";
+  const cells = [...table.kinds].map((k) => `<i style="flex-grow:${{ n: 1, d: 1.6, s: 2.2 }[k]}"></i>`).join("");
+  return `<div class="srow hdr">${cells}</div>${`<div class="srow">${cells}</div>`.repeat(Math.max(rows, 0))}`;
+}
+
+// The joins as arcs over a line of tables, in the order of the other cards; a table without a join a hollow dot
+function drawArcs(idx, animate) {
+  const box = document.querySelector("[data-arcs]");
+  if (!box || !idx.cards) return;
+  const tables = idx.cards.tables.map((t) => t.name), W = box.clientWidth, H = box.clientHeight || 72, n = tables.length, g = 2;
+  const s = (W - (n - 1) * g) / n, x = (i) => i * (s + g) + s / 2, y = H - 5, pos = new Map(tables.map((t, i) => [t, x(i)]));
+  const linked = new Set(idx.cards.joins.flat());
+  const paths = idx.cards.joins.map(([a, b], k) => {
+    const xa = pos.get(a), xb = pos.get(b);
+    if (xa == null || xb == null) return "";
+    const h = Math.min(H - 12, Math.abs(xb - xa) * 0.28 + 7) / 0.75;   // a cubic curve peaks at 3/4 of its handles
+    const d = a === b ? `M${xa - 3},${y - 1} C${xa - 10},${y - 20} ${xa + 10},${y - 20} ${xa + 3},${y - 1}` : `M${xa},${y} C${xa},${y - h} ${xb},${y - h} ${xb},${y}`;
+    return `<path pathLength="1" class="${animate ? "draw" : ""}" data-s="${esc(a)}" data-t="${esc(b)}" d="${d}" style="--i:${k}"/>`;
+  }).join("");
+  const dots = tables.map((t, i) => `<circle class="${linked.has(t) ? "" : "lone"}" cx="${x(i)}" cy="${y}" r="2.8" data-table="${esc(t)}"/>`).join("");
+  const hits = tables.map((t, i) => `<rect x="${x(i) - s / 2 - g / 2}" y="0" width="${s + g}" height="${H}" data-table="${esc(t)}"/>`).join("");
+  box.innerHTML = `<svg class="arcs" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${paths}${dots}<g class="hits">${hits}</g></svg>`;
+}
+
+const LEVELS = [["simple", "Simples"], ["medium", "Moyennes"], ["hard", "Difficiles"], ["other", "Autres"]];
+const LEVEL = { simple: "Simple", medium: "Moyenne", hard: "Difficile" };
+const QUESTION_HINT = "Survole une case : la question, et ses tables s'allument dans les cartes en dessous.";
+
+// The last eval: the share of exact answers, its questions by difficulty (green exact, red wrong, hollow not scored),
+// the score of each eval over time. Whether it still measures this index is said by the Mise en place
 function evalPanel(idx, db) {
   const head = (extra) => `<div class="detail-head"><h2>Évaluation</h2>${extra}</div>`;
   if (!idx.dataset) {
@@ -2980,25 +3098,188 @@ function evalPanel(idx, db) {
   }
   const e = idx.eval;
   if (!e) return `<section class="panel eval-panel">${head(`<span class="muted-text">${plural(idx.questions, "question")}</span>`)}<p class="panel-text">Jamais évaluée.</p></section>`;
-  const wrong = e.scored - e.exact, unscored = e.questions - e.scored;
+  const unscored = e.questions - e.scored;
   const count = unscored ? `<span class="muted-text" title="${plural(unscored, "question")} sans lignes attendues : l'agent y répond, rien ne le note.">`
     + `${plural(e.questions, "question")}, ${fmt.format(e.scored)} notée${e.scored > 1 ? "s" : ""}</span>` : `<span class="muted-text">${plural(e.questions, "question")}</span>`;
   const link = `<span class="grow"></span><a class="btn ghost small" href="/eval/${encodeURIComponent(db)}" target="_blank" rel="noopener">Ouvrir le tableau ↗</a>`;
-  // one box per question while they stay wider than a few pixels, else one bar in two parts
-  const boxes = e.scored <= 60
-    ? `<div class="eval-boxes">${'<span class="exact"></span>'.repeat(e.exact)}${'<span class="wrong"></span>'.repeat(wrong)}</div>`
-    : `<div class="eval-boxes bar"><span class="exact" style="flex:${e.exact}"></span>${wrong ? `<span class="wrong" style="flex:${wrong}"></span>` : ""}</div>`;
-  const key = (cls, n, word) => `<span class="eval-key"><span class="swatch ${cls}"></span><b>${fmt.format(n)}</b> ${word}${n > 1 ? "s" : ""}</span>`;
+  const results = (e.results || []).map((r, i) => ({ ...r, i, level: LEVEL[r.d] ? r.d : "other" }));
+  const cell = (r) => `<span class="cell-q ${r.x === 1 ? "exact" : r.x === 0 ? "wrong" : "unscored"}" data-q="${r.i}" style="--i:${r.i}"></span>`;
+  const levels = LEVELS.map(([key, label]) => {
+    const rs = results.filter((r) => r.level === key), scored = rs.filter((r) => r.x != null);
+    return rs.length ? `<span class="lvl-name">${label}</span><span class="cells">${rs.map(cell).join("")}</span>`
+      + `<span class="lvl-ratio">${scored.length ? `${scored.filter((r) => r.x === 1).length}/${scored.length}` : "—"}</span>` : "";
+  }).join("");
+  const trend = (e.history || []).length > 1
+    ? `<div class="ev-trend-head"><b>Au fil des évaluations</b><span class="grow"></span><span class="lg"><i class="lg-line"></i>score</span>`
+      + `<span class="lg"><i class="lg-idx"></i>réindexation</span></div><div class="ev-chart" id="ev-chart"></div>`
+    : '<p class="ev-trend-empty">Une seule évaluation pour l\'instant : la courbe du score viendra avec les suivantes.</p>';
   return `<section class="panel eval-panel">${head(count + link)}
-    <div class="eval-body"><div class="eval-score"><span class="score">${e.scored ? `${fmt.format(Math.round(e.exact / e.scored * 100))}<small>%</small>` : "—"}</span>
-      <span>réponses exactes</span></div>
-      <div class="eval-detail">${e.scored ? `<div role="img" aria-label="${fmt.format(e.exact)} exactes, ${fmt.format(wrong)} fausses">${boxes}</div>` : ""}
-        <div class="eval-keys">${e.scored ? key("exact", e.exact, "exacte") + (wrong ? key("wrong", wrong, "fausse") : "") : "<span>Aucune question notée</span>"}
-          <span class="eval-when">Mesurée le ${when(e.at)}</span></div></div></div></section>`;
+    <div class="ev-body"><div class="ev-main">
+        <div class="ev-score" id="ev-score">${e.scored ? `${rollSlot("score", fmt.format(Math.round(e.exact / e.scored * 100)))}<small>%</small>` : "—"}</div>
+        <div class="ev-sub">réponses exactes</div><div class="ev-when">Mesurée le ${when(e.at)}</div>
+        ${levels ? `<div class="ev-levels">${levels}</div>` : ""}</div>
+      <div class="ev-trend">${trend}</div></div>
+    ${results.length ? `<div class="ev-question" id="ev-question">${QUESTION_HINT}</div>` : ""}</section>`;
 }
 
-// The Vue d'ensemble: what the agent reads, its last eval, the setup on the side (the one place that says what to do).
-// The Fiches: the document of the table chosen
+const shortDay = (seconds) => new Date(seconds * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+
+// The score of each eval, evenly spaced (runs months apart stay readable), the indexes between them as diamonds placed
+// by date, the last point in the accent. mode: "draw" the line from the left (another database), "extend" its last
+// segment (a new eval), "mark" the last diamond (a new index), "" still
+function drawEvalChart(idx, mode) {
+  const box = $("ev-chart");
+  if (!box) return;
+  const points = idx.eval.history, W = Math.max(box.clientWidth, 200), H = 168, L = 40, R = 14, T = 10, B = 24;
+  const builds = [...(idx.builds || []), ...(idx.built_at ? [idx.built_at] : [])].filter((t) => t >= points[0].at);
+  const after = builds.filter((t) => t >= points.at(-1).at);
+  const step = (W - L - R) / Math.max(points.length - 1 + (after.length ? 0.6 : 0), 1), X = (i) => L + i * step;
+  const xAt = (t) => {
+    for (let k = 0; k < points.length - 1; k++) if (t < points[k + 1].at) return X(k) + (t - points[k].at) / (points[k + 1].at - points[k].at) * step;
+    return X(points.length - 1) + step * 0.6 * (after.indexOf(t) + 1) / (after.length + 0.5);   // after the last eval, in its slot
+  };
+  const pcts = points.map((p) => p.exact / p.scored * 100), lo = Math.min(70, Math.floor((Math.min(...pcts) - 4) / 10) * 10);
+  const Y = (v) => T + (100 - v) / (100 - lo) * (H - T - B), base = H - B, every = 100 - lo > 50 ? 20 : 10;
+  const pts = points.map((p, i) => [X(i), Y(pcts[i])]);
+  const line = (list) => list.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  const grid = [];
+  for (let v = lo; v <= 100; v += every) grid.push(`<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 8}" y="${Y(v) + 3.5}" text-anchor="end">${v} %</text>`);
+  const markers = builds.map((t, i) => {
+    const x = xAt(t), fresh = mode === "mark" && i === builds.length - 1;
+    return `<g class="c-idx${fresh ? " fade" : ""}"><line x1="${x}" x2="${x}" y1="${T}" y2="${base}"/>`
+      + `<rect class="${fresh ? "pop" : ""}" x="${x - 3.5}" y="${base - 3.5}" width="7" height="7" transform="rotate(45 ${x} ${base})"/>`
+      + `<circle class="c-hit" cx="${x}" cy="${base}" r="9" data-ix="${i}"/></g>`;
+  }).join("");
+  const label = Math.ceil(points.length / 8);
+  const axis = points.map((p, i) => ((points.length - 1 - i) % label ? "" : `<text x="${pts[i][0]}" y="${H - 4}" text-anchor="middle">${shortDay(p.at)}</text>`)).join("");
+  const head = mode === "extend" ? pts.slice(0, -1) : pts, tail = mode === "extend" ? pts.slice(-2) : null;
+  const dots = pts.map(([x, y], i) => {
+    const last = i === pts.length - 1, pop = last && (mode === "draw" || mode === "extend");
+    const delay = mode === "draw" ? 200 + i * 120 : mode === "extend" && last ? 700 : 0;
+    return `${last ? `<circle class="c-halo${pop ? " pop" : ""}" cx="${x}" cy="${y}" r="9" style="animation-delay:${delay}ms"/>` : ""}`
+      + `<circle class="c-dot${last ? " last" : ""}${pop ? " pop" : mode === "draw" ? " fade" : ""}" cx="${x}" cy="${y}" r="${last ? 4.5 : 3.5}" style="animation-delay:${delay}ms"/>`
+      + `<circle class="c-hit" cx="${x}" cy="${y}" r="12" data-ev="${i}"/>`;
+  }).join("");
+  box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Score des évaluations successives">
+    <defs><linearGradient id="ev-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+    <g class="c-grid">${grid.join("")}</g>${markers}
+    <path class="c-area${mode === "draw" || mode === "extend" ? " fade" : ""}" d="${line(pts)}L${pts.at(-1)[0]},${base}L${pts[0][0]},${base}Z"/>
+    <path class="c-line${mode === "draw" ? " draw" : ""}" pathLength="1" d="${line(head)}"/>${tail ? `<path class="c-line draw" pathLength="1" d="${line(tail)}"/>` : ""}
+    <g class="c-axis">${axis}</g>${dots}</svg><div class="chart-tip" hidden></div>`;
+  box.onpointermove = (ev) => {
+    const hit = ev.target.closest(".c-hit"), tip = box.querySelector(".chart-tip");
+    if (!hit) { tip.hidden = true; return; }
+    if (hit.dataset.ev != null) {
+      const p = points[Number(hit.dataset.ev)];
+      tip.innerHTML = `<b>${fmt.format(Math.round(p.exact / p.scored * 100))} %</b> · ${fmt.format(p.exact)} sur ${fmt.format(p.scored)} · le ${when(p.at)}`;
+    } else tip.innerHTML = `Index reconstruit le <b>${when(builds[Number(hit.dataset.ix)])}</b>`;
+    tip.hidden = false;
+    const r = hit.getBoundingClientRect(), b = box.getBoundingClientRect();
+    tip.style.left = `${Math.min(r.left - b.left + r.width / 2 + 10, b.width - tip.offsetWidth)}px`;
+    tip.style.top = `${r.top - b.top - 30}px`;
+  };
+  box.onpointerleave = () => { box.querySelector(".chart-tip").hidden = true; };
+}
+
+// While the agent is evaluated on this database: its questions fill in as they are asked, the one asked now pulses
+// and the score waits faded; the answers land once the eval ends (the page drawn again)
+function evalProgress() {
+  const levels = document.querySelector(".ev-levels"), job = ui.job;
+  if (!levels) return;
+  const running = Boolean(job?.running && job.step === "eval" && job.db === ui.db);
+  const now = running && job.progress ? job.progress[0] - 1 : -1;
+  levels.classList.toggle("asking", running);
+  $("ev-score")?.classList.toggle("stale", running);
+  levels.querySelectorAll(".cell-q").forEach((cell) => {
+    const i = Number(cell.dataset.q);
+    cell.classList.toggle("asked", running && i < now);
+    cell.classList.toggle("now", running && i === now);
+  });
+}
+
+// The table under the pointer (a bar, a dot of the joins, a column of values), the tables of a question of the eval
+// or of a metric: followed in every card
+function ovPointer(e) {
+  const idx = ui.idx;
+  if (!idx?.cards) return;
+  const q = e.target.closest(".cell-q"), met = e.target.closest("[data-metric]");
+  const col = e.target.closest(".read-viz [data-col]"), table = e.target.closest(".read-viz [data-table]");
+  const focus = q ? { tables: idx.eval.results[Number(q.dataset.q)].tables, q: Number(q.dataset.q) }
+    : met ? { tables: idx.cards.metrics.find((m) => m.name === met.dataset.metric)?.tables || [], metric: met.dataset.metric }
+    : col ? { tables: [col.dataset.table], col: col.dataset.col }
+    : table ? { tables: [table.dataset.table] } : null;
+  if (JSON.stringify(focus) === JSON.stringify(OV.focus)) return;
+  OV.focus = focus;
+  applyOvFocus();
+}
+
+function applyOvFocus() {
+  const idx = ui.idx, root = document.querySelector(".overview");
+  if (!root || !idx?.cards) return;
+  const f = OV.focus, set = new Set(f?.tables || []), near = new Set();
+  root.querySelectorAll(".read-viz").forEach((v) => v.classList.toggle("focusing", Boolean(f) && !v.querySelector("[data-samples]")));
+  root.querySelectorAll(".read-viz [data-table]").forEach((el) => {
+    el.classList.toggle("on", set.has(el.dataset.table) && (!f.col || !el.dataset.col || el.dataset.col === f.col));
+  });
+  root.querySelectorAll(".arcs path").forEach((p) => {
+    const on = set.has(p.dataset.s) || set.has(p.dataset.t);
+    p.classList.toggle("on", on);
+    if (on) near.add(p.dataset.s).add(p.dataset.t);
+  });
+  root.querySelectorAll(".arcs circle").forEach((c) => c.classList.toggle("near", near.has(c.dataset.table)));
+  root.querySelectorAll("[data-metric]").forEach((li) => {
+    const m = idx.cards.metrics.find((x) => x.name === li.dataset.metric);
+    li.classList.toggle("on", Boolean(f) && (f.metric ? f.metric === m.name : m.tables.some((t) => set.has(t))));
+  });
+  root.querySelectorAll(".cell-q").forEach((c) => c.classList.toggle("on", f?.q === Number(c.dataset.q)));
+  const one = set.size === 1 ? idx.cards.tables.find((t) => set.has(t.name)) : null, grid = root.querySelector("[data-samples]");
+  const shown = one || sampleTable(idx);
+  if (grid && shown && grid.dataset.samples !== shown.name) { grid.innerHTML = sampleGrid(shown, idx.sample_rows); grid.dataset.samples = shown.name; }
+  const question = $("ev-question"), r = f?.q != null ? idx.eval.results[f.q] : null;
+  if (question) {
+    question.innerHTML = !r ? QUESTION_HINT : `<span class="pill todo">${LEVEL[r.d] || "Question"}</span><span class="q">${esc(r.q)}</span>`
+      + (r.x === 1 ? '<span class="ok">exacte</span>' : r.x === 0 ? '<span class="ko">fausse</span>' : "<span>non notée</span>")
+      + `<span>· ${r.latency != null ? `${String(r.latency.toFixed(1)).replace(".", ",")} s · ` : ""}${r.tables.length ? `lit ${names(r.tables)}` : "aucune table lue"}</span>`;
+    question.classList.toggle("on", Boolean(r));
+  }
+  ovNotes(idx, f, one);
+}
+
+// The word under each card: its own, or what it is for the tables under the pointer
+function ovNotes(idx, f, one) {
+  const note = (key, html, tone = "") => {
+    const el = document.querySelector(`[data-card="${key}"] .read-note`);
+    if (!el) return;
+    el.className = `read-note${tone ? ` ${tone}` : ""}`;
+    el.innerHTML = `<span>${html}</span>`;
+  };
+  if (!f) { Object.entries(OV.notes).forEach(([key, n]) => note(key, n.note, n.tone)); return; }
+  const set = new Set(f.tables), list = idx.cards.tables.filter((t) => set.has(t.name));
+  const lead = `<b>${f.metric ? esc(f.metric) : f.q != null ? "La question" : esc(f.tables.join(", "))}</b> · `;
+  const status = one && idx.tables.find((t) => t.name === one.name)?.status;
+  note("tables", lead + (one ? (one.rows ? plural(one.rows, "ligne") : one.rows === 0 ? "vide" : "lignes non comptées") + (status === "changed" ? ", fiche ancienne" : "")
+    : plural(list.length, "table")), "focus");
+  const cols = list.reduce((n, t) => n + t.kinds.length, 0), hid = list.reduce((n, t) => n + t.hidden, 0);
+  note("columns", lead + plural(cols, "colonne") + (hid ? `, ${fmt.format(hid)} cachée${hid > 1 ? "s" : ""}` : ""), "focus");
+  const joins = idx.cards.joins.filter(([a, b]) => (one ? set.has(a) || set.has(b) : set.has(a) && set.has(b)));
+  note("joins", lead + (joins.length ? `${plural(joins.length, "jointure")}${one ? "" : " entre elles"}` : "aucune jointure"), "focus");
+  if (one) note("samples", `${lead}${fmt.format(idx.sample_rows)} × ${plural(one.kinds.length, "colonne")}`, "focus");
+  else note("samples", OV.notes.samples.note, OV.notes.samples.tone);
+  const values = list.flatMap((t) => t.values.map(([column, count, where]) => ({ column, count, where }))).filter((v) => !f.col || v.column === f.col);
+  const total = values.reduce((n, v) => n + v.count, 0);
+  note("values", f.col
+    ? `<b>${esc(f.tables[0])}.${esc(f.col)}</b> · ${values[0]?.where === "dropped" ? "aucune valeur indexée"
+      : `${plural(values[0]?.count ?? 0, "valeur")}, ${values[0]?.where === "listed" ? "dans la fiche" : "cherchées à la demande"}`}`
+    : lead + (values.length ? `${plural(total, "valeur")} dans ${plural(values.length, "colonne")}` : "aucune colonne catégorielle"), "focus");
+  const metrics = f.metric ? idx.cards.metrics.filter((m) => m.name === f.metric) : idx.cards.metrics.filter((m) => m.tables.some((t) => set.has(t)));
+  note("metrics", lead + (f.metric ? esc(metrics[0]?.tables.join(", ") || "aucune table lue")
+    : metrics.length ? plural(metrics.length, "métrique") : "aucune métrique"), "focus");
+}
+
+// The Vue d'ensemble: the last eval and its trend, what the agent reads, the setup on the side (the one place that
+// says what to do). Another database draws its bars, joins, line and gauge; a new index marks its diamond and says by
+// how much each figure changed; a new eval extends the line and lands its answers. The Fiches: the document of a table
 function renderIndex(el, message) {
   const idx = ui.idx;
   if (!idx) { el.innerHTML = '<p class="placeholder">Lecture de l\'index…</p>'; return; }
@@ -3007,31 +3288,64 @@ function renderIndex(el, message) {
     else el.innerHTML = '<p class="placeholder">Choisis une table pour voir sa fiche, telle que l\'agent la lit.</p>';
     return;
   }
-  const read = idx.trace ? `<div class="agent-groups">${agentFigures(idx).map(([title, figures]) => `<div class="agent-group">
-      <h3>${title}</h3><div class="agent-figures">${figures.join("")}</div></div>`).join("")}</div>`
-    : `<p class="panel-text">${idx.values_at ? `Index du ${when(idx.values_at)}, construit avant que le studio en garde la trace : `
+  const mode = OV.db !== ui.db ? "draw" : OV.eval !== idx.eval?.at ? "extend" : OV.built !== idx.built_at ? "mark" : "";
+  Object.assign(OV, { db: ui.db, eval: idx.eval?.at, built: idx.built_at, focus: mode === "draw" ? null : OV.focus });
+  const cards = idx.trace && idx.cards, figures = cards ? agentFigures(idx) : [];
+  OV.notes = Object.fromEntries(figures.map((f) => [f.key, { note: f.note, tone: f.tone }]));
+  const read = cards ? CARD_GROUPS.map(([title, keys]) => `<h3 class="read-group">${title}</h3><div class="read-cards">`
+      + `${keys.map((key) => readCard(figures.find((f) => f.key === key), cardViz(key, idx))).join("")}</div>`).join("")
+    : `<p class="panel reads-empty">${idx.values_at ? `Index du ${when(idx.values_at)}, construit avant que le studio en garde la trace : `
       + "ses chiffres viendront à la prochaine indexation." : "Pas encore indexée : l'agent ne voit aucune table de cette base."}</p>`;
-  el.innerHTML = `<div class="overview">
-    <div class="overview-main">
-      <section class="panel agent-panel">
-        <div class="detail-head"><h2>Ce que l'agent lit</h2><span class="grow"></span>
-          ${idx.trace ? '<button class="btn ghost small" type="button" data-setup="documents">Lire les fiches →</button>' : ""}</div>
-        ${message ? `<p class="note error">${esc(message)}</p>` : ""}${read}
-      </section>
-      ${evalPanel(idx, ui.db)}
-    </div>
+  const reads = `<section class="reads"><div class="reads-head"><h2>Ce que l'agent lit</h2><span class="grow"></span>
+      ${idx.trace ? '<button class="btn ghost small" type="button" data-setup="documents">Lire les fiches →</button>' : ""}</div>
+      ${message ? `<p class="note error">${esc(message)}</p>` : ""}${read}</section>`;
+  const evaluated = idx.dataset && idx.eval;   // an eval to show leads the page; none, it follows what the agent reads
+  el.innerHTML = `<div class="overview${mode === "draw" ? " drawing" : mode === "extend" ? " landed" : ""}">
+    <div class="overview-main">${evaluated ? evalPanel(idx, ui.db) + reads : reads + evalPanel(idx, ui.db)}</div>
     <aside class="panel setup">${setupCard()}</aside>
   </div>`;
+  const overview = el.querySelector(".overview");
+  drawEvalChart(idx, mode);
+  drawArcs(idx, mode === "draw");
+  rollFigures(el);
+  applyOvFocus();
+  evalProgress();
+  overview.addEventListener("pointerover", ovPointer);
+  overview.addEventListener("pointerleave", () => { if (OV.focus) { OV.focus = null; applyOvFocus(); } });
+  // another width (the window, the side panel folding under): the chart and the joins drawn again, still
+  OV.resize?.disconnect();
+  let width = overview.querySelector(".overview-main").clientWidth;
+  OV.resize = new ResizeObserver(([entry]) => {
+    if (Math.round(entry.contentRect.width) === Math.round(width) || !document.body.contains(overview)) return;
+    width = entry.contentRect.width;
+    drawEvalChart(ui.idx, ""); drawArcs(ui.idx, false); applyOvFocus();
+  });
+  OV.resize.observe(overview.querySelector(".overview-main"));
   el.querySelectorAll("[data-setup]").forEach((button) => { button.onclick = () => setupGo(button.dataset.setup); });
   $("setup-wizard")?.addEventListener("click", () => openWizard());
 }
 
-// The setup of the database on its Vue d'ensemble: each step on a line, opening its tab (the index: the Fiches); the
-// step to do now open in place, with why and the button that does it (the index and the eval too); the guided setup
+// The steps of the setup on a gauge, one segment each, coloured by its state (green done, amber to finish, red the
+// agent won't start, grey to do), the number done in its middle
+function setupGauge(steps) {
+  const cx = 100, cy = 100, r = 86, gap = 3, span = (180 - gap * (steps.length - 1)) / steps.length;
+  const p = (a) => `${(cx + r * Math.cos(a * Math.PI / 180)).toFixed(2)},${(cy - r * Math.sin(a * Math.PI / 180)).toFixed(2)}`;
+  const arcs = steps.map((s, i) => {
+    const a1 = 180 - i * (span + gap), d = `M${p(a1)} A${r},${r} 0 0 1 ${p(a1 - span)}`;
+    return `<path class="arc-track" d="${d}"/><path class="arc-seg ${s.state}" pathLength="1" d="${d}" style="--i:${i}"/>`;
+  }).join("");
+  const done = steps.filter((s) => s.state === "done").length;
+  return `<div class="gauge"><svg viewBox="0 0 200 108" aria-hidden="true">${arcs}</svg>
+    <div class="gauge-text"><span class="gauge-big">${rollSlot("setup-done", fmt.format(done))}<small> sur ${fmt.format(steps.length)}</small></span>
+      <span class="gauge-sub">étapes faites</span></div></div>`;
+}
+
+// The setup of the database on its Vue d'ensemble: its gauge, each step on a line, opening its tab (the index: the
+// Fiches); the step to do now open in place, with why and the button that does it (the index and the eval too); the
+// guided setup
 function setupCard() {
   if (ui.data?.db !== ui.db || !ui.idx) return '<p class="placeholder">Lecture des étapes…</p>';
   const base = { summary: ui.data.summary, index: ui.idx }, steps = pipelineSteps(base), next = nextStep(base, steps);
-  const done = steps.filter((p) => p.state === "done").length;
   const dot = (p) => `<span class="dot ${p.state}">${p.state === "done" ? CHECK : p.state === "bad" ? BANG : ""}</span>`;
   const count = (p) => `<span class="setup-count ${p.state}">${esc(p.count)}</span>`;
   const row = (p) => (p.key === next?.key
@@ -3039,8 +3353,8 @@ function setupCard() {
         <p>${next.detail}</p><button class="btn primary" type="button" data-setup="${p.key}">${next.label} →</button></li>`
     : `<li><button type="button" class="setup-step" data-setup="${p.key === "index" ? "documents" : p.key}" title="${esc(p.tip)}">${dot(p)}
         <span class="setup-name">${STAGES[p.key]}</span>${count(p)}<span class="setup-go">→</span></button></li>`);
-  return `<div class="setup-head"><h2 title="Ce qui prépare la base pour l'agent. Chaque étape s'ouvre dans son onglet.">Mise en place</h2>
-      <span class="muted-text">${fmt.format(done)} sur ${fmt.format(steps.length)}</span></div>
+  return `<div class="setup-head"><h2 title="Ce qui prépare la base pour l'agent. Chaque étape s'ouvre dans son onglet.">Mise en place</h2></div>
+    ${setupGauge(steps)}
     <ol class="setup-steps">${steps.map(row).join("")}</ol>
     <div class="setup-foot"><button class="btn" type="button" id="setup-wizard"
       title="Repasse les étapes une à une, à partir de la première qui n'est pas finie.">Lancer la mise en place guidée</button></div>`;
@@ -3714,6 +4028,7 @@ async function pollJob() {
   // A job that fails opens its detail: what went wrong is in the log
   if (before?.id === job.id && before.running && !job.running && job.returncode && !job.stopped) ui.logOpen = true;
   renderJob();
+  if (job.step === "eval" && job.db === ui.db && ui.step === "overview") evalProgress();   // the question asked now
   if (progressed && job.db === ui.db) {
     await loadTables();
     // Only the table the job wrote gets its detail reloaded: a description being typed in another one stays

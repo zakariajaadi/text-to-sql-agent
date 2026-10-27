@@ -7,6 +7,7 @@ to tell which tables changed in the semantic layer since, without loading Chroma
 
 One JSON file per database, next to its value index: <value_search.directory>/<db>.index.json
     built_at     when the index was written (seconds since the epoch)
+    builds       when the indexes before it were written, oldest first (kept from the previous trace)
     sample_rows  rows under each DDL of the documents (databases[].sample_rows)
     tables       {table: {semantics, relations, columns, chars, values}}
         semantics  its block of tables.yaml when the run started, None for a raw DDL
@@ -30,10 +31,23 @@ def trace_path(db_name: str) -> Path:
     return Path(cfg.value_search.directory) / f"{db_name}.index.json"
 
 
+# The dates of the indexes before the last one kept in its trace: the studio marks them on the score of the evals
+BUILDS_KEPT = 200
+
+
 def write_trace(db_name: str, trace: dict) -> None:
-    """Write the trace, replacing the previous one: a temporary file renamed, never read half-written."""
+    """
+    Write the trace, replacing the previous one: a temporary file renamed, never read half-written. The dates of
+    the previous indexes carry over (`builds`).
+    """
     path = trace_path(db_name)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        previous = json.loads(path.read_text()) if path.exists() else None
+    except json.JSONDecodeError:
+        previous = None
+    if previous and previous.get("built_at"):
+        trace = {**trace, "builds": [*previous.get("builds", []), previous["built_at"]][-BUILDS_KEPT:]}
     temporary = path.with_name(f"{path.name}.tmp")
     # default=str: a data_as_of read by YAML as a date
     temporary.write_text(json.dumps(trace, ensure_ascii=False, indent=1, default=str))

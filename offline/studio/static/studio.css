@@ -854,30 +854,106 @@ body.map-open { overflow: hidden; }
   .tiles { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ── The Vue d'ensemble: what the agent reads in six figures, its last eval, the setup on the side ── */
-/* the bubbles of the figures pass its edges, over the eval under it (a container is a stacking context of its own) */
-.agent-panel { position: relative; z-index: 2; overflow: visible; container-type: inline-size; }
+/* ── The Vue d'ensemble: the last eval and its trend, what the agent reads in six cards, the setup on the side ── */
 .panel-text { margin: 0; padding: 0 14px 18px; font-size: var(--fs-md); color: var(--ink-2); }
 .panel-text .mono { font-size: var(--fs-sm); }
-/* two groups side by side, a rule between them: the structure, then the data and the calculations */
-.agent-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; padding: 6px 14px 20px; }
-.agent-group { display: grid; gap: 12px; align-content: start; min-width: 0; }
-.agent-group + .agent-group { padding-left: 24px; border-left: 1px solid var(--line); }
-.agent-group h3 { margin: 0; font-size: var(--fs-xs); font-weight: 500; color: var(--muted); }
-.agent-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 20px; }
-.figure { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; border-radius: var(--radius-sm); outline-offset: 4px; cursor: help; }
-.figure-value { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.figure-label {
-  align-self: flex-start; font-size: var(--fs-sm); color: var(--ink-2);
+
+/* A figure that rolls to its new value, digit by digit; by how much it changed, for a few seconds */
+.roll { display: inline-flex; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.roll-digit { display: inline-block; height: 1.2em; line-height: 1.2em; overflow: hidden; }
+.roll-digit > span { display: flex; flex-direction: column; transition: transform 0.75s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.roll-digit > span > span { height: 1.2em; }
+.delta {
+  align-self: center; padding: 0 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink);
+  font-size: var(--fs-xs); font-weight: 500; animation: delta-out 6s ease-in forwards;
+}
+@keyframes delta-out { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* the last eval: its score, its questions by difficulty, the score over the evals; the question under the pointer */
+.ev-body { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px 32px; padding: 2px 16px 8px; }
+.eval-panel { container-type: inline-size; }
+@container (max-width: 640px) { .ev-body { grid-template-columns: minmax(0, 1fr); } }
+.ev-score { font-size: var(--fs-hero); font-weight: 600; letter-spacing: -0.04em; line-height: 1.05; transition: opacity 0.3s; }
+.ev-score small { font-size: var(--fs-xl); font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 3px; }
+.ev-score.stale { opacity: 0.35; }   /* an eval running: the score waits for its new value */
+.ev-sub { font-size: var(--fs-sm); color: var(--ink-2); }
+.ev-when { font-size: var(--fs-xs); color: var(--muted); }
+.ev-levels { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 9px 10px; align-items: center; margin-top: 16px; }
+.lvl-name { font-size: var(--fs-xs); color: var(--muted); }
+.lvl-ratio { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.cells { display: flex; flex-wrap: wrap; gap: 3px; }
+.cell-q {
+  width: 13px; height: 13px; border-radius: 3px; background: transparent; box-shadow: inset 0 0 0 1px var(--line); cursor: pointer;
+  transition: background-color 0.3s, box-shadow 0.15s;
+}
+.cell-q.exact { background: var(--good); box-shadow: none; }
+.cell-q.wrong { background: var(--bad-ink); box-shadow: none; }
+.cell-q.unscored { box-shadow: inset 0 0 0 1px var(--muted); }
+.cell-q.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent); }
+/* asked one by one while the eval runs, the one asked now pulsing; the answers land when it ends */
+.ev-levels.asking .cell-q { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.ev-levels.asking .cell-q.asked { background: var(--bar); box-shadow: none; }
+.ev-levels.asking .cell-q.now { box-shadow: inset 0 0 0 1.5px var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+.landed .cell-q { animation: land 0.45s cubic-bezier(0.3, 1.5, 0.5, 1) both; animation-delay: calc(var(--i) * 35ms); }
+@keyframes land { from { transform: scale(0.3); opacity: 0; } }
+.ev-trend { min-width: 0; }
+.ev-trend-head { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: var(--fs-xs); color: var(--muted); }
+.ev-trend-head b { font-weight: 500; color: var(--ink-2); }
+.ev-trend-empty { margin: 0; padding-top: 4px; font-size: var(--fs-sm); color: var(--muted); }
+.lg { display: inline-flex; align-items: center; gap: 6px; }
+.lg-line { width: 14px; height: 2px; border-radius: 2px; background: var(--ink-2); }
+.lg-idx { width: 7px; height: 7px; transform: rotate(45deg); background: var(--muted); }
+.ev-chart { position: relative; height: 168px; margin-top: 4px; }
+.ev-chart svg { display: block; overflow: visible; }
+.c-grid line { stroke: var(--line); }
+.c-grid text, .c-axis text { font: 400 10.5px var(--font-mono); fill: var(--muted); }
+.c-idx line { stroke: var(--edge); stroke-dasharray: 3 3; }
+.c-idx rect { fill: var(--muted); }
+.c-area { fill: url(#ev-area); }
+.c-line { fill: none; stroke: var(--ink-2); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+.c-dot { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.5; }
+.c-dot.last { fill: var(--accent); stroke: var(--accent); }
+.c-halo { fill: var(--accent-soft); }
+.c-hit { fill: transparent; cursor: pointer; }
+.chart-tip {
+  position: absolute; z-index: 3; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); font-size: var(--fs-xs); color: var(--ink-2); white-space: nowrap; pointer-events: none;
+}
+.chart-tip b { font-weight: 600; color: var(--ink); }
+.ev-question {
+  display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; min-height: 40px; margin: 6px 16px 14px; padding: 8px 12px;
+  border-radius: var(--radius); background: var(--bg); font-size: var(--fs-sm); color: var(--muted);
+}
+.ev-question .q { color: var(--ink); }
+.ev-question .ok { color: var(--good-ink); font-weight: 500; }
+.ev-question .ko { color: var(--bad-ink); font-weight: 500; }
+/* drawn once: a line from the left, a point, a diamond */
+.draw { stroke-dasharray: 1; animation: draw 1s cubic-bezier(0.3, 0.7, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 40ms); }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.fade { animation: fade 0.6s ease-out both; }
+@keyframes fade { from { opacity: 0; } }
+.pop { transform-box: fill-box; transform-origin: center; animation: pop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+@keyframes pop { from { transform: scale(0); } }
+
+/* what the agent reads: two groups of three cards, each with its figure, the word under it and its picture; the tables
+   in the same order in every picture; the bubble of a name passes the edges of its card */
+.reads { container-type: inline-size; display: grid; gap: 10px; min-width: 0; }
+.reads-head { display: flex; align-items: center; gap: 12px; padding: 4px 2px 0; }
+.reads-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.reads-empty { margin: 0; padding: 16px; font-size: var(--fs-md); color: var(--ink-2); }
+.read-group { margin: 6px 2px 0; font-size: var(--fs-xs); font-weight: 500; color: var(--muted); }
+.read-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@container (max-width: 720px) { .read-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 460px) { .read-cards { grid-template-columns: minmax(0, 1fr); } }
+.read-card { display: grid; grid-template-rows: auto auto 1fr; min-width: 0; padding: 14px 14px 12px; overflow: visible; transition: border-color 0.2s; }
+.read-card:hover { border-color: var(--muted); }
+.read-top { position: relative; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.read-value { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.read-label {
+  font-size: var(--fs-sm); color: var(--ink-2); cursor: help; border-radius: var(--radius-sm);
   text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px;
 }
-/* the word under a figure; a dot before it when that figure needs looking at, amber or red */
-.figure-note { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
-.figure-note.warn { color: var(--warn-ink); }
-.figure-note.bad { color: var(--bad-ink); }
-.figure-note.warn::before, .figure-note.bad::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
-.figure-note.bad::before { background: var(--bad-ink); }
-/* what a figure is in a bubble on hover, focus or tap, what is wrong first; opening towards the inside of the card */
+/* what a figure is in a bubble on hover, focus or tap of its name, what is wrong first */
 .figure-tip {
   position: absolute; left: 0; top: calc(100% + 8px); z-index: 3; width: max-content; max-width: min(320px, 80vw);
   display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
@@ -887,14 +963,74 @@ body.map-open { overflow: hidden; }
 .figure-tip p { margin: 0; }
 .figure-tip .issue { color: var(--ink); }
 .figure-tip .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
-.figure:hover .figure-tip, .figure:focus .figure-tip { opacity: 1; visibility: visible; }
-.agent-group + .agent-group .figure .figure-tip { left: auto; right: 0; }
-@container (max-width: 640px) {
-  .agent-groups { grid-template-columns: minmax(0, 1fr); row-gap: 16px; }
-  .agent-group + .agent-group { padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-  .agent-group .figure:nth-child(n) .figure-tip { left: 0; right: auto; }
-  .agent-group .figure:nth-child(3n) .figure-tip { left: auto; right: 0; }
+.read-label:hover + .figure-tip, .read-label:focus + .figure-tip { opacity: 1; visibility: visible; }
+.read-card:nth-child(3n) .figure-tip { left: auto; right: 0; }
+/* the word under a figure; a dot before it when that figure needs looking at, amber or red; the accent when it speaks
+   of the tables under the pointer */
+.read-note { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 1.6em; font-size: var(--fs-xs); color: var(--muted); }
+.read-note span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.read-note b { font-weight: 500; color: var(--ink); }
+.read-note.warn { color: var(--warn-ink); }
+.read-note.bad { color: var(--bad-ink); }
+.read-note.focus { color: var(--ink-2); }
+.read-note.warn::before, .read-note.bad::before, .read-note.focus::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.read-note.bad::before { background: var(--bad-ink); }
+.read-note.focus::before { background: var(--accent); }
+.read-viz { position: relative; align-self: end; height: 72px; margin-top: 12px; }
+/* bars: a table (rows, columns shown over hidden), a categorical column (its values in the documents, searched, none) */
+.bars { display: flex; align-items: flex-end; gap: 2px; height: 100%; }
+.bars.short { height: 52px; }
+.bars .b {
+  flex: 1 1 0; min-width: 0; border-radius: 2px 2px 0 0; background: var(--bar); cursor: pointer; transform-origin: bottom;
+  transition: background-color 0.2s, opacity 0.2s;
 }
+.bars .b.grp { margin-left: 4px; }   /* the next table */
+.bars .b.changed { background: var(--warn); }
+.bars .b.nil { background: transparent; box-shadow: inset 0 0 0 1px var(--bar); }
+.bars .b.leaving { background: transparent; box-shadow: inset 0 0 0 1px var(--warn); }
+.bars .b.listed, .sw.listed { background: color-mix(in srgb, var(--accent) 62%, var(--surface)); }   /* softened: a card of full accent shouts */
+.bars .b.dropped { background: transparent; box-shadow: inset 0 0 0 1.5px var(--warn); }
+.bars .b.stack { display: flex; flex-direction: column; gap: 1px; background: none; }
+.bars .b.stack i { display: block; background: var(--bar); border-radius: 2px 2px 0 0; transition: background-color 0.2s; }
+.bars .b.stack i.hid { background: repeating-linear-gradient(135deg, var(--bar) 0 1.5px, transparent 1.5px 4px); opacity: 0.7; }
+.read-viz.focusing .b:not(.on) { opacity: 0.22; }
+.read-viz .b.on:not(.listed):not(.changed):not(.stack), .read-viz .b.on.stack i:not(.hid) { background: var(--ink-2); }
+.drawing .read-viz .b { animation: bar-grow 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(var(--i) * 14ms); }
+@keyframes bar-grow { from { transform: scaleY(0); } }
+.viz-keys { display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 6px; font-size: var(--fs-xs); color: var(--muted); }
+.viz-keys b { font-weight: 500; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.sw.searched { background: var(--bar); }
+/* the joins: an arc each over the line of tables, those of the tables under the pointer in the accent */
+.arcs-box { height: 100%; }
+.arcs path { fill: none; stroke: var(--edge-on); stroke-width: 1.3; transition: stroke 0.2s, opacity 0.2s, stroke-width 0.2s; }
+.arcs circle { fill: var(--surface); stroke: var(--edge-on); stroke-width: 1.3; transition: fill 0.2s, stroke 0.2s, opacity 0.2s; }
+.arcs circle.lone { stroke: var(--muted); stroke-dasharray: 2 2; }
+.arcs .hits rect { fill: transparent; cursor: pointer; }
+.read-viz.focusing .arcs path:not(.on) { opacity: 0.12; }
+.read-viz.focusing .arcs circle:not(.on):not(.near) { opacity: 0.35; }
+.arcs path.on { stroke: var(--accent); stroke-width: 2; }
+.arcs circle.on { fill: var(--accent); stroke: var(--accent); }
+.arcs circle.near { stroke: var(--ink); }
+/* the sample rows of a table: its header, then a row of cells each */
+.sgrid { display: grid; gap: 4px; align-content: end; height: 100%; }
+.srow { display: flex; gap: 3px; }
+.srow i { display: block; height: 10px; flex: 0 1 0; border-radius: 3px; background: var(--chip); }
+.srow.hdr i { height: 5px; background: var(--bar); opacity: 0.8; }
+.drawing .srow { animation: fade 0.5s ease-out both; }
+/* the metrics, the refused ones first */
+.mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; align-content: end; height: 100%; font-size: var(--fs-xs); }
+.mlist li {
+  display: grid; grid-template-columns: 7px auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 1px 6px;
+  border-radius: var(--radius-sm); cursor: pointer; transition: opacity 0.2s, background-color 0.2s;
+}
+.mlist li.on { background: var(--hover); }
+.read-viz.focusing .mlist li:not(.on) { opacity: 0.3; }
+.mlist .nm { font-family: var(--font-mono); color: var(--ink); white-space: nowrap; }
+.mlist .tb { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlist .more { display: block; padding: 1px 6px 1px 21px; color: var(--muted); cursor: default; }
+.m-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+.m-dot.bad { background: var(--bad-ink); }
 /* the categorical columns in the bubble of the values: values in the document (the accent), searched (grey), none (the empty track) */
 .split { display: flex; gap: 2px; height: 6px; border-radius: 999px; overflow: hidden; background: var(--chip); }
 .split .listed, .swatch.listed { background: var(--accent); }
@@ -902,24 +1038,24 @@ body.map-open { overflow: hidden; }
 .split-keys { display: grid; grid-template-columns: 9px auto minmax(0, 1fr); gap: 4px 8px; align-items: center; }
 .split-keys b { font-weight: 600; color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
 .swatch { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-/* the last eval: its score, one box per scored question (green exact, red wrong), the day it was measured */
-.eval-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 6px 14px 18px; }
-.eval-score { display: grid; min-width: 96px; }
-.eval-score .score { font-size: 2.25rem; font-weight: 600; letter-spacing: -0.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
-.eval-score .score small { font-size: 0.5em; font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 3px; }
-.eval-score > span:last-child { font-size: var(--fs-xs); color: var(--muted); }
-.eval-detail { flex: 1 1 320px; min-width: 0; display: grid; gap: 8px; }
-.eval-boxes { display: flex; gap: 3px; height: 12px; }
-.eval-boxes span { flex: 1; border-radius: 2px; }
-.eval-boxes.bar { width: auto; gap: 2px; border-radius: 999px; overflow: hidden; }   /* not the 36px of the fill .bar */
-.eval-boxes.bar span { border-radius: 0; }
-.eval-boxes .exact, .swatch.exact { background: var(--good); }
-.eval-boxes .wrong, .swatch.wrong { background: var(--bad-ink); }
-.eval-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; font-size: var(--fs-sm); color: var(--ink-2); }
-.eval-key { display: inline-flex; align-items: center; gap: 7px; }
-.eval-key .swatch { border-radius: 2px; }
-.eval-key b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
-.eval-when { margin-left: auto; font-size: var(--fs-xs); color: var(--muted); }
+/* the steps of the setup on a gauge, a segment each by its state */
+.gauge { position: relative; display: grid; justify-items: center; padding: 0 16px 12px; }
+.gauge svg { display: block; width: 200px; height: 108px; }
+.gauge path { fill: none; stroke-width: 11; }
+.gauge .arc-track { stroke: var(--chip); }
+.gauge .arc-seg { transition: stroke 0.5s; }
+.gauge .arc-seg.done { stroke: var(--good); }
+.gauge .arc-seg.partial { stroke: var(--warn); }
+.gauge .arc-seg.bad { stroke: var(--bad-ink); }
+.gauge .arc-seg.todo { stroke: none; }
+.drawing .gauge .arc-seg { stroke-dasharray: 1; animation: draw 0.6s cubic-bezier(0.3, 0.7, 0.2, 1) both; animation-delay: calc(var(--i) * 110ms); }
+.gauge-text { position: absolute; bottom: 12px; left: 0; right: 0; display: grid; justify-items: center; }
+.gauge-big { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.gauge-big small { font-size: var(--fs-sm); font-weight: 500; letter-spacing: 0; color: var(--muted); }
+.gauge-sub { font-size: var(--fs-xs); color: var(--muted); }
+@media (prefers-reduced-motion: reduce) {
+  .overview *, .roll-digit > span { animation: none !important; transition: none !important; }
+}
 .xline {
   display: grid; grid-template-columns: minmax(0, 1fr) 110px 170px; gap: 12px; align-items: center;
   padding: 7px 14px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm);

@@ -46,6 +46,7 @@ from offline.eval.eval_lib import (
 )
 from offline.eval.eval_lib.judge_prompts import JUDGE_SYSTEM_PROMPT, JUDGE_USER_PROMPT
 from offline.eval.eval_lib.judge_schemas import JudgeEvaluation
+from offline.eval.history import PARTIAL, RESCORE, RUN, record
 from resources import db_registry
 
 # Inputs and outputs of the eval, one file per database (Chinook → datasets/chinook.yaml, results/chinook.json)
@@ -377,6 +378,7 @@ def rescore(db: str, benchmark: str | Path | None = None, path: str | Path | Non
     summary = compute_summary(data["results"])
     meta = {**data.get("meta", {}), "rescored_at": datetime.now().isoformat(timespec="minutes")}
     save_results(data["results"], summary, path, meta=meta)
+    record(path, data["results"], RESCORE, at=meta["rescored_at"], commit=meta.get("commit"))
     return summary
 
 
@@ -419,10 +421,14 @@ def main():
         meta = {**saved.get("meta", {}), "partial_reruns": [*saved.get("meta", {}).get("partial_reruns", []), rerun]}
         summary = compute_summary(results)
         logger.info(f"{len(runner.results)} question(s) replaced in {output}")
+        state = {"kind": PARTIAL, "at": rerun["at"], "commit": rerun["commit"]}
     else:
         results, summary, meta = runner.results, runner.summary, runner.meta()
+        state = {"kind": RUN, "at": meta["run_at"], "commit": meta["commit"]}
     print_summary(summary)
     save_results(results, summary, output, meta=meta)
+    # 4. The score of this state in the history of the evals, for the studio
+    record(output, results, **state)
 
 
 if __name__ == "__main__":

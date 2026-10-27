@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import lib.metrics
 import lib.semantics
+from offline.eval.history import history_path, read_history, record
 from offline.indexer import trace as trace_module
 from offline.semantic_gen import utils
 from offline.studio import app as studio_app
@@ -27,6 +28,7 @@ from offline.studio.index import (
     eval_run,
     index_view,
     metric_errors,
+    reading_order,
 )
 from offline.studio.jobs import Job
 
@@ -75,6 +77,10 @@ def test_the_trace_is_written_and_read_back(tmp_path, monkeypatch):
     trace_module.write_trace("shop", {"built_at": 1.0, "tables": {"invoice": {"semantics": INVOICE}}})
     assert trace_module.read_trace("shop")["tables"]["invoice"]["semantics"]["data_as_of"] == "2024-07-10"
     assert [p.name for p in tmp_path.iterdir()] == ["shop.index.json"]   # no temporary file left
+    # the next index keeps the date of this one, then of both
+    trace_module.write_trace("shop", {"built_at": 2.0, "tables": {}})
+    trace_module.write_trace("shop", {"built_at": 3.0, "tables": {}})
+    assert trace_module.read_trace("shop")["builds"] == [1.0, 2.0]
 
 
 # ------------------------------------------------------------
@@ -182,6 +188,49 @@ def test_the_last_eval_of_a_database():
     run = eval_run(results, 5.0)
     assert (run["questions"], run["scored"], run["exact"]) == (4, 3, 2) and run["at"] > 5.0
     assert eval_run({"results": []}, 5.0)["at"] == 5.0 and eval_run(None, None) is None
+    assert run["results"][1] == {"q": "", "d": None, "x": 0, "latency": None, "tables": []} and run["results"][2]["x"] is None
+    assert run["history"] == [{"at": run["at"], "scored": 3, "exact": 2}]   # no history yet: the run alone
+
+    # The history: its last line is this run (dated like the panel says it), else this run follows it
+    history = [{"at": "2026-10-01T10:00", "scored": 3, "exact": 1}, {"at": "2026-10-22T19:43", "scored": 3, "exact": 2}]
+    points = eval_run(results, 5.0, history)["history"]
+    assert [(p["scored"], p["exact"]) for p in points] == [(3, 1), (3, 2)] and points[-1]["at"] == run["at"]
+    points = eval_run(results, 5.0, history[:1])["history"]
+    assert [(p["scored"], p["exact"]) for p in points] == [(3, 1), (3, 2)]
+
+
+def test_the_history_of_the_evals(tmp_path):
+    results = tmp_path / "shop.json"
+    assert read_history(results) == [] and history_path(results).name == "shop.history.jsonl"
+    record(results, [{"exec_exact": 1.0}, {"exec_exact": None}], "run", at="2026-10-22T20:00", commit="abc")
+    record(results, [{"exec_exact": 1.0}, {"exec_exact": 0.0}], "partial", at="2026-10-21T09:00")
+    history_path(results).open("a").write("not json\n")   # a broken line is skipped
+    assert read_history(results) == [
+        {"at": "2026-10-21T09:00", "kind": "partial", "commit": None, "questions": 2, "scored": 2, "exact": 1},
+        {"at": "2026-10-22T20:00", "kind": "run", "commit": "abc", "questions": 2, "scored": 1, "exact": 1}]
+
+
+def test_the_tables_in_one_reading_order():
+    # the joined tables side by side from the most joined one, the largest group first, the ones without a join last
+    pairs = [("invoice", "customer"), ("invoiceline", "invoice"), ("invoiceline", "track"), ("album", "artist"), ("employee", "employee")]
+    tables = ["album", "artist", "customer", "employee", "genre", "invoice", "invoiceline", "track"]
+    assert reading_order(tables, pairs) == ["invoice", "invoiceline", "customer", "track", "album", "artist", "employee", "genre"]
+
+
+def test_what_the_cards_of_the_overview_draw():
+    metrics = {"revenue": {"description": "d", "expr": "SUM(invoice.total)"},
+               "mails": {"description": "d", "expr": "COUNT(DISTINCT invoice.email)"}}
+    view = index_view(["invoice", "customer"], DB_COLUMNS, {"invoice": INVOICE}, RELATIONS, make_trace(), metrics, "hive", None,
+                      sizes={"invoice": 412, "customer": 59})
+    cards = view["cards"]
+    assert [t["name"] for t in cards["tables"]] == ["customer", "invoice", "legacy"] and cards["joins"] == [["invoice", "customer"]]
+    invoice = cards["tables"][1]
+    # its rows, a kind per column shown, email hidden, city searched and country without values
+    assert (invoice["rows"], invoice["kinds"], invoice["hidden"]) == (412, "nnsss", 1)
+    assert invoice["values"] == [["city", 53, "searched"], ["country", 0, "dropped"]]
+    assert cards["tables"][2]["rows"] is None   # not profiled
+    assert cards["metrics"] == [{"name": "revenue", "tables": ["invoice"], "refused": False},
+                                {"name": "mails", "tables": [], "refused": True}]
 
 
 # ------------------------------------------------------------

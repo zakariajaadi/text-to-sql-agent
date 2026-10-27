@@ -49,6 +49,7 @@ from lib.semantics import (
 )
 from lib.value_index import value_index_path
 from offline.eval.dashboard import DATASETS_DIR, RESULTS_DIR, build_dashboard
+from offline.eval.history import read_history
 from offline.indexer.trace import read_trace
 from offline.semantic_gen.profiling import PARTITIONED, key_overlap, key_spread
 from offline.semantic_gen.utils import (
@@ -911,8 +912,10 @@ def _index_payload(db: str, listing: dict) -> dict:
     """
     db_cfg  = _db_config(db)
     columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
+    rows    = {table: (facts or {}).get("rows") for table, facts in load_profile(db).items()}
+    history = read_history(RESULTS_DIR / f"{db.lower()}.json")
     view    = index_view(listing["tables"], columns, load_semantics(db), load_fk_relations(db), read_trace(db),
-                         read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db)), listing["base"])
+                         read_metrics_file(db)[0], db_cfg.dialect, eval_run(*_eval_results(db), history), listing["base"], rows)
     files   = {name: path.stat().st_mtime for name, path in (("tables.yaml", tables_path(db)),
                                                              ("relationships.yaml", relations_path(db))) if path.exists()}
     values  = value_index_path(db)

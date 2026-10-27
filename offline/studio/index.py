@@ -145,48 +145,132 @@ def document_text(table: str, trace: dict, dialect: str) -> str | None:
     return text.replace(f"'{MASK[0]}", MASK[0]).replace(f"{MASK[-1]}'", MASK[-1])   # a mask is no quoted value
 
 
-def metric_errors(metrics: dict[str, dict], trace: dict, dialect: str) -> list[dict]:
+def checked_metrics(metrics: dict[str, dict], trace: dict, dialect: str) -> list[dict]:
     """
-    The metrics the agent would refuse at startup: it checks metrics.yaml against the indexed documents
-    (lib/metrics.load_metrics), the columns they show. [{"name", "detail"}].
+    Each metric checked against the indexed documents as the agent does at startup (lib/metrics.load_metrics),
+    the columns they show: [{"name", "tables", "detail"}], detail None when the agent takes it, tables [] then.
     """
     columns = {table: list(indexed["columns"]) for table, indexed in trace["tables"].items()}
-    errors  = []
+    checked = []
     for name, entry in metrics.items():
         try:
-            validate_metric(name, entry, dialect, columns)
+            checked.append({"name": name, "tables": validate_metric(name, entry, dialect, columns).tables, "detail": None})
         except ValueError as e:
-            errors.append({"name": name, "detail": str(e).split(" — ", 1)[-1]})
-    return errors
+            checked.append({"name": name, "tables": [], "detail": str(e).split(" — ", 1)[-1]})
+    return checked
 
 
-def eval_run(results: dict | None, modified: float | None) -> dict | None:
+def metric_errors(metrics: dict[str, dict], trace: dict, dialect: str) -> list[dict]:
+    """The metrics the agent would refuse at startup. [{"name", "detail"}]."""
+    return [{"name": m["name"], "detail": m["detail"]} for m in checked_metrics(metrics, trace, dialect) if m["detail"]]
+
+
+def eval_run(results: dict | None, modified: float | None, history: list[dict] | None = None) -> dict | None:
     """
     The last eval of the database (offline/eval/results/<db>.json): when, its questions, how many
     returned the expected rows among the ones compared on their rows. None when it never ran.
+    `results`: each question in short (q, difficulty d, exact x: 1, 0 or None when not compared, latency, the
+    tables it read). `history`: the score of each eval over time ({at, scored, exact}, oldest first) from the
+    lines of offline/eval/history.py, the last eval as its last point (dated like it).
     """
     if results is None:
         return None
     run_at = (results.get("meta") or {}).get("run_at")
-    scores = [r.get("exec_exact") for r in results.get("results") or []]
+    rows   = results.get("results") or []
+    scores = [r.get("exec_exact") for r in rows]
     scored = [s for s in scores if s is not None]
-    return {
+    run    = {
         "at":        datetime.fromisoformat(run_at).timestamp() if run_at else modified,
         "questions": len(scores),
         "scored":    len(scored),
         "exact":     sum(1 for s in scored if s),
     }
+    points = [{"at": datetime.fromisoformat(line["at"]).timestamp(), "scored": line["scored"], "exact": line["exact"]}
+              for line in history or [] if line.get("scored")]
+    last   = {"at": run["at"], "scored": run["scored"], "exact": run["exact"]}
+    if points and (points[-1]["scored"], points[-1]["exact"]) == (last["scored"], last["exact"]):
+        points[-1] = last   # the line of this run: its date as the panel says it
+    elif last["scored"]:
+        points.append(last)
+    return {
+        **run,
+        "results": [{"q": r.get("question", ""), "d": r.get("difficulty"), "x": None if r.get("exec_exact") is None else int(bool(r["exec_exact"])),
+                     "latency": r.get("latency_s"), "tables": r.get("selected_tables") or []} for r in rows],
+        "history": sorted(points, key=lambda p: p["at"]),
+    }
+
+
+def column_kind(column_type: str | None) -> str:
+    """How wide a column draws in the sample rows of the Vue d'ensemble: n a number, d a date, s a text."""
+    kind = (column_type or "").upper()
+    if any(word in kind for word in ("INT", "DEC", "DOUBLE", "FLOAT", "NUM", "REAL", "BOOL")):
+        return "n"
+    return "d" if any(word in kind for word in ("DATE", "TIME")) else "s"
+
+
+def reading_order(tables: list[str], pairs: list[tuple[str, str]]) -> list[str]:
+    """
+    The tables in one order for every card of the Vue d'ensemble, the joined ones next to each other: each group
+    of joined tables from its most joined one, breadth first (the most joined neighbour first), the largest group
+    first, the tables without a join last.
+    """
+    links = {t: set() for t in tables}
+    for a, b in pairs:
+        if a != b and a in links and b in links:
+            links[a].add(b)
+            links[b].add(a)
+    rank  = lambda t: (-len(links[t]), t)  # noqa: E731
+    seen, groups = set(), []
+    for start in sorted((t for t in tables if links[t]), key=rank):
+        if start in seen:
+            continue
+        group, queue = [], [start]
+        seen.add(start)
+        while queue:
+            table = queue.pop(0)
+            group.append(table)
+            for other in sorted(links[table] - seen, key=rank):
+                seen.add(other)
+                queue.append(other)
+        groups.append(group)
+    groups.sort(key=len, reverse=True)
+    return [t for group in groups for t in group] + sorted(t for t in tables if not links[t])
+
+
+def agent_cards(trace: dict, rows: dict[str, int | None], checked: list[dict]) -> dict:
+    """
+    What the six cards of the Vue d'ensemble draw, from the trace of the index: each table in reading order with its
+    rows (of the profile), the columns its document shows and hides (their kinds), its categorical columns (values
+    listed, searched or none); the joins between tables; each metric with its tables. Counts only.
+    """
+    indexed = trace["tables"]
+    pairs   = sorted({(r[0].split(".")[0], r[1].split(".")[0]) for entry in indexed.values() for r in entry["relations"]})
+    tables  = []
+    for name in reading_order(list(indexed), pairs):
+        entry   = indexed[name]
+        dropped = dropped_columns(entry)
+        values  = [[column, v["count"], "listed" if v["inline"] else "searched"] for column, v in entry["values"].items()]
+        tables.append({
+            "name":   name,
+            "rows":   rows.get(name),
+            "kinds":  "".join(column_kind(t) for t in entry["columns"].values()),
+            "hidden": len(excluded_columns(entry["semantics"])),
+            "values": values + [[column, 0, "dropped"] for column in dropped],
+        })
+    return {"tables": tables, "joins": [list(p) for p in pairs],
+            "metrics": [{"name": m["name"], "tables": m["tables"], "refused": bool(m["detail"])} for m in checked]}
 
 
 def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: dict, relations,
                trace: dict | None, metrics: dict[str, dict], dialect: str, evaluation: dict | None,
-               base: list[str] | None = None) -> dict:
+               base: list[str] | None = None, sizes: dict[str, int | None] | None = None) -> dict:
     """
     The Index screen: each table of the scope with its status, the tables the index holds that leave it at the
     next index (`gone`: the database no longer has them; `unscoped`: taken out of the scope, or not in it, the
     database still has them or can't be read: base None), what the agent receives (documents and the joins
-    between them, the columns they show or hide, values, sample rows, metrics) and the last eval. Without a
-    trace, the statuses are unknown. tables: the tables of the scope the database has.
+    between them, the columns they show or hide, values, sample rows, metrics, `cards` per table for the Vue
+    d'ensemble, `builds` the dates of the indexes before) and the last eval. Without a trace, the statuses are
+    unknown. tables: the tables of the scope the database has; sizes: the rows of each table (profile).
     """
     rows = []
     for table in tables:
@@ -200,8 +284,10 @@ def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: d
     indexed = trace["tables"]
     values  = [(t, c, v) for t, entry in indexed.items() for c, v in entry["values"].items()]
     leaving = sorted(set(indexed) - set(tables))
+    checked = checked_metrics(metrics, trace, dialect)
     view.update({
         "built_at":    trace["built_at"],
+        "builds":      trace.get("builds", []),
         "sample_rows": trace["sample_rows"],
         "gone":        [t for t in leaving if base is not None and t not in base],
         "unscoped":    [t for t in leaving if base is None or t in base],
@@ -215,7 +301,8 @@ def index_view(tables: list[str], db_columns: dict[str, list[str]], semantics: d
         "searched":    {"columns": sum(not v["inline"] for _, _, v in values),
                         "values":  sum(v["count"] for _, _, v in values if not v["inline"])},
         "dropped":     [f"{t}.{c}" for t, entry in indexed.items() for c in dropped_columns(entry)],
-        "metrics":     {"total": len(metrics), "errors": metric_errors(metrics, trace, dialect)},
+        "metrics":     {"total": len(metrics), "errors": [{"name": m["name"], "detail": m["detail"]} for m in checked if m["detail"]]},
+        "cards":       agent_cards(trace, sizes or {}, checked),
     })
     return view
 
