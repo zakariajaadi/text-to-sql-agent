@@ -641,12 +641,14 @@ def key_relations(profile: dict) -> list[tuple[str, str]]:
     """
     Relations found without an LLM: a key column unique in a table (its hub, the largest one when
     several) and present under the same name in other tables → (table.key, hub.key).
+    Unique within 1%: real data repeats or misses a few keys (a few hundred duplicate personnes out of
+    millions), the share of values found (key_overlap) then decides. "One row per" (row_facts) stays exact.
     """
     hubs = {}
     for table, entry in profile.items():
         rows = entry.get("rows") or 0
         for key, counts in (entry.get("keys") or {}).items():
-            unique = counts["distinct"] and counts["non_null"] == counts["distinct"] >= rows * 0.99
+            unique = counts["distinct"] and counts["distinct"] >= rows * 0.99
             if unique and counts["distinct"] > hubs.get(key, ("", 0))[1]:
                 hubs[key] = (table, counts["distinct"])
 

@@ -151,14 +151,24 @@ def test_key_relations_point_to_the_largest_table_where_the_key_is_unique():
     ]
 
 
-def test_a_key_with_nulls_or_duplicates_is_no_hub():
+def test_a_key_with_more_than_one_percent_of_nulls_or_duplicates_is_no_hub():
     profile = {
         "client": {"rows": 100, "keys": {"client_id": {"non_null": 99, "distinct": 99}}},    # one NULL: hub
-        "link":   {"rows": 50, "keys": {"client_id": {"non_null": 50, "distinct": 48},        # duplicates
+        "link":   {"rows": 50, "keys": {"client_id": {"non_null": 50, "distinct": 48},        # 4% duplicates
                                         "link_id": {"non_null": 50, "distinct": 50}}},
         "other":  {"rows": 50, "keys": {"link_id": {"non_null": 40, "distinct": 40}}},       # 80% filled
     }
     assert key_relations(profile) == [("link.client_id", "client.client_id"), ("other.link_id", "link.link_id")]
+
+
+def test_a_key_with_a_few_duplicates_is_still_a_hub():
+    # Real data: a few hundred personnes twice out of millions; "one row per" stays exact
+    profile = {
+        "personne": {"rows": 10_780_070, "keys": {"numero_personne_host": {"non_null": 10_780_070, "distinct": 10_779_363}}},
+        "dirigeant": {"rows": 5_000, "keys": {"numero_personne_host": {"non_null": 5_000, "distinct": 4_200}}},
+    }
+    assert key_relations(profile) == [("dirigeant.numero_personne_host", "personne.numero_personne_host")]
+    assert "one row per" not in row_facts(profile["personne"])
 
 
 def _run_on_sqlite(query: str, rows: dict[str, list[tuple]]) -> tuple:
