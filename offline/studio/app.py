@@ -813,7 +813,7 @@ def _scope_payload(db: str, listing: dict) -> dict:
                       set((trace or {}).get("tables", {})), set(load_profile(db)),
                       {table for table, entry in semantics.items() if (entry or {}).get("description")},
                       {table: len(cols) for table, cols in listing["columns"].items()})
-    return {**scope_view(rows, listing["base"], scope_origin(db), len(db_cfg.include_tables)),
+    return {**scope_view(rows, listing["base"], scope_origin(db)),
             "source": listing["source"], "error": listing["error"], "read_at": listing["read_at"],
             "trace": trace is not None, "version": _scope_version(db)}
 
@@ -836,9 +836,9 @@ class ScopeChange(BaseModel):
 def edit_scope(db: str, request: ScopeChange):
     """
     Every table, the ones to come too (`all`), or tables added to the scope or taken out of it: a list, written to
-    scope.yaml (with neither: the scope as it is today, every table or the include_tables of the config, written as
-    a list). The tables entering it get their columns read first: nothing is written when the database can't give
-    them. The other screens read the new scope at once; the agent and the index at their next start.
+    scope.yaml (with neither: the scope as it is today, every table without scope.yaml, written as a list). The
+    tables entering it get their columns read first: nothing is written when the database can't give them. The
+    other screens read the new scope at once; the agent and the index at their next start.
     """
     _db_config(db)
     listing = _listing(db)

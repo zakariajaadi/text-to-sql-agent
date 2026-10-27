@@ -2344,21 +2344,17 @@ function renderScope(el, message) {
 }
 
 // How the scope is chosen: every table, the ones to come too, or a list (lib/semantics.scope_origin). Before a choice:
-// nothing (every table, the step to do) or the include_tables of the config, saved as a list
+// nothing (every table, the step to do)
 function scopeMode(sc) {
   const off = sc.counts.base == null ? ' disabled title="La base ne répond pas"' : "";
   const mode = (all, label) => `<button type="button" data-scope-all="${all ? 1 : 0}" aria-pressed="${sc.origin === (all ? "all" : "list")}"${off}>${label}</button>`;
   const says = {
     none: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront. À choisir :",
-    config: `Le périmètre vient encore de <span class="mono">include_tables</span> dans la configuration (${plural(sc.config_tables, "table")}) :
-      « Une liste de tables » l'enregistre dans <span class="mono">semantic_layer/${esc(ui.db)}/scope.yaml</span>.`,
     all: "Toutes les tables de la base, celles qui y arriveront aussi.",
     list: "Les tables de la liste seulement : une table qui arrive dans la base reste dehors.",
   }[sc.origin];
-  const stale = ["all", "list"].includes(sc.origin) && sc.config_tables ? `<p class="note"><span class="mono">include_tables</span> de la
-    configuration n'est plus lu : retire-le de <span class="mono">config.local.yaml</span>.</p>` : "";
-  return `<div class="${sc.origin === "config" ? "rule-note" : "note with-action"} scope-mode"><span>${says}</span>
-    <div class="seg scope-seg${sc.origin === "none" || sc.origin === "config" ? toDecide(`${ui.db}:scope`) : ""}" role="group" aria-label="Tables lues">${mode(true, "Toutes les tables, même les futures")}${mode(false, "Une liste de tables")}</div></div>${stale}`;
+  return `<div class="note with-action scope-mode"><span>${says}</span>
+    <div class="seg scope-seg${sc.origin === "none" ? toDecide(`${ui.db}:scope`) : ""}" role="group" aria-label="Tables lues">${mode(true, "Toutes les tables, même les futures")}${mode(false, "Une liste de tables")}</div></div>`;
 }
 
 // Every table or a list: a list keeps the tables of today; every table brings in the ones out of the scope, said before
@@ -2628,7 +2624,6 @@ function agentFigures(idx) {
     missing && `${fmt.format(missing)} à indexer`,
     leaving.length && `${fmt.format(leaving.length)} à retirer`,
     raw.length && `${fmt.format(raw.length)} sans description`,
-    sc.origin === "config" && "liste dans la configuration",
   ].filter(Boolean);
   const outside = sc.base == null ? null : sc.base - sc.tables;
   const values = idx.inline.values + idx.searched.values, columns = idx.inline.columns + idx.searched.columns;
@@ -2638,8 +2633,7 @@ function agentFigures(idx) {
         : sc.origin === "all" || sc.origin === "none" ? "toutes, même les futures"
         : outside ? `sur ${fmt.format(sc.base)} dans la base` : outside === 0 ? "toutes celles d'aujourd'hui" : "celles de la liste",
       tone: tables.length ? "warn" : "",
-      issue: [...indexChanges(idx), raw.length && `${names(raw)} sans description : l'agent n'en a que la structure brute.`,
-        sc.origin === "config" && `Le périmètre est encore lu dans <span class="mono">include_tables</span> de la configuration.`].filter(Boolean).join(" "),
+      issue: [...indexChanges(idx), raw.length && `${names(raw)} sans description : l'agent n'en a que la structure brute.`].filter(Boolean).join(" "),
       tip: "Une fiche par table du périmètre : sa description, ses colonnes, ses jointures." }),
     agentFigure({ value: fmt.format(idx.shown), label: idx.shown > 1 ? "colonnes" : "colonne",
       note: hidden ? `${fmt.format(hidden)} ${hidden > 1 ? "cachées" : "cachée"}` : "aucune cachée",
@@ -2973,10 +2967,10 @@ function pipelineSteps(base) {
   const undescribed = s.tables - s.described;
   const of = sc.base == null ? "" : ` sur ${fmt.format(sc.base)}`;
   return [
-    { key: "scope", state: { all: "done", list: "done", config: "partial", none: "todo" }[sc.origin],
-      count: { all: "toutes", list: `${fmt.format(sc.tables)}${sc.base == null ? "" : `/${fmt.format(sc.base)}`}`, config: "à enregistrer", none: "à choisir" }[sc.origin],
+    { key: "scope", state: { all: "done", list: "done", none: "todo" }[sc.origin],
+      count: { all: "toutes", list: `${fmt.format(sc.tables)}${sc.base == null ? "" : `/${fmt.format(sc.base)}`}`, none: "à choisir" }[sc.origin],
       tip: { all: "Toutes les tables, celles qui arriveront aussi", list: `${plural(sc.tables, "table")}${of} : une nouvelle reste dehors`,
-        config: "Liste encore dans la configuration : à enregistrer", none: "Aucun périmètre choisi : toutes les tables, celles qui arriveront aussi" }[sc.origin] },
+        none: "Aucun périmètre choisi : toutes les tables, celles qui arriveront aussi" }[sc.origin] },
     { key: "profile", state: s.profiled === s.tables ? "done" : s.profiled ? "partial" : "todo",
       count: `${fmt.format(s.profiled)}/${fmt.format(s.tables)}`, tip: `${fmt.format(s.profiled)} tables profilées sur ${fmt.format(s.tables)}` },
     { key: "semantics", state: !undescribed && !s.partial && !s.rewritten ? "done" : s.described ? "partial" : "todo",
@@ -3007,11 +3001,8 @@ function nextStep(base, steps) {
   if (!step) return null;
   const next = (title, why, label, { action = "", detail = `${title} : ${why}` } = {}) => ({ key: step.key, title, why, detail, label, action });
   if (step.key === "scope") {
-    return idx.scope.origin === "config"
-      ? next("Enregistrer le périmètre", "il est encore lu dans la configuration.", "Ouvrir le périmètre",
-        { detail: `La liste des tables est encore lue dans <span class="mono">include_tables</span> de la configuration : enregistre-la dans le studio.` })
-      : next("Choisir le périmètre", "toutes les tables, celles qui arriveront aussi, ou une liste.", "Ouvrir le périmètre",
-        { detail: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, celles qui y arriveront aussi." });
+    return next("Choisir le périmètre", "toutes les tables, celles qui arriveront aussi, ou une liste.", "Ouvrir le périmètre",
+      { detail: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, celles qui y arriveront aussi." });
   }
   if (step.key === "profile") {
     return next(`Profiler ${plural(s.tables - s.profiled, "table")}`, "le studio ne sait pas encore ce qu'elles contiennent.", "Ouvrir le profilage");
@@ -3251,14 +3242,12 @@ function guideStep(key, base, p) {
     const choice = (mode, label, primary) => `<button class="btn${primary ? " primary" : ""}" type="button" data-guide-run="scope-${mode}"${off}>${label}</button>`;
     const said = {
       none: "Aucun périmètre choisi : l'agent voit toutes les tables de la base, même celles qui y arriveront.",
-      config: `La liste vient encore de <span class="mono">include_tables</span> dans la configuration (${plural(sc.tables, "table")}).`,
       all: `Toutes les tables de la base${sc.base == null ? "" : ` (${fmt.format(sc.base)})`}, celles qui y arriveront aussi.`,
       list: `<b>${fmt.format(sc.tables)}</b> ${sc.tables > 1 ? "tables" : "table"} dans la liste${sc.base == null ? "" : ` sur ${fmt.format(sc.base)}`} : une table qui arrive dans la base reste dehors.`,
     }[sc.origin];
     const choices = {
       none: choice("all", "Toutes les tables, même les futures", true) + choice("list", "Une liste de tables", false)
         + '<span class="muted-text">La liste part des tables d\'aujourd\'hui : tu retires ensuite les autres dans le Périmètre.</span>',
-      config: choice("list", "Enregistrer la liste de la configuration", true) + choice("all", "Toutes les tables, même les futures", false),
       all: choice("list", "Passer à une liste de tables", false),
       list: "",
     }[sc.origin];

@@ -43,7 +43,7 @@ check:  ## Show the settings of DB as the app reads them, then connect and list 
 	print('sample_rows:', db.sample_rows, '| user_language:', db.user_language, '| query limits:', db.query_options); \
 	from lib.semantics import load_scope, scope_path; scope = load_scope('$(DB)'); \
 	print('scope:', 'every table' if scope is None else f'{len(scope)} tables', \
-	      '(' + ('scope.yaml' if scope_path('$(DB)').exists() else 'include_tables of the config' if scope is not None else 'none chosen') + ')'); \
+	      '(' + ('scope.yaml' if scope_path('$(DB)').exists() else 'none chosen in the studio') + ')'); \
 	from resources import db_registry; tables = sorted(db_registry['$(DB)'].get_usable_table_names()); \
 	print(len(tables), 'tables visible:', ', '.join(tables))"
 

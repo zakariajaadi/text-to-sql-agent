@@ -60,7 +60,6 @@ class DatabaseConfig:
     max_rows: int = 100   # safety cap on the rows read from a query result (never a LIMIT in the SQL)
     tagline: str = ""                              # one-line presentation of the Chainlit welcome screen
     starters: list = field(default_factory=list)  # example questions of the Chainlit welcome screen: {icon, question}
-    include_tables: list = field(default_factory=list)  # tables the agent may use, before the studio: read only while semantic_layer/<db>/scope.yaml doesn't exist
     sample_rows: int = 3   # rows shown under each DDL (indexed, sent to the LLM); 0 when the data must not leave
     user_language: str = "English"   # language users ask in: generated descriptions, metric synonyms, eval judge reasonings
     exclude_personal_data: bool = False  # make semantics excludes the columns the profile flags as personal data

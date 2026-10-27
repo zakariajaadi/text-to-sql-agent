@@ -218,8 +218,7 @@ def client(tmp_path, monkeypatch):
     for module in (lib.semantics, lib.metrics, studio_app):
         monkeypatch.setattr(module, "SEMANTIC_LAYER_DIR", tmp_path)
     monkeypatch.setattr(studio_app, "_db_config", lambda db: SimpleNamespace(
-        exclude_personal_data=False, dialect="hive", sample_rows=0, include_tables=[]))
-    monkeypatch.setattr(lib.semantics, "cfg", SimpleNamespace(get_db=lambda db: SimpleNamespace(include_tables=[])))
+        exclude_personal_data=False, dialect="hive", sample_rows=0))
     columns = {table: [{"name": c, "type": "STRING"} for c in names] for table, names in DB_COLUMNS.items()}
     monkeypatch.setattr(studio_app, "_listing", lambda db, refresh=False: {
         "tables": list(DB_COLUMNS), "base": list(DB_COLUMNS), "columns": columns, "source": "database", "error": None,

@@ -20,11 +20,10 @@ def test_impala_defaults_to_kerberos(monkeypatch):
                 "IMPALA_CONNECT_TIMEOUT"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("IMPALA_HOST", "impala-coordinator.example")
-    db = DatabaseConfig(name="Sales", dialect="impala", include_tables=["orders"])
+    db = DatabaseConfig(name="Sales", dialect="impala")
     assert db.uri == "impala4://impala-coordinator.example:21050/sales"
     assert db.connect_args == {"auth_mechanism": "GSSAPI", "kerberos_service_name": "impala", "use_ssl": False,
                                "timeout": 20, "retries": 1}
-    assert db.include_tables == ["orders"]
 
 
 def test_impala_driver_options_come_from_the_environment(monkeypatch):
@@ -71,8 +70,16 @@ def test_local_config_replaces_the_databases(tmp_path, monkeypatch):
 
     (tmp_path / "config" / "config.local.yaml").write_text(
         "databases:\n"
-        "  - {name: Sales, dialect: impala, include_tables: [orders, customers]}\n"
+        "  - {name: Sales, dialect: impala, sample_rows: 0}\n"
     )
     databases = config.load_config().databases
     assert [(db.name, db.dialect) for db in databases] == [("Sales", "impala")]
-    assert list(databases[0].include_tables) == ["orders", "customers"]
+    assert databases[0].sample_rows == 0
+
+    # The tables are chosen in the studio (semantic_layer/<db>/scope.yaml): a list left in the config stops the start
+    (tmp_path / "config" / "config.local.yaml").write_text(
+        "databases:\n"
+        "  - {name: Sales, dialect: impala, include_tables: [orders]}\n"
+    )
+    with pytest.raises(TypeError, match="include_tables"):
+        config.load_config()

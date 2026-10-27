@@ -3,7 +3,7 @@
 #   tables      only these: a table of the database not listed is never read (not profiled, not
 #               described, not indexed, a query of the agent reading it is blocked), and a table
 #               the database gains stays out until it is added
-# Read at startup by the agent and by each run of the pipeline. Without this file: the include_tables
-# of the config, else every table of the database.
+# Read at startup by the agent and by each run of the pipeline. Without this file: every table of the
+# database.
 
 all: true

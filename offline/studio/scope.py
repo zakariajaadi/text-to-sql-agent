@@ -58,11 +58,10 @@ def scope_rows(base: list[str] | None, scope: list[str] | None, statuses: dict[s
     return rows
 
 
-def scope_view(rows: list[dict], base: list[str] | None, origin: str, config_tables: int) -> dict:
+def scope_view(rows: list[dict], base: list[str] | None, origin: str) -> dict:
     """
     The Périmètre screen: its rows (scope_rows), the counts of the database, of the scope and of the index, the
-    count of each state, and where the scope comes from (lib/semantics.scope_origin: all, list, config, none).
-    config_tables: the tables the include_tables of the config lists, still there or not.
+    count of each state, and where the scope comes from (lib/semantics.scope_origin: all, list, none).
     """
     states = {}
     for row in rows:
@@ -70,7 +69,6 @@ def scope_view(rows: list[dict], base: list[str] | None, origin: str, config_tab
     return {
         "tables": rows,
         "origin": origin,
-        "config_tables": config_tables,
         "counts": {
             "base":    None if base is None else len(base),
             "scope":   sum(row["in_scope"] and row["in_base"] is not False for row in rows),

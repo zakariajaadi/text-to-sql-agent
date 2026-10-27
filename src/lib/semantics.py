@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from omegaconf import OmegaConf
 
-from config import SEMANTIC_LAYER_DIR, cfg
+from config import SEMANTIC_LAYER_DIR
 from lib.column_pruning import get_column_names, prune_ddl
 from lib.sql_tools import join_condition
 
@@ -29,24 +29,23 @@ def load_scope(db_name: str) -> list[str] | None:
     """
     The tables of the database the agent and the pipeline see (profile, semantics, relations, metrics,
     index), chosen in the studio: semantic_layer/<db>/scope.yaml, `all: true` (None: every table, the ones
-    to come too) or its `tables`. Without it, the include_tables of the config, the list kept there before
-    the studio; without either, None: every table of the database.
+    to come too) or its `tables`. Without it, None: every table of the database, until the studio chooses.
     """
     entry = _scope_file(db_name)
-    if entry is not None:
-        return None if entry.get("all") else list(entry.get("tables") or [])
-    return list(cfg.get_db(db_name).include_tables) or None
+    if entry is None or entry.get("all"):
+        return None
+    return list(entry.get("tables") or [])
 
 
 def scope_origin(db_name: str) -> str:
     """
     Where the scope of a database comes from: "all" or "list" (scope.yaml: every table, or the tables it lists),
-    "config" (the include_tables of the config, before the studio), "none" (nothing chosen yet: every table).
+    "none" (nothing chosen yet: every table).
     """
     entry = _scope_file(db_name)
-    if entry is not None:
-        return "all" if entry.get("all") else "list"
-    return "config" if cfg.get_db(db_name).include_tables else "none"
+    if entry is None:
+        return "none"
+    return "all" if entry.get("all") else "list"
 
 
 def tables_path(db_name: str) -> Path:

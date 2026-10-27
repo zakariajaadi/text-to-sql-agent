@@ -26,11 +26,8 @@ TABLES = ["customer", "invoice", "person", "track"]
 
 @pytest.fixture
 def layer(tmp_path, monkeypatch):
-    """semantic_layer/ in tmp_path, the config of "shop" listing `config_tables` (none at first)."""
-    config = SimpleNamespace(include_tables=[])
+    """semantic_layer/ in tmp_path, no scope.yaml at first."""
     monkeypatch.setattr(lib.semantics, "SEMANTIC_LAYER_DIR", tmp_path)
-    monkeypatch.setattr(lib.semantics, "cfg", SimpleNamespace(get_db=lambda name: config))
-    return config
 
 
 @pytest.fixture
@@ -40,19 +37,17 @@ def sqlite_shop(tmp_path):
     with engine.begin() as conn:
         for table in TABLES:
             conn.execute(sqlalchemy.text(f"CREATE TABLE {table} (id INTEGER, name TEXT)"))
-    return SimpleNamespace(name="shop", dialect="sqlite", uri=f"sqlite:///{tmp_path / 'shop.db'}", include_tables=[],
+    return SimpleNamespace(name="shop", dialect="sqlite", uri=f"sqlite:///{tmp_path / 'shop.db'}",
                            sample_rows=0, exclude_personal_data=False, engine_args=lambda: {})
 
 
 # =============================================================================
-# The scope: scope.yaml, else the include_tables of the config, else every table
+# The scope: scope.yaml, else every table
 # =============================================================================
 
-def test_the_scope_comes_from_its_file_then_the_config(layer):
+def test_the_scope_comes_from_its_file(layer):
     assert load_scope("shop") is None and scope_origin("shop") == "none"
-    layer.include_tables = ["invoice", "customer"]
-    assert load_scope("shop") == ["invoice", "customer"] and scope_origin("shop") == "config"
-    # Saved by the studio: the file wins, sorted, its header says what it is
+    # Saved by the studio: sorted, its header says what it is
     write_scope("shop", ["track", "invoice", "track"])
     assert load_scope("shop") == ["invoice", "track"] and scope_origin("shop") == "list"
     assert scope_path("shop").read_text().startswith("# The tables of this database the agent and the pipeline see")
@@ -163,7 +158,7 @@ def test_every_table_of_the_database_against_the_scope_and_the_index():
     person = next(row for row in rows if row["name"] == "person")
     assert person == {"name": "person", "state": LEAVING, "in_scope": False, "in_base": True, "indexed": True,
                       "profiled": True, "described": False, "columns": None}
-    view = scope_view(rows, TABLES, "list", 0)
+    view = scope_view(rows, TABLES, "list")
     assert view["counts"] == {"base": 4, "scope": 2, "indexed": 4, FRESH: 1, CHANGED: 1, GONE: 2, LEAVING: 1, OUTSIDE: 1}
 
     # No scope: every table of the database is in it; the database not read: the tables of the scope and the index
@@ -171,13 +166,12 @@ def test_every_table_of_the_database_against_the_scope_and_the_index():
         == {"customer": UNKNOWN, "invoice": MISSING, "person": UNKNOWN, "track": UNKNOWN}
     rows = scope_rows(None, ["invoice"], {"invoice": FRESH}, {"invoice", "person"}, set(), set(), {})
     assert [(row["name"], row["state"], row["in_base"]) for row in rows] == [("invoice", FRESH, None), ("person", LEAVING, None)]
-    assert scope_view(rows, None, "list", 0)["counts"]["base"] is None
+    assert scope_view(rows, None, "list")["counts"]["base"] is None
 
 
 @pytest.fixture
 def client(layer, sqlite_shop, monkeypatch):
-    """The studio on the SQLite database, the config of "shop" one object for the studio and lib/semantics."""
-    monkeypatch.setattr(lib.semantics, "cfg", SimpleNamespace(get_db=lambda name: sqlite_shop))
+    """The studio on the SQLite database."""
     monkeypatch.setattr(studio_app, "_db_config", lambda db: sqlite_shop)
     monkeypatch.setattr(studio_app, "_listings", {})
     monkeypatch.setattr(studio_app, "_databases", {})
@@ -185,17 +179,20 @@ def client(layer, sqlite_shop, monkeypatch):
     return TestClient(studio_app.app)
 
 
-def test_the_scope_chosen_in_the_studio(client, sqlite_shop):
-    sqlite_shop.include_tables = ["invoice", "customer"]
+def test_the_scope_chosen_in_the_studio(client):
+    # Nothing chosen: every table
     view = client.get("/api/db/shop/scope").json()
-    assert view["origin"] == "config" and view["config_tables"] == 2 and view["version"] == "0"
-    assert client.get("/api/db/shop/index").json()["scope"] == {"tables": 2, "base": 4, "origin": "config", "version": "0"}
-    assert view["counts"]["base"] == 4 and view["counts"]["scope"] == 2 and view["counts"][OUTSIDE] == 2
-    assert client.get("/api/db/shop/tables").json()["summary"]["tables"] == 2
+    assert view["origin"] == "none" and view["version"] == "0"
+    assert client.get("/api/db/shop/index").json()["scope"] == {"tables": 4, "base": 4, "origin": "none", "version": "0"}
+    assert view["counts"]["base"] == 4 and view["counts"]["scope"] == 4
+    assert client.get("/api/db/shop/tables").json()["summary"]["tables"] == 4
 
-    # Saved as it is (the list of the config written to scope.yaml), then a table added: the other tabs see it at once
+    # A list of the tables of today, two taken out, then one added back: the other tabs see it at once
     view = client.post("/api/db/shop/scope", json={"version": "0"}).json()
-    assert view["origin"] == "list" and load_scope("shop") == ["customer", "invoice"]
+    assert view["origin"] == "list" and load_scope("shop") == TABLES
+    view = client.post("/api/db/shop/scope", json={"remove": ["person", "track"], "version": view["version"]}).json()
+    assert load_scope("shop") == ["customer", "invoice"] and view["counts"][OUTSIDE] == 2
+    assert client.get("/api/db/shop/tables").json()["summary"]["tables"] == 2
     view = client.post("/api/db/shop/scope", json={"add": ["track"], "version": view["version"]}).json()
     assert load_scope("shop") == ["customer", "invoice", "track"] and view["counts"]["scope"] == 3
     assert [t["name"] for t in client.get("/api/db/shop/tables").json()["tables"]] == ["customer", "invoice", "track"]

@@ -13,7 +13,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from config import DatabaseConfig
 from lib.db_errors import is_unreachable
-from lib.semantics import load_scope, scope_path
+from lib.semantics import load_scope
 
 
 def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
@@ -24,9 +24,6 @@ def build_database(db_cfg: DatabaseConfig) -> SQLDatabase:
     under each DDL of get_table_info.
     """
     scope = load_scope(db_cfg.name)
-    if db_cfg.include_tables and scope_path(db_cfg.name).exists():
-        logger.warning(f"[{db_cfg.name}] include_tables of the config is ignored: {scope_path(db_cfg.name)} "
-                       f"chooses the tables (remove it from the config)")
     try:
         engine = create_engine(db_cfg.uri, **db_cfg.engine_args())
         tables = {}
