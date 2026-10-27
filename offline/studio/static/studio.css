@@ -1149,6 +1149,10 @@ body.map-open { overflow: hidden; }
 /* the Vue d'ensemble: what the agent reads of the database, its setup on the side; no list of tables */
 .detail.bare { background: none; border: 0; overflow: visible; }
 .detail.menu-open { overflow: visible; }   /* a menu of a property open, past the bottom of a short card */
+/* another tab on the same table: its card fades out while the new one is read, the panel keeps its height, the new one fades in */
+.detail.switching > * { opacity: 0; transition: opacity 0.1s; }
+.detail.arriving > * { animation: fade 0.18s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .detail.switching > *, .detail.arriving > * { transition: none; animation: none; } }
 body[data-step="overview"] .main { grid-template-columns: minmax(0, 1fr); }
 body[data-step="overview"] .list { display: none; }
 .overview { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }

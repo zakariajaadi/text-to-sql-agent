@@ -295,7 +295,9 @@ function goTo(step, force = false) {
     return Promise.all([tables, index, loadScreen()]);
   }
   if (ui.data) { renderHeader(); renderRows(); }
-  if (ui.current) openTable(ui.current, { again: true }); else renderDetail();
+  // the card of the other tab fades out while this one is read (renderDetail fades it in): no card of Profilage under
+  // the head of Descriptions
+  if (ui.current) { $("detail").classList.add("switching"); openTable(ui.current, { again: true }); } else renderDetail();
   return Promise.all([tables, index]);
 }
 
@@ -653,6 +655,10 @@ function renderDetail(message) {
   const d = ui.detail, el = $("detail");
   el.classList.toggle("bare", ui.step === "overview");   // the Vue d'ensemble holds two panels of its own
   el.classList.remove("menu-open", "has-draft");   // drawn again, its menus closed; a draft says itself again (showDraft)
+  if (el.classList.contains("switching")) {   // the card of another tab, faded out while this one was read (goTo)
+    el.classList.replace("switching", "arriving");
+    setTimeout(() => el.classList.remove("arriving"), 250);
+  }
   if (ui.step === "relations") renderRelations(el, message);
   else if (ui.step === "scope") renderScope(el, message);
   else if (ui.step === "metrics") renderMetric(el, message);
