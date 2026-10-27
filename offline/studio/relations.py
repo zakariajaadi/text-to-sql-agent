@@ -7,8 +7,12 @@ with their evidence, the map of the tables they join, and the join path the agen
   - evidence: the share of the values of `from` found in `to` (found, measured by the generator or
     when a relation is added in the studio), and the cardinality read from the keys of the profile;
     a relation added on purpose to a column that is not a key carries its fanout (rows of `to` each
-    row of `from` joins, on average) and the cardinality measured then (links), and stays in amber;
-    a weak relation kept by a human (kept: true, "Garder") is no longer in amber
+    row of `from` joins, on average) and the cardinality measured then (links)
+  - weak (amber, "à trancher"): a guessed relation (proposed by the LLM, or between two columns named
+    differently) whose values are few found: maybe not a relation at all. Few values found by a relation
+    of same-name keys, or one added by a human, is a partial coverage: the relation holds, `to` covers
+    part of `from` only (the agent loses the other rows when it joins). A weak relation kept by a human
+    (kept: true, "Garder") is no longer weak
   - map: the tables laid out in layers from left to right (grandalf, Sugiyama), the referenced tables on the
     right of the ones pointing to them; each group of joined tables under the previous one, the isolated
     tables on a last row
@@ -43,24 +47,28 @@ def side(ref: str, profile: dict) -> str:
 
 def relation_row(relation: dict, profile: dict) -> dict:
     """
-    A relation as the page shows it: its tables, evidence, cardinality and origin. Weak (amber) when few of
-    its values are found, or when it joins several rows of `to` to a row of `from` (fanout), unless a human
-    kept it. Empty when it was measured but `from` holds no value (found: null in relationships.yaml):
+    A relation as the page shows it: its tables, evidence, cardinality and origin. Weak (amber) when it is
+    guessed and few of its values are found, unless a human kept it; partial when few are found otherwise
+    (or once kept). Empty when it was measured but `from` holds no value (found: null in relationships.yaml):
     nothing to compare, unlike a relation never measured (no found).
     """
     found, fanout, kept = relation.get("found"), relation.get("fanout"), bool(relation.get("kept"))
+    few     = found is not None and found < KEY_OVERLAP
+    guessed = relation.get("origin") == "llm" or (
+        relation.get("origin") != "manual" and relation["from"].split(".")[1] != relation["to"].split(".")[1])
     return {
-        "from":   relation["from"],
-        "to":     relation["to"],
-        "source": relation["from"].split(".")[0],
-        "target": relation["to"].split(".")[0],
-        "found":  found,
-        "empty":  "found" in relation and found is None,
-        "fanout": fanout,
-        "weak":   not kept and ((found is not None and found < KEY_OVERLAP) or (fanout or 0) > 1),
-        "kept":   kept,
-        "links":  relation.get("links") or f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
-        "origin": relation.get("origin"),
+        "from":    relation["from"],
+        "to":      relation["to"],
+        "source":  relation["from"].split(".")[0],
+        "target":  relation["to"].split(".")[0],
+        "found":   found,
+        "empty":   "found" in relation and found is None,
+        "fanout":  fanout,
+        "weak":    few and guessed and not kept,
+        "partial": few and (kept or not guessed),
+        "kept":    kept,
+        "links":   relation.get("links") or f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
+        "origin":  relation.get("origin"),
     }
 
 

@@ -650,7 +650,7 @@ body.map-open { overflow: hidden; }
 .join-group-head .meta { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .join-group-head .meta .mono { font-family: var(--font-mono); }
 .join-group-head .st { grid-column: 5; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
-.join-group-head .st.warn { color: var(--warn-ink); }
+.join-group-head .st .warn { color: var(--warn-ink); }
 .join-names { columns: 210px; column-gap: 28px; padding: 0 18px 12px 22px; }   /* the marks under the chevron, the names under the title */
 .join-name { display: block; width: 100%; padding: 4px 0; border: 0; background: none; break-inside: avoid; cursor: pointer; text-align: left;
   font: 400 var(--fs-sm) var(--font-sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.15s; }
@@ -659,6 +659,7 @@ body.map-open { overflow: hidden; }
 .join-name:focus-visible { outline: none; }
 .join-name.open .label { text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
 .join-name .via { margin-left: 6px; font: var(--fs-xs) var(--font-mono); color: var(--muted); }
+.join-name .cost { margin-left: 8px; font: var(--fs-xs) var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
 .join-name > .origin, .join-name > .slot { display: inline-block; width: 12px; margin-right: 8px; }
 .join-name.weak .label::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--warn); vertical-align: 2px; }
 .join-name.unchecked { color: var(--muted); }

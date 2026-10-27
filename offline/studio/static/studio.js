@@ -1548,11 +1548,13 @@ function pathText() {
     + (p.result.bridged ? "" : ` <span class="slow">· au-delà de 3 : l'agent ne fera pas ce chemin seul</span>`);
 }
 
-// The list of joins under the map, in two parts. "À trancher", in amber: the weak joins, worst first, answered by a
-// click or a key (G Garder, R Retirer; the line slides out, the next one takes the focus, a toast offers to undo, a
-// progress once started, a closing line when none is left). Then every join under the table it leads to, one line per
-// joined table, folded; opened, its tables in columns, top to bottom. A join opens its detail under its line (or its
-// group): the share of its values found and what it costs the agent. A join hovered or focused lights its edge on the map
+// The list of joins under the map, in two parts. "À trancher", in amber: the weak joins (guessed, few of their values
+// found: maybe no join at all), worst first, answered by a click or a key (G Garder, R Retirer; the line slides out, the
+// next one takes the focus, a toast offers to undo, a progress once started, a closing line when none is left). Then
+// every join under the table it leads to, one line per joined table, folded; opened, its tables in columns, top to
+// bottom, a partial coverage with its share (the join holds, the agent loses the other rows). A join opens its detail
+// under its line (or its group): the share of its values found and what it costs the agent. A join hovered or focused
+// lights its edge on the map
 const JOIN_CHEVRON = '<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5L8 6L4.5 9.5"/></svg>';
 const JOIN_DONE = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7"/><path d="M5 8.2l2 2 4-4.4"/></svg>';
 const joinKey = (r) => `${r.from}|${r.to}`;
@@ -1624,7 +1626,7 @@ function joinQueue(lit, sel) {
   }).join("");
   return `<section class="join-queue-wrap${sel ? " sel" : ""}">
     <div class="joins-head"><div class="text"><h3>${queue.length > 1 ? `${queue.length} jointures à trancher` : "Une jointure à trancher"}</h3>
-      <p>Une partie de leurs valeurs ne se retrouve pas dans la table jointe. Garde celles que tu sais justes, retire les autres.</p></div>
+      <p>Devinées par l'IA ou entre des colonnes de noms différents, et peu de leurs valeurs se retrouvent dans la table jointe. Garde celles que tu sais justes, retire les autres.</p></div>
       ${done ? `<div class="join-progress"><span>${done} sur ${total}</span><span class="track"><i style="width:${state.shown * 100}%"></i></span></div>` : ""}</div>
     <div class="join-queue">${items}</div>
     <div class="join-hint" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd>parcourir</span><span><kbd>Entrée</kbd>voir le détail</span>
@@ -1645,10 +1647,10 @@ function joinGroups(lit, sel, cur, path) {
     const cols = rs.map((r) => joinCol(r.to)), count = (c) => cols.filter((x) => x === c).length;
     const key = id ? [...new Set(cols)].sort((a, b) => count(b) - count(a))[0] : null;
     const on = rs.some(lit), open = state.open.has(id) || (on && Boolean(cur) && !state.open.has(`!${id}`));
-    const weak = rs.filter((r) => r.weak).length, never = rs.filter(neverMeasured).length;
-    const status = weak ? `<span class="st warn">${weak} à trancher</span>`
-      : never ? `<span class="st">${never > 1 ? `${never} jamais mesurées` : "1 jamais mesurée"}</span>`
-      : `<span class="st">${rs.length > 1 ? "toutes vérifiées" : "vérifiée"}</span>`;
+    const weak = rs.filter((r) => r.weak).length, partial = rs.filter((r) => r.partial).length, never = rs.filter(neverMeasured).length;
+    const said = [weak && `<span class="warn">${weak} à trancher</span>`, partial && `${partial} en couverture partielle`,
+      never && (never > 1 ? `${never} jamais mesurées` : "1 jamais mesurée")].filter(Boolean).join(" · ");
+    const status = `<span class="st">${said || (rs.length > 1 ? "toutes vérifiées" : "vérifiée")}</span>`;
     const title = id ? `<span class="name">${esc(id)}</span><span class="meta">${plural(rs.length, "table")} y mènent, par <span class="mono">${esc(key)}</span></span>`
       : `<span class="name">Les autres</span><span class="meta">${plural(rs.length, "jointure")}, une seule vers chacune de ces tables</span>`;
     const sorted = rs.slice().sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target));
@@ -1660,11 +1662,15 @@ function joinGroups(lit, sel, cur, path) {
       const label = id ? esc(r.source) : `${esc(r.source)}<span class="arrow">→</span>${esc(r.target)}`;
       const cls = ["join-name", r.weak ? "weak" : "", neverMeasured(r) ? "unchecked" : "", lit(r) ? "lit" : "",
         lit(r) && !path && (r.source === cur || (!id && r.target === cur)) ? "me" : "", here(r) ? "open" : ""].filter(Boolean).join(" ");
-      const tip = r.weak ? `${pct(r.found)} des valeurs retrouvées` : neverMeasured(r) ? "jamais mesurée" : via ? `par ${via}` : "";   // a key cut at the end of its column
+      const tip = r.weak ? `${pct(r.found)} des valeurs retrouvées` : r.partial ? `${r.target} couvre ${pct(r.found)} de ${r.source}`
+        : neverMeasured(r) ? "jamais mesurée" : via ? `par ${via}` : "";   // a key cut at the end of its column
+      // what the join costs, after its name: the share a partial coverage keeps, the rows a join on no key counts again
+      const cost = r.partial ? nbPct(r.found) : r.fanout ? `×${decimal(r.fanout)}` : "";
       // its origin before it, a kept one yours; an unknown one keeps its place, empty, so that the names stay aligned
       const [kind, , title] = r.kept ? ["you", "", "Gardée par toi malgré ses valeurs"] : ORIGINS[r.origin] || [];
       return `<button class="${cls}" type="button" data-rel="${rel.relations.indexOf(r)}" data-key="${esc(joinKey(r))}" aria-expanded="${here(r)}"${tip ? ` title="${tip}"` : ""}>`
-        + `${kind ? originMark(kind, title) : '<span class="slot"></span>'}<span class="label">${label}</span>${via ? `<span class="via">${esc(via)}</span>` : ""}</button>`;
+        + `${kind ? originMark(kind, title) : '<span class="slot"></span>'}<span class="label">${label}</span>${via ? `<span class="via">${esc(via)}</span>` : ""}`
+        + `${cost ? `<span class="cost">${cost}</span>` : ""}</button>`;
     }).join("");
     const shown = sorted.find(here);
     return `<div class="join-group${open ? " open" : ""}${on ? " lit" : ""}" data-group="${esc(id)}">
@@ -2014,7 +2020,7 @@ async function addRelation(force = false) {
   renderDetail();
   const [state, warn] = added?.fanout ? [`Ajoutée par toi : chaque ligne de ${added.source} comptée ${decimal(added.fanout)} fois en moyenne`, true]
     : added?.found == null ? ["Ajoutée, mais aucune valeur à vérifier", false]
-    : [`Ajoutée : ${pct(added.found)} des valeurs trouvées${added.weak ? " — peu, à vérifier" : ""}`, added.weak];
+    : [`Ajoutée : ${pct(added.found)} des valeurs trouvées${added.partial ? ` — couverture partielle, l'agent perd les autres lignes de ${added.source}` : ""}`, added.partial];
   $("rel-state").textContent = state;
   $("rel-state").className = `save-state${warn ? " warn" : ""}`;
 }

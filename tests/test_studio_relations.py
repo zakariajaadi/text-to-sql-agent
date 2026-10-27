@@ -55,8 +55,22 @@ def test_a_relation_to_a_column_that_is_no_key():
     assert entry["relations"] == [{"from": "invoice.billingcountry", "to": "customer.country", "found": 1.0,
                                    "fanout": 5.7, "links": "n → n", "origin": "manual"}]
     row = relation_row(entry["relations"][0], PROFILE)
-    # all its values found, still in amber: a join on it counts each row several times
-    assert (row["weak"], row["links"], row["fanout"]) == (True, "n → n", 5.7)
+    # added on purpose: nothing left to settle, its cost said (each row counted 5.7 times)
+    assert (row["weak"], row["links"], row["fanout"]) == (False, "n → n", 5.7)
+
+
+def test_few_values_found_is_a_doubt_for_a_guessed_relation_only():
+    rows = {r["from"]: relation_row(r, PROFILE) for r in [
+        {"from": "bilan.id_client", "to": "client.id_client", "found": 0.24},                       # same name, by hand
+        {"from": "bilan.id_tiers", "to": "client.id_client", "found": 0.24},                        # named differently
+        {"from": "carte.id_client", "to": "client.id_client", "found": 0.24, "origin": "llm"},      # proposed by the LLM
+        {"from": "impaye.id_compte", "to": "client.id_client", "found": 0.24, "origin": "manual"},  # added by a human
+    ]}
+    # a relation that holds, `client` covering a quarter of `bilan`: a partial coverage, nothing to settle
+    assert (rows["bilan.id_client"]["weak"], rows["bilan.id_client"]["partial"]) == (False, True)
+    assert (rows["bilan.id_tiers"]["weak"], rows["bilan.id_tiers"]["partial"]) == (True, False)
+    assert (rows["carte.id_client"]["weak"], rows["carte.id_client"]["partial"]) == (True, False)
+    assert (rows["impaye.id_compte"]["weak"], rows["impaye.id_compte"]["partial"]) == (False, True)
 
 
 def test_relations_view_counts_and_isolated_tables():
@@ -113,7 +127,7 @@ def test_add_and_ignore_a_relation():
 def test_a_weak_relation_kept_by_a_human_is_no_longer_weak():
     entry = keep_relation({"relations": list(RELATIONS), "ignore": []}, "client_master.id_personne", "personne.id_personne")
     row = relation_row(entry["relations"][1], PROFILE)
-    assert (row["found"], row["weak"], row["kept"]) == (0.62, False, True)       # its evidence kept, out of the amber
+    assert (row["found"], row["weak"], row["partial"], row["kept"]) == (0.62, False, True, True)   # out of the amber, its coverage said
     assert relations_view(TABLES, entry, PROFILE)["weak"] == 0
     entry = keep_relation(entry, "client_master.id_personne", "personne.id_personne", keep=False)
     assert "kept" not in entry["relations"][1] and relation_row(entry["relations"][1], PROFILE)["weak"]
@@ -183,7 +197,7 @@ def test_a_relation_to_a_column_that_is_no_key_is_added_on_demand_only(client, t
     assert view["added"] is False and view["check"]["per_value"] == [1, 13] and view["check"]["found"] == 0.95
     assert view["version"] == version and len(view["relations"]) == 1          # nothing written
     view = post(True, version)
-    assert view["added"] is True and view["relations"][-1]["fanout"] == 5.7 and view["weak"] == 1
+    assert view["added"] is True and view["relations"][-1]["fanout"] == 5.7 and view["weak"] == 0
     written = yaml.safe_load((tmp_path / "awb" / "relationships.yaml").read_text())["relations"][-1]
     assert (written["fanout"], written["links"], written["origin"]) == (5.7, "n → n", "manual")
 
