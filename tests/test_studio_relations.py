@@ -14,6 +14,7 @@ from offline.studio.relations import (
     fk_graph,
     ignore_relation,
     join_path,
+    keep_relation,
     layout,
     relation_fanout,
     relation_row,
@@ -109,6 +110,18 @@ def test_add_and_ignore_a_relation():
         ignore_relation(entry, "x.a", "y.b")
 
 
+def test_a_weak_relation_kept_by_a_human_is_no_longer_weak():
+    entry = keep_relation({"relations": list(RELATIONS), "ignore": []}, "client_master.id_personne", "personne.id_personne")
+    row = relation_row(entry["relations"][1], PROFILE)
+    assert (row["found"], row["weak"], row["kept"]) == (0.62, False, True)       # its evidence kept, out of the amber
+    assert relations_view(TABLES, entry, PROFILE)["weak"] == 0
+    entry = keep_relation(entry, "client_master.id_personne", "personne.id_personne", keep=False)
+    assert "kept" not in entry["relations"][1] and relation_row(entry["relations"][1], PROFILE)["weak"]
+    assert "kept" not in RELATIONS[1]                                               # the entry given is not changed
+    with pytest.raises(ValueError):
+        keep_relation(entry, "x.a", "y.b")
+
+
 # =============================================================================
 # Routes, and relationships.yaml written with its own comments kept
 # =============================================================================
@@ -147,6 +160,19 @@ def test_a_relation_added_then_ignored_from_the_page(client, tmp_path):
     text = (tmp_path / "awb" / "relationships.yaml").read_text()
     assert text.startswith("# Two id families that overlap")      # the reviewer's comment kept
     assert client.get("/api/db/awb/relations/path", params={"a": "carte", "b": "client"}).json()["joins"] is None
+
+
+def test_a_weak_relation_kept_then_no_longer_kept_from_the_page(client, tmp_path):
+    (tmp_path / "awb" / "relationships.yaml").write_text(yaml.safe_dump({"relations": RELATIONS[:2], "ignore": []}))
+    view = client.get("/api/db/awb/relations").json()
+    assert view["weak"] == 1
+    body = {"source": "client_master.id_personne", "target": "personne.id_personne", "version": view["version"]}
+    view = client.post("/api/db/awb/relations/keep", json=body).json()
+    assert view["weak"] == 0 and view["relations"][1]["kept"] is True
+    assert yaml.safe_load((tmp_path / "awb" / "relationships.yaml").read_text())["relations"][1]["kept"] is True
+    view = client.post("/api/db/awb/relations/keep", params={"back": "true"}, json={**body, "version": view["version"]}).json()
+    assert view["weak"] == 1 and view["relations"][1]["kept"] is False
+    assert client.post("/api/db/awb/relations/keep", json={**body, "version": "1"}).status_code == 409
 
 
 def test_a_relation_to_a_column_that_is_no_key_is_added_on_demand_only(client, tmp_path):

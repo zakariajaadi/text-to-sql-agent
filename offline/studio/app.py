@@ -89,6 +89,7 @@ from offline.studio.relations import (
     fk_graph,
     ignore_relation,
     join_path,
+    keep_relation,
     relations_view,
 )
 
@@ -616,6 +617,19 @@ def ignore(db: str, request: RelationRequest, back: bool = False):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     logger.info(f"[studio] {db}: relation {request.source} -> {request.target} {'restored' if back else 'ignored'}")
+    return relations(db)
+
+
+@app.post("/api/db/{db}/relations/keep")
+def keep(db: str, request: RelationRequest, back: bool = False):
+    """A weak relation kept by a human (kept: true, no longer in amber), or no longer kept (back=true)."""
+    _db_config(db)
+    try:
+        _update_relations(db, request.version,
+                          lambda entry: keep_relation(entry, request.source, request.target, keep=not back))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    logger.info(f"[studio] {db}: relation {request.source} -> {request.target} {'no longer kept' if back else 'kept'}")
     return relations(db)
 
 

@@ -534,25 +534,130 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .slow { color: var(--warn-ink); }
 .add-form { background: var(--hover); }
 .arrow { color: var(--muted); }
+/* a join taken out of the list, with its button to bring it back */
 .rline {
   display: grid; grid-template-columns: minmax(0, 1fr) 124px 64px 28px; gap: 10px; align-items: center;
   padding: 7px 14px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm);
 }
-.rline.head { font-size: var(--fs-xs); color: var(--muted); padding-block: 9px; white-space: nowrap; }
 .rline .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
-/* the origin of a join before its source; an unknown one keeps its place, empty, so that the names stay aligned */
-.rline .rel .origin, .origin-slot { margin-right: 6px; }
-.origin-slot { display: inline-block; width: 12px; }
 .rline .muted { color: var(--muted); font-size: var(--fs-xs); }
-.rline.weak { background: var(--warn-soft); }
-.rline.focus { background: var(--accent-soft); }   /* the relation clicked on the map */
-.pill.links { background: var(--chip); color: var(--ink-2); }
-.rline .pill.mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
-/* removing a relation: on the line hovered or focused, always on a touch screen */
-.rline .icon-btn { opacity: 0; transition: opacity 0.1s; }
-.rline:hover .icon-btn, .rline:focus-within .icon-btn, .rline.focus .icon-btn { opacity: 1; }
-@media (hover: none) { .rline .icon-btn { opacity: 1; } }
-.rline .warn-text { color: var(--warn-ink); font-weight: 500; }
+
+/* The joins under the map: the ones to settle in amber, then every join under the table it leads to */
+.joins { border-top: 1px solid var(--line); padding-bottom: 12px; }
+.joins-head { display: flex; align-items: flex-end; gap: 24px; padding: 18px 18px 10px; }
+.joins-head .text { flex: 1; min-width: 0; }
+.joins-head h3 { margin: 0 0 2px; font-size: var(--fs-sm); font-weight: 600; }
+.joins-head p { margin: 0; max-width: 72ch; font-size: var(--fs-xs); line-height: 1.5; color: var(--muted); }
+.join-progress { display: flex; align-items: center; gap: 10px; padding-bottom: 2px; font: var(--fs-xs) var(--font-mono); color: var(--muted); white-space: nowrap; }
+.join-progress .track { width: 96px; height: 4px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.join-progress .track i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.4s cubic-bezier(0.2, 0.7, 0.2, 1); }
+/* one grid down to the lines, so names, shares and keys are aligned; the margins of the box are in its first and last
+   columns (a subgrid keeps no padding of its own) */
+.join-queue { display: grid; grid-template-columns: 34px max-content 96px minmax(0, 1fr) auto 10px; column-gap: 12px;
+  margin: 0 12px; border-radius: var(--radius); background: var(--warn-soft); overflow: hidden; }
+.join-item, .join-item-in, .join-line { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+@supports not (grid-template-columns: subgrid) {
+  .join-item, .join-item-in, .join-line { grid-template-columns: 34px minmax(0, 330px) 96px minmax(0, 1fr) auto 10px; column-gap: 12px; }
+}
+/* an answer given: the line closes its height and fades */
+.join-item { grid-template-rows: 1fr; transition: grid-template-rows 0.26s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease; }
+.join-item.leaving { grid-template-rows: 0fr; opacity: 0; }
+.join-item-in { min-height: 0; overflow: hidden; transition: background 0.15s; }
+.join-item + .join-item > .join-item-in { box-shadow: inset 0 1px color-mix(in srgb, var(--warn) 28%, transparent); }
+.join-item.open > .join-item-in { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.join-line { align-items: center; min-height: 44px; cursor: pointer; outline: none; }
+.join-line:hover { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.join-item.open .join-line:hover { background: none; }
+.join-line:focus-visible { box-shadow: inset 2px 0 var(--accent); }
+.join-line > .origin { justify-self: end; }
+.join-line .names { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-md); }
+.join-line .names .arrow, .join-name .arrow { color: var(--muted); margin: 0 5px; }
+.join-line .share { display: flex; align-items: center; justify-content: flex-end; gap: 9px; font: 500 var(--fs-xs) var(--font-mono);
+  font-variant-numeric: tabular-nums; color: var(--warn-ink); }
+.join-meter { width: 44px; height: 4px; flex: none; border-radius: 999px; background: color-mix(in srgb, var(--warn) 22%, transparent); overflow: hidden; }
+.join-meter i { display: block; height: 100%; border-radius: inherit; background: var(--warn); }
+.join-line .key { min-width: 0; font: var(--fs-xs) var(--font-mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the two answers: on the line hovered, focused or open, always on a touch screen */
+.join-line .answers { display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.join-line:hover .answers, .join-line:focus-visible .answers, .join-item.open .answers { opacity: 1; }
+@media (hover: none) { .join-line .answers { opacity: 1; } }
+.joins kbd { display: inline-block; min-width: 16px; margin-left: 7px; padding: 0 4px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; font: 10px/14px var(--font-mono); text-align: center; color: var(--muted); background: var(--surface); }
+/* the keys of the queue, while it has the focus */
+.join-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 10px 18px 0; font-size: var(--fs-xs); color: var(--muted);
+  opacity: 0; transition: opacity 0.2s; }
+.join-hint kbd { margin: 0 3px 0 0; }
+.join-queue-wrap:focus-within .join-hint { opacity: 1; }
+.join-done { display: flex; align-items: center; gap: 10px; padding: 18px 18px 4px; font-size: var(--fs-sm); }
+.join-done svg { flex: none; fill: none; stroke: var(--good-ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.join-done .muted-text { font-size: var(--fs-xs); }
+
+/* a part that opens: its height follows its content */
+.join-fold { grid-column: 1 / -1; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.24s cubic-bezier(0.4, 0, 0.2, 1); }
+.join-item.open .join-fold, .join-group.open > .join-fold, .join-group-detail.open { grid-template-rows: 1fr; }
+.join-fold-in { min-height: 0; overflow: hidden; }
+
+/* the detail of a join: what the data showed and what it costs the agent, its origin, its actions */
+.join-detail { padding: 0 18px 14px 46px; font-size: var(--fs-sm); color: var(--ink-2); }
+.join-bar { display: flex; max-width: 320px; height: 6px; margin: 2px 0 12px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.join-bar i { border-radius: inherit; background: var(--bar); }
+.join-detail.weak .join-bar i { background: var(--warn); }
+.join-detail p { margin: 0; max-width: 74ch; line-height: 1.55; }
+.join-detail p + p { margin-top: 3px; }
+.join-detail .lead { color: var(--ink); }
+.join-detail .lead b { font-weight: 600; }
+.join-detail .warn { color: var(--warn-ink); font-weight: 600; }
+.join-detail .reading { margin-top: 8px; color: var(--ink); }
+.join-detail-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 10px; font-size: var(--fs-xs); color: var(--muted); }
+.join-detail-foot > span:not(.grow) { display: inline-flex; align-items: center; gap: 6px; }
+.join-detail-foot .grow { flex: 1; }
+.join-detail-foot .btn { margin-right: -8px; }
+
+/* every join: one line per table the joins lead to, folded; opened, its tables in columns, top to bottom */
+.join-groups .joins-head { padding-top: 22px; }
+.join-group + .join-group { border-top: 1px solid var(--line); }
+.join-group-head { display: grid; grid-template-columns: 14px auto auto minmax(0, 1fr) auto; align-items: baseline; column-gap: 10px; width: 100%;
+  min-height: 46px; padding: 13px 18px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background 0.12s; }
+.join-group-head:hover { background: var(--hover); }
+.join-group-head:focus-visible { outline: none; box-shadow: inset 2px 0 var(--accent); }
+.join-group-head .chev { width: 12px; height: 12px; align-self: center; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round;
+  stroke-linejoin: round; transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+.join-group.open .join-group-head .chev { transform: rotate(90deg); }
+.join-group-head .name { font-size: var(--fs-md); font-weight: 600; }
+.join-group-head .meta { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.join-group-head .meta .mono { font-family: var(--font-mono); }
+.join-group-head .st { grid-column: 5; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.join-group-head .st.warn { color: var(--warn-ink); }
+.join-names { columns: 210px; column-gap: 28px; padding: 0 18px 12px 42px; }
+.join-name { display: block; width: 100%; padding: 4px 0; border: 0; background: none; break-inside: avoid; cursor: pointer; text-align: left;
+  font: 400 var(--fs-sm) var(--font-sans); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.15s; }
+.join-name .label { text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color 0.12s; }
+.join-name:hover .label, .join-name:focus-visible .label { text-decoration-color: currentColor; }
+.join-name:focus-visible { outline: none; }
+.join-name.open .label { text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
+.join-name .via { margin-left: 6px; font: var(--fs-xs) var(--font-mono); color: var(--muted); }
+.join-name.weak .label::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 7px; border-radius: 50%; background: var(--warn); vertical-align: 2px; }
+.join-name.unchecked { color: var(--muted); }
+.join-group-detail .join-detail { margin: 0 18px 14px 42px; padding: 14px 16px; border-radius: var(--radius); background: var(--hover); }
+/* a table chosen (or a path): its groups open, it stands out there, the rest steps back */
+.join-groups.sel .join-name:not(.lit) { opacity: 0.35; }
+.join-groups.sel .join-group:not(.lit) .join-group-head { opacity: 0.45; }
+.join-queue-wrap.sel .join-item:not(.lit) { opacity: 0.4; }
+.join-name.me, .join-group-head.me .name { color: var(--accent-ink); font-weight: 500; }
+.join-groups.path .join-name.lit { color: var(--path-ink); }
+
+/* what was just done to a join, and its undo */
+.undo-toast { position: fixed; left: 50%; bottom: 24px; z-index: 60; display: flex; align-items: center; gap: 14px; max-width: calc(100vw - 32px);
+  padding: 9px 8px 9px 16px; border-radius: 10px; background: var(--ink); color: var(--bg); font-size: var(--fs-sm);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28); transform: translate(-50%, 14px); opacity: 0; pointer-events: none;
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.18s ease; }
+.undo-toast.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.undo-toast .what { font-family: var(--font-mono); font-size: var(--fs-xs); opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.undo-toast button { flex: none; padding: 5px 10px; border: 0; border-radius: 6px; background: none; color: var(--accent); font: 500 var(--fs-sm) var(--font-sans); cursor: pointer; }
+.undo-toast button:hover { background: rgba(127, 127, 127, 0.2); }
+@media (prefers-reduced-motion: reduce) {
+  .join-item, .join-fold, .join-progress .track i, .join-group-head .chev, .undo-toast, .join-line .answers, .join-hint { transition: none; }
+}
 /* A relation checked before it is added: what the data says, as the tests of a metric */
 .result { border-top: 1px solid var(--line); }
 .result-title { margin: 0; padding: 12px 14px 10px; font-size: var(--fs-md); font-weight: 500; color: var(--warn-ink); }
@@ -1055,12 +1160,22 @@ body[data-view="home"] .home-mark { display: inline-flex; }
   .line > :nth-child(3) { grid-column: 1 / -1; grid-row: 2; white-space: normal; }
   .sline { grid-template-columns: minmax(0, 1fr) 64px; }
   .sline > :nth-child(2), .sline.head > :nth-child(3) { display: none; }
-  /* a relation on two lines, its source then its target; a remove button a finger can touch */
-  .rline { grid-template-columns: minmax(0, 1fr) 84px 40px; }
-  .rline > :nth-child(3) { display: none; }
-  .rline .rel { display: grid; white-space: normal; }
-  .rline .rel > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rline .icon-btn.small { width: 40px; height: 40px; }
+  /* a join to settle on three lines: its tables, its key, its answers; the groups without their key */
+  .joins-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .join-queue { grid-template-columns: 26px minmax(0, 1fr) 44px 0 0 8px; column-gap: 8px; }
+  .join-line { padding-block: 8px; }
+  .join-line .names { white-space: normal; }
+  .join-line .share .join-meter, .join-line kbd, .join-hint { display: none; }
+  .join-line .key { grid-column: 2; grid-row: 2; }
+  .join-line .answers { grid-column: 2 / 4; grid-row: 3; }
+  .join-detail { padding-left: 34px; }
+  .join-group-head { grid-template-columns: 14px auto minmax(0, 1fr) auto; }
+  .join-group-head .meta { display: none; }
+  .join-group-head .st { grid-column: 4; }
+  .join-names { padding-left: 18px; columns: 150px; }
+  .join-group-detail .join-detail { margin-left: 12px; }
+  .rline { grid-template-columns: minmax(0, 1fr) auto; }
+  .rline > :nth-child(2), .rline > :nth-child(3) { display: none; }
   .map-tools select { flex: 1 1 120px; max-width: none; }
   .sline > .desc-cell { grid-column: 1 / -1; grid-row: 2; }
   .formula-line { grid-template-columns: minmax(0, 1fr); }

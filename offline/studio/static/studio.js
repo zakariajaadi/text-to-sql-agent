@@ -76,6 +76,7 @@ const indexScreen = (step = ui.step) => step === "overview" || step === "index";
 const ui = {
   dbs: [], db: null, step: "profile", data: null, filter: "all", query: "", selected: new Set(),
   rel: null, path: { a: null, b: null, result: null }, adding: false,   // the Relations screen
+  joins: { db: null, open: new Set(), detail: null, current: null, focus: null, decided: [], shown: 0, next: null },   // its list (joinQueue)
   relCheck: null,                                                      // a relation measured, not added (its target is no key)
   met: null, metric: null, metricKind: "metric", testing: null,        // the Metrics screen (testing: {current, stop, panel, done, total})
   showQuery: false,                                                    // the query of a metric shown under its formula
@@ -1508,7 +1509,6 @@ function setupMap() {
       ui.current = r.source;
       ui.path = { a: r.source, b: null, result: null };
       renderRows(); renderDetail();
-      document.querySelector(".rline.focus")?.scrollIntoView({ block: "nearest" });
     });
   });
 }
@@ -1525,33 +1525,284 @@ function pathText() {
     + (p.result.bridged ? "" : ` <span class="slow">· au-delà de 3 : l'agent ne fera pas ce chemin seul</span>`);
 }
 
-// A join of the list: its origin before it (no mark when unknown, its place kept so the names stay aligned), how much of
-// its values the data showed, how many rows on each side, the button that removes it
-function relationLine(r) {
-  const [origin, , title] = ORIGINS[r.origin] || [];
-  // measured with nothing to compare (its table empty), or never measured
-  const found = r.empty ? `<span class="muted-text" title="${esc(r.source)} n'a aucune ligne : rien à comparer, la vérifier à nouveau n'y change rien">table vide</span>`
-    : r.found == null ? '<span class="muted-text" title="Pas encore mesurée sur les données">—</span>'
-    : `<span class="bar"><i class="${r.found < KEY_OVERLAP ? "low" : ""}" style="width:${Math.round(r.found * 100)}%"></i></span>${pct(r.found)}`;
-  const focus = ui.relFocus === `${r.from}|${r.to}`;
-  return `<div class="rline${r.weak ? " weak" : ""}${focus ? " focus" : ""}">
-    <span class="cell mono rel" title="${esc(r.from)} → ${esc(r.to)}"><span>${origin ? originMark(origin, title) : '<span class="origin-slot"></span>'}${esc(r.from)}</span> <span><span class="arrow">→</span> ${esc(r.to)}</span></span>
-    <span class="fill">${found}</span>
-    ${r.fanout ? `<span><span class="pill decide mono" title="${esc(r.to)} n'est pas une clé : chaque ligne de ${esc(r.source)} comptée ${decimal(r.fanout)} fois en moyenne">${esc(r.links)}</span></span>`
-      : `<span><span class="pill links mono" title="Combien de lignes d'un côté pour une ligne de l'autre">${esc(r.links)}</span></span>`}
-    <button class="icon-btn small" data-ignore="${esc(r.from)}|${esc(r.to)}" title="Retirer : la jointure sort de la liste et ne reviendra pas" aria-label="Retirer ${esc(r.from)} vers ${esc(r.to)}">✕</button>
+// The list of joins under the map, in two parts. "À trancher", in amber: the weak joins, worst first, answered by a
+// click or a key (G Garder, R Retirer; the line slides out, the next one takes the focus, a toast offers to undo, a
+// progress once started, a closing line when none is left). Then every join under the table it leads to, one line per
+// joined table, folded; opened, its tables in columns, top to bottom. A join opens its detail under its line (or its
+// group): the share of its values found and what it costs the agent. A join hovered or focused lights its edge on the map
+const JOIN_CHEVRON = '<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5L8 6L4.5 9.5"/></svg>';
+const JOIN_DONE = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7"/><path d="M5 8.2l2 2 4-4.4"/></svg>';
+const joinKey = (r) => `${r.from}|${r.to}`;
+const joinCol = (ref) => ref.split(".")[1];
+const neverMeasured = (r) => r.found == null && !r.empty;
+const stillMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const nbPct = (x) => pct(x).replace(" %", " %");   // "18 %" never cut at the end of a line
+
+// The detail of a join: what the data showed and what it costs the agent, where the join comes from
+function joinDetail(r, where) {
+  const [st, sc] = r.from.split(".");
+  const s = esc(r.source), t = esc(r.target), col = `<b>${esc(st)}.${esc(sc)}</b>`, f = r.found;
+  let lead, reading = "";
+  if (r.empty) lead = `${s} n'a aucune ligne : rien à comparer.`;
+  else if (f == null) lead = `Jamais mesurée : rien ne prouve encore que les valeurs de ${col} se retrouvent dans ${t}.`;
+  else if (f >= 1) lead = `Toutes les valeurs de ${col} se retrouvent dans ${t}.`;
+  else {
+    lead = `<span class="${r.weak ? "warn" : ""}">${nbPct(f)}</span> des valeurs de ${col} se retrouvent dans ${t}. `
+      + `Les ${nbPct(1 - f)} autres n'y sont pas : l'agent perd ces lignes de ${s} quand il joint les deux tables.`;
+    if (r.weak) reading = `Soit la jointure est fausse, soit ${t} ne couvre qu'une partie de ${s}.`;
+  }
+  const [a, b] = (r.links || "").split(" → ");
+  const side = (x) => ({ 1: "une ligne", n: "plusieurs" })[x];
+  const rows = r.fanout ? `${t} n'est pas une clé : chaque ligne de ${s} comptée ${decimal(r.fanout)} fois en moyenne.`
+    : side(a) && side(b) ? `Pour une même valeur : ${side(a)} dans ${s}, ${side(b)} dans ${t}.` : "";
+  const [kind, says] = ORIGINS[r.origin] || [];
+  const from = [kind ? `<span>${originMark(kind, says)}${says[0].toUpperCase()}${says.slice(1)}</span>` : "",
+    r.kept ? `<span>${originMark("you", "gardée par toi")}Gardée par toi malgré ses valeurs</span>` : ""].join("");
+  const k = esc(joinKey(r));
+  const acts = where === "queue" ? `<button class="btn ghost small" data-join-act="map" data-key="${k}">Voir sur la carte</button>`
+    : (r.weak ? `<button class="btn ghost small" data-join-act="keep" data-key="${k}">Garder</button>` : "")
+      + (r.kept ? `<button class="btn ghost small" data-join-act="unkeep" data-key="${k}">Ne plus garder</button>` : "")
+      + `<button class="btn ghost small" data-join-act="map" data-key="${k}">Voir sur la carte</button>`
+      + `<button class="btn ghost small" data-join-act="remove" data-key="${k}">Retirer</button>`;
+  return `<div class="join-detail${r.weak ? " weak" : ""}">
+      ${where === "group" && f != null && !r.empty ? `<div class="join-bar" role="img" aria-label="${nbPct(f)} des valeurs retrouvées"><i style="width:${f * 100}%"></i></div>` : ""}
+      <p class="lead">${lead}</p>${rows ? `<p>${rows}</p>` : ""}${reading ? `<p class="reading">${reading}</p>` : ""}
+      <div class="join-detail-foot">${from}<span class="grow"></span>${acts}</div>
+    </div>`;
+}
+
+// À trancher: the weak joins, worst first; the progress once an answer is given; a closing line when none is left
+function joinQueue(lit, sel) {
+  const rel = ui.rel, state = ui.joins;
+  const queue = rel.relations.filter((r) => r.weak).sort((a, b) => (a.found ?? 0) - (b.found ?? 0));
+  const done = state.decided.length, total = queue.length + done;
+  if (!total) return "";
+  if (!queue.length) {
+    const kept = state.decided.filter((d) => d.verdict === "keep").length;
+    return `<div class="join-done">${JOIN_DONE}<span>${total > 1 ? `Les ${total} jointures douteuses sont tranchées.` : "La jointure douteuse est tranchée."}</span>
+      <span class="muted-text">${plural(kept, "gardée")}, ${plural(done - kept, "retirée")}</span></div>`;
+  }
+  const items = queue.map((r) => {
+    const k = joinKey(r), open = state.detail?.key === k && state.detail.where === "queue", same = joinCol(r.from) === joinCol(r.to);
+    const [kind, , title] = ORIGINS[r.origin] || [];
+    return `<div class="join-item${open ? " open" : ""}${lit(r) ? " lit" : ""}" data-key="${esc(k)}"><div class="join-item-in">
+        <div class="join-line" tabindex="0" role="button" aria-expanded="${open}" data-rel="${rel.relations.indexOf(r)}">
+          ${kind ? originMark(kind, title) : "<span></span>"}
+          <span class="names">${esc(r.source)}<span class="arrow">→</span>${esc(r.target)}</span>
+          <span class="share">${r.empty ? "vide" : `<span class="join-meter"><i style="width:${(r.found ?? 0) * 100}%"></i></span>${nbPct(r.found)}`}</span>
+          <span class="key">${same ? esc(joinCol(r.from)) : `${esc(joinCol(r.from))} → ${esc(joinCol(r.to))}`}</span>
+          <span class="answers">
+            <button class="btn ghost small" data-join-act="keep" data-key="${esc(k)}" title="Elle reste, sans l'orange : tu la sais juste">Garder<kbd>G</kbd></button>
+            <button class="btn ghost small" data-join-act="remove" data-key="${esc(k)}" title="Elle sort de la liste ; tu pourras la rétablir">Retirer<kbd>R</kbd></button>
+          </span>
+        </div>
+        <div class="join-fold"${open ? "" : " inert"}><div class="join-fold-in">${joinDetail(r, "queue")}</div></div>
+      </div></div>`;
+  }).join("");
+  return `<section class="join-queue-wrap${sel ? " sel" : ""}">
+    <div class="joins-head"><div class="text"><h3>${queue.length > 1 ? `${queue.length} jointures à trancher` : "Une jointure à trancher"}</h3>
+      <p>Une partie de leurs valeurs ne se retrouve pas dans la table jointe. Garde celles que tu sais justes, retire les autres.</p></div>
+      ${done ? `<div class="join-progress"><span>${done} sur ${total}</span><span class="track"><i style="width:${state.shown * 100}%"></i></span></div>` : ""}</div>
+    <div class="join-queue">${items}</div>
+    <div class="join-hint" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd>parcourir</span><span><kbd>Entrée</kbd>voir le détail</span>
+      <span><kbd>G</kbd>garder</span><span><kbd>R</kbd>retirer</span></div>
+  </section>`;
+}
+
+// Every join under the table it leads to, the most joined first; the tables a single join leads to share the last group
+function joinGroups(lit, sel, cur, path) {
+  const rel = ui.rel, state = ui.joins, by = new Map();
+  for (const r of rel.relations) (by.get(r.target) || by.set(r.target, []).get(r.target)).push(r);
+  const groups = [...by].filter(([, rs]) => rs.length > 1).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+    .map(([id, rs]) => ({ id, rs }));
+  const single = [...by].filter(([, rs]) => rs.length === 1).map(([, rs]) => rs[0]);
+  if (single.length) groups.push({ id: "", rs: single });
+
+  const group = ({ id, rs }) => {
+    const cols = rs.map((r) => joinCol(r.to)), count = (c) => cols.filter((x) => x === c).length;
+    const key = id ? [...new Set(cols)].sort((a, b) => count(b) - count(a))[0] : null;
+    const on = rs.some(lit), open = state.open.has(id) || (on && Boolean(cur) && !state.open.has(`!${id}`));
+    const weak = rs.filter((r) => r.weak).length, never = rs.filter(neverMeasured).length;
+    const status = weak ? `<span class="st warn">${weak} à trancher</span>`
+      : never ? `<span class="st">${never > 1 ? `${never} jamais mesurées` : "1 jamais mesurée"}</span>`
+      : `<span class="st">${rs.length > 1 ? "toutes vérifiées" : "vérifiée"}</span>`;
+    const title = id ? `<span class="name">${esc(id)}</span><span class="meta">${plural(rs.length, "table")} y mènent, par <span class="mono">${esc(key)}</span></span>`
+      : `<span class="name">Les autres</span><span class="meta">${plural(rs.length, "jointure")}, une seule vers chacune de ces tables</span>`;
+    const sorted = rs.slice().sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target));
+    const here = (r) => state.detail?.key === joinKey(r) && state.detail.where === "group";
+    const names = sorted.map((r) => {
+      const sc = joinCol(r.from), tc = joinCol(r.to);
+      // the key is in the title of the group; a join on other columns says them
+      const via = id ? (tc !== key ? `${sc} → ${tc}` : sc !== tc ? sc : "") : "";
+      const label = id ? esc(r.source) : `${esc(r.source)}<span class="arrow">→</span>${esc(r.target)}`;
+      const cls = ["join-name", r.weak ? "weak" : "", neverMeasured(r) ? "unchecked" : "", lit(r) ? "lit" : "",
+        lit(r) && !path && (r.source === cur || (!id && r.target === cur)) ? "me" : "", here(r) ? "open" : ""].filter(Boolean).join(" ");
+      const tip = r.weak ? `${pct(r.found)} des valeurs retrouvées` : neverMeasured(r) ? "jamais mesurée" : "";
+      return `<button class="${cls}" type="button" data-rel="${rel.relations.indexOf(r)}" data-key="${esc(joinKey(r))}" aria-expanded="${here(r)}"${tip ? ` title="${tip}"` : ""}>`
+        + `<span class="label">${label}</span>${via ? `<span class="via">${esc(via)}</span>` : ""}</button>`;
+    }).join("");
+    const shown = sorted.find(here);
+    return `<div class="join-group${open ? " open" : ""}${on ? " lit" : ""}" data-group="${esc(id)}">
+        <button class="join-group-head${id && id === cur && !path ? " me" : ""}" type="button" aria-expanded="${open}">${JOIN_CHEVRON}${title}${status}</button>
+        <div class="join-fold"${open ? "" : " inert"}><div class="join-fold-in">
+          <div class="join-names">${names}</div>
+          <div class="join-fold join-group-detail${shown ? " open" : ""}"${shown ? "" : " inert"}><div class="join-fold-in">${shown ? joinDetail(shown, "group") : ""}</div></div>
+        </div></div>
+      </div>`;
+  };
+  return `<div class="join-groups${sel ? " sel" : ""}${path ? " path" : ""}">
+    <div class="joins-head"><div class="text"><h3>Toutes les jointures</h3><p>Rangées sous la table qu'elles rejoignent.</p></div></div>
+    ${groups.map(group).join("") || '<p class="placeholder">Aucune jointure.</p>'}
   </div>`;
+}
+
+// A join hovered or focused: its edge and its two tables stand out on the map, the rest fades (as a table hovered there)
+function lightJoin(i) {
+  const svg = document.querySelector("#map-wrap .map");
+  if (!svg) return;
+  svg.classList.toggle("hovering", i != null);
+  svg.querySelectorAll(".hl").forEach((el) => el.classList.remove("hl"));
+  if (i == null) return;
+  const r = ui.rel.relations[i];
+  svg.querySelector(`.e[data-rel="${i}"]`)?.classList.add("hl");
+  [r.source, r.target].forEach((t) => svg.querySelector(`.node[data-table="${CSS.escape(t)}"]`)?.classList.add("hl"));
+}
+
+// Opened and closed in place, without drawing the list again: the heights follow their content
+function setJoinItem(item, open) {
+  item.classList.toggle("open", open);
+  item.querySelector(".join-line").setAttribute("aria-expanded", open);
+  item.querySelector(".join-fold").inert = !open;
+}
+
+function closeJoinDetails(except) {
+  document.querySelectorAll(".join-item.open").forEach((o) => { if (o !== except) setJoinItem(o, false); });
+  document.querySelectorAll(".join-group-detail.open").forEach((d) => { if (d !== except) { d.classList.remove("open"); d.inert = true; } });
+  document.querySelectorAll(".join-name.open").forEach((n) => { n.classList.remove("open"); n.setAttribute("aria-expanded", "false"); });
+}
+
+function toggleJoinItem(item) {
+  const open = !item.classList.contains("open");
+  closeJoinDetails(item);
+  setJoinItem(item, open);
+  ui.joins.detail = open ? { key: item.dataset.key, where: "queue" } : null;
+}
+
+function toggleJoinGroup(group) {
+  const id = group.dataset.group, open = !group.classList.contains("open"), state = ui.joins.open;
+  group.classList.toggle("open", open);
+  group.querySelector(".join-group-head").setAttribute("aria-expanded", open);
+  group.querySelector(":scope > .join-fold").inert = !open;
+  // "!x": x closed by a click while the table chosen would open it
+  if (open) { state.delete(`!${id}`); state.add(id); } else { state.delete(id); state.add(`!${id}`); }
+}
+
+function showJoinInGroup(name) {
+  const group = name.closest(".join-group"), box = group.querySelector(".join-group-detail"), k = name.dataset.key;
+  const again = ui.joins.detail?.key === k && ui.joins.detail.where === "group";
+  const swap = box.classList.contains("open") && !again;
+  closeJoinDetails(swap ? box : null);
+  if (again) { ui.joins.detail = null; return; }
+  const inner = box.querySelector(".join-fold-in");
+  inner.innerHTML = joinDetail(ui.rel.relations.find((r) => joinKey(r) === k), "group");
+  wireJoinActions(inner);
+  if (swap && !stillMotion()) inner.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 180, easing: "ease-out" });
+  box.classList.add("open"); box.inert = false;
+  name.classList.add("open"); name.setAttribute("aria-expanded", "true");
+  ui.joins.detail = { key: k, where: "group" };
+  // the detail is under the group: brought into view once it has opened
+  setTimeout(() => box.scrollIntoView({ block: "nearest", behavior: stillMotion() ? "auto" : "smooth" }), 240);
+}
+
+// An answer: the line slides out of the queue, the answer is written, a toast offers to undo it
+async function decideJoin(pair, verdict) {
+  const r = ui.rel.relations.find((x) => joinKey(x) === pair), state = ui.joins;
+  if (!r) return;
+  const item = document.querySelector(`.join-item[data-key="${CSS.escape(pair)}"]`);
+  const items = [...document.querySelectorAll(".join-item")], at = items.indexOf(item);
+  state.next = (items[at + 1] || items[at - 1])?.dataset.key || null;
+  if (item && !stillMotion()) { item.classList.add("leaving"); await new Promise((done) => setTimeout(done, 260)); }
+  // answered in the queue, its detail leaves with it; under its group, it stays open on what changed
+  if (state.detail?.key === pair && (state.detail.where === "queue" || verdict === "remove")) state.detail = null;
+  const before = state.decided;
+  if (r.weak) state.decided = state.decided.filter((d) => d.pair !== pair).concat({ pair, verdict });
+  if (!await moveRelation(pair, false, verdict === "keep" ? "keep" : "ignore")) { state.decided = before; return; }
+  showUndo(verdict === "keep" ? "Gardée" : "Retirée", `${r.source} → ${r.target}`, async () => {
+    state.decided = state.decided.filter((d) => d.pair !== pair);
+    state.next = pair;
+    await moveRelation(pair, true, verdict === "keep" ? "keep" : "ignore");
+  });
+}
+
+function showUndo(word, what, undo) {
+  const toast = $("undo-toast");
+  toast.innerHTML = `<span>${word}</span><span class="what">${esc(what)}</span><button type="button">Annuler</button>`;
+  toast.querySelector("button").onclick = () => { toast.classList.remove("on"); undo(); };
+  toast.classList.add("on");
+  clearTimeout(showUndo.timer);
+  showUndo.timer = setTimeout(() => toast.classList.remove("on"), 6000);
+}
+
+function wireJoinActions(root) {
+  root.querySelectorAll("[data-join-act]").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const pair = b.dataset.key, act = b.dataset.joinAct;
+    if (act === "keep" || act === "remove") { decideJoin(pair, act); return; }
+    if (act === "unkeep") { moveRelation(pair, true, "keep"); return; }
+    const r = ui.rel.relations.find((x) => joinKey(x) === pair);
+    ui.relFocus = pair; ui.current = r.source; ui.path = { a: r.source, b: null, result: null };
+    renderRows(); renderDetail();
+    $("map-wrap")?.scrollIntoView({ block: "center", behavior: stillMotion() ? "auto" : "smooth" });
+  }));
+}
+
+function wireJoins(el) {
+  el.querySelectorAll("[data-rel]").forEach((j) => {
+    const i = Number(j.dataset.rel);
+    j.addEventListener("mouseenter", () => lightJoin(i));
+    j.addEventListener("mouseleave", () => { if (document.activeElement !== j) lightJoin(null); });
+    j.addEventListener("focus", () => lightJoin(i));
+    j.addEventListener("blur", () => lightJoin(null));
+  });
+  el.querySelectorAll(".join-line").forEach((line) => {
+    const item = line.closest(".join-item");
+    line.addEventListener("click", (e) => { if (!e.target.closest(".answers")) toggleJoinItem(item); });
+    // the queue by keys: ↑ ↓ (or j k), Entrée, G, R, Échap
+    line.addEventListener("keydown", (e) => {
+      if (e.target !== line || e.ctrlKey || e.metaKey || e.altKey) return;
+      const lines = [...el.querySelectorAll(".join-line")], at = lines.indexOf(line);
+      const go = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[e.key];
+      if (go) { e.preventDefault(); lines[at + go]?.focus(); return; }
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleJoinItem(item); return; }
+      if (e.key === "Escape" && item.classList.contains("open")) { toggleJoinItem(item); return; }
+      const verdict = { g: "keep", r: "remove" }[e.key.toLowerCase()];
+      if (verdict) { e.preventDefault(); decideJoin(item.dataset.key, verdict); }
+    });
+  });
+  el.querySelectorAll(".join-group-head").forEach((h) => h.addEventListener("click", () => toggleJoinGroup(h.closest(".join-group"))));
+  el.querySelectorAll(".join-name").forEach((n) => n.addEventListener("click", () => showJoinInGroup(n)));
+  wireJoinActions(el);
 }
 
 function renderRelations(el, message) {
   const rel = ui.rel;
   if (!rel) { el.innerHTML = '<p class="placeholder">Lecture des jointures…</p>'; return; }
-  const cur = ui.current, tables = ui.data?.tables.map((t) => t.name) || [], layer = pathLayers();
+  const cur = ui.current, tables = ui.data?.tables.map((t) => t.name) || [], layer = pathLayers(), path = layer.size > 0;
   const mine = (r) => r.source === cur || r.target === cur;
-  const shown = (layer.size ? rel.relations.filter((r) => onPath(r, layer)) : cur ? rel.relations.filter(mine) : rel.relations)
-    .slice().sort((a, b) => (b.weak - a.weak) || ((a.found == null) - (b.found == null)));
-  const ignored = layer.size ? [] : cur ? rel.ignored.filter(mine) : rel.ignored;
-  const heading = layer.size ? "Jointures du chemin" : cur ? `Jointures de ${esc(cur)}` : "Toutes les jointures";
+  // a table chosen (or a path) does not filter the list: its joins stand out there, its groups open
+  const lit = (r) => (path ? onPath(r, layer) : cur ? mine(r) : false), sel = path || Boolean(cur);
+  const ignored = path ? [] : cur ? rel.ignored.filter(mine) : rel.ignored;
+  const state = ui.joins;
+  if (state.db !== ui.db) Object.assign(state, { db: ui.db, open: new Set(), detail: null, decided: [], shown: 0 });
+  if (cur !== state.current) { state.open = new Set([...state.open].filter((id) => !id.startsWith("!"))); state.current = cur; }
+  // a join clicked on the map: its detail open, in the queue or under its group
+  const clicked = ui.relFocus && ui.relFocus !== state.focus;
+  if (clicked) {
+    const r = rel.relations.find((x) => joinKey(x) === ui.relFocus);
+    if (r) state.detail = { key: ui.relFocus, where: r.weak ? "queue" : "group" };
+    if (r && !r.weak) state.open.add(rel.relations.filter((x) => x.target === r.target).length > 1 ? r.target : "");
+  }
+  state.focus = ui.relFocus;
   const figures = [plural(rel.relations.length, "jointure"),
     rel.isolated.length ? `${plural(rel.isolated.length, "table")} ${rel.isolated.length > 1 ? "isolées" : "isolée"}` : "aucune table isolée",
     rel.weak ? `${fmt.format(rel.weak)} à vérifier` : null]   // the ones never measured: in the note over the map
@@ -1593,9 +1844,9 @@ function renderRelations(el, message) {
       <button class="btn small ghost" type="button" id="add-cancel">Annuler</button>
     </form>
     ${ui.adding && ui.relCheck ? relationCheck(ui.relCheck) : ""}
-    <div class="columns">
-      <div class="rline head"><span>${heading}</span><span class="num">Valeurs trouvées</span><span>Liens</span><span></span></div>
-      ${shown.map(relationLine).join("") || `<p class="placeholder">${cur ? "Aucune jointure : l'agent ne peut joindre cette table à aucune autre." : "Aucune jointure."}</p>`}
+    <div class="joins">
+      ${joinQueue(lit, sel)}
+      ${joinGroups(lit, sel, cur, path)}
       ${ignored.length ? `<details class="ignored"><summary>${plural(ignored.length, "jointure retirée")}</summary>
         ${ignored.map((r) => `<div class="rline"><span class="cell mono muted">${esc(r.from)} → ${esc(r.to)}</span><span></span><span></span>
           <button class="btn ghost small" data-restore="${esc(r.from)}|${esc(r.to)}">Rétablir</button></div>`).join("")}</details>` : ""}
@@ -1606,8 +1857,18 @@ function renderRelations(el, message) {
   $("path-b").onchange = (e) => { ui.path.b = e.target.value || null; ui.path.result = null; findPath(); };
   $("check-relations").onclick = () => runJob("relations/run", { check: true });
   if ($("relations-all")) $("relations-all").onclick = () => { ui.current = null; ui.relFocus = null; ui.path = { a: null, b: null, result: null }; renderRows(); renderDetail(); };
-  el.querySelectorAll("[data-ignore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.ignore, false)));
+  wireJoins(el);
   el.querySelectorAll("[data-restore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.restore, true)));
+  // the progress moves from where it was drawn last; after an answer, the next line of the queue takes the focus
+  const total = rel.relations.filter((r) => r.weak).length + state.decided.length, progress = total ? state.decided.length / total : 0;
+  const bar = el.querySelector(".join-progress .track i");
+  if (bar) requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = `${progress * 100}%`; }));
+  state.shown = progress;
+  if (state.next) {
+    el.querySelector(`.join-item[data-key="${CSS.escape(state.next)}"] .join-line`)?.focus({ preventScroll: true });
+    state.next = null;
+  }
+  if (clicked) el.querySelector(".join-item.open, .join-name.open")?.scrollIntoView({ block: "center" });
   for (const end of ["source", "target"]) {
     const fill = (column) => { $(`add-${end}-column`).innerHTML = columnsOf($(`add-${end}-table`).value, column); };
     $(`add-${end}-table`).onchange = () => { forgetCheck(); fill(); };
@@ -1669,17 +1930,19 @@ async function findPath() {
   renderDetail();
 }
 
-async function moveRelation(pair, back) {
+// A relation ignored or kept (action "ignore" or "keep"), or back from it; true once relationships.yaml is written
+async function moveRelation(pair, back, action = "ignore") {
   const [source, target] = pair.split("|");
   try {
-    ui.rel = await api(`/api/db/${encodeURIComponent(ui.db)}/relations/ignore${back ? "?back=true" : ""}`,
+    ui.rel = await api(`/api/db/${encodeURIComponent(ui.db)}/relations/${action}${back ? "?back=true" : ""}`,
       { method: "POST", body: { source, target, version: ui.rel.version } });
   } catch (e) {
     renderDetail(e.status === 409 ? "relationships.yaml a changé : recharge la page" : e.message);
-    return;
+    return false;
   }
   if (ui.path.a && ui.path.b) await findPath();
   loadTables(); renderDetail();
+  return true;
 }
 
 // A relation measured on the data, then added; not added when its target is no key, unless forced (a click)

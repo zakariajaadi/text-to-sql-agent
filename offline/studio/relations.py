@@ -7,7 +7,8 @@ with their evidence, the map of the tables they join, and the join path the agen
   - evidence: the share of the values of `from` found in `to` (found, measured by the generator or
     when a relation is added in the studio), and the cardinality read from the keys of the profile;
     a relation added on purpose to a column that is not a key carries its fanout (rows of `to` each
-    row of `from` joins, on average) and the cardinality measured then (links), and stays in amber
+    row of `from` joins, on average) and the cardinality measured then (links), and stays in amber;
+    a weak relation kept by a human (kept: true, "Garder") is no longer in amber
   - map: the tables laid out in layers from left to right (grandalf, Sugiyama), the referenced tables on the
     right of the ones pointing to them; each group of joined tables under the previous one, the isolated
     tables on a last row
@@ -43,11 +44,11 @@ def side(ref: str, profile: dict) -> str:
 def relation_row(relation: dict, profile: dict) -> dict:
     """
     A relation as the page shows it: its tables, evidence, cardinality and origin. Weak (amber) when few of
-    its values are found, or when it joins several rows of `to` to a row of `from` (fanout). Empty when it was
-    measured but `from` holds no value (found: null in relationships.yaml): nothing to compare, unlike a
-    relation never measured (no found).
+    its values are found, or when it joins several rows of `to` to a row of `from` (fanout), unless a human
+    kept it. Empty when it was measured but `from` holds no value (found: null in relationships.yaml):
+    nothing to compare, unlike a relation never measured (no found).
     """
-    found, fanout = relation.get("found"), relation.get("fanout")
+    found, fanout, kept = relation.get("found"), relation.get("fanout"), bool(relation.get("kept"))
     return {
         "from":   relation["from"],
         "to":     relation["to"],
@@ -56,7 +57,8 @@ def relation_row(relation: dict, profile: dict) -> dict:
         "found":  found,
         "empty":  "found" in relation and found is None,
         "fanout": fanout,
-        "weak":   (found is not None and found < KEY_OVERLAP) or (fanout or 0) > 1,
+        "weak":   not kept and ((found is not None and found < KEY_OVERLAP) or (fanout or 0) > 1),
+        "kept":   kept,
         "links":  relation.get("links") or f"{side(relation['from'], profile)} → {side(relation['to'], profile)}",
         "origin": relation.get("origin"),
     }
@@ -195,6 +197,20 @@ def relation_fanout(spread: dict | None) -> float | None:
     if not spread or spread["per_value"][1] <= 1 or not spread.get("matched"):
         return None
     return round(spread["joined"] / spread["matched"], 1)
+
+
+def keep_relation(entry: dict, source: str, target: str, keep: bool = True) -> dict:
+    """relationships.yaml with a weak relation kept by a human (kept: true, no longer in amber), or no longer kept."""
+    relations = [dict(r) for r in entry.get("relations") or []]
+    found = [r for r in relations if (r["from"], r["to"]) == (source, target)]
+    if not found:
+        raise ValueError(f"Pas de jointure {source} → {target} dans les jointures")
+    for relation in found:
+        if keep:
+            relation["kept"] = True
+        else:
+            relation.pop("kept", None)
+    return {**entry, "relations": relations}
 
 
 def ignore_relation(entry: dict, source: str, target: str, ignore: bool = True) -> dict:

@@ -8,6 +8,7 @@ come first (profile.yaml, no LLM), the LLM adds the ones named differently.
 Every relation carries its evidence, read by offline/studio (the agent reads from and to only):
   found  : share of the distinct values of `from` found in `to`, on a sample (key_overlap)
   origin : profile (a same-name key whose values match), llm, or manual (added in the studio)
+  kept   : true when a human kept a weak relation in the studio ("Garder"): no longer in amber
 A relation of the LLM is measured too and kept whatever its share: under KEY_OVERLAP the studio
 shows it in amber, for a human to keep or ignore.
 
