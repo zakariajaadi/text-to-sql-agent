@@ -4,6 +4,8 @@
 #   synonyms       : other words for it in the questions, any language
 #   expr           : aggregate SQL expression, every column written table.column
 #   time_dimension : default date for periods and trends (optional)
+#   origin         : (generator) "ai" on a metric it proposed; none on one written before the studio tracked it
+#   edited         : (studio) the fields corrected by hand since, out of description, synonyms, expr, time_dimension
 # To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).
 # Checked at startup: an unknown table or column stops the app.
 
@@ -12,23 +14,27 @@ revenue:
   synonyms: [sales, turnover, income, amount invoiced, chiffre d'affaires, CA, ventes, recettes]
   expr: SUM(invoiceline.unitprice * invoiceline.quantity)
   time_dimension: invoice.invoicedate
+  origin: ai
 
 invoice_count:
   description: Number of distinct invoices (purchases).
   synonyms: [number of invoices, purchases, number of purchases, nombre de factures, achats]
   expr: COUNT(DISTINCT invoice.invoiceid)
   time_dimension: invoice.invoicedate
+  origin: ai
 
 average_invoice_value:
   description: Average amount of an invoice (per invoice, not per invoice line).
   synonyms: [average basket, average purchase, average invoice, panier moyen, facture moyenne]
   expr: SUM(invoiceline.unitprice * invoiceline.quantity) / COUNT(DISTINCT invoiceline.invoiceid)
   time_dimension: invoice.invoicedate
+  origin: ai
 
 tracks_sold:
   description: Number of track units sold.
   synonyms: [units sold, tracks purchased, quantity sold, titres vendus, ventes en volume]
   expr: SUM(invoiceline.quantity)
   time_dimension: invoice.invoicedate
+  origin: ai
 
 ignore: []
