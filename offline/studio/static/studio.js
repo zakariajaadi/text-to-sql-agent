@@ -3504,9 +3504,10 @@ function evalPanel(idx, db) {
   const results = (e.results || []).map((r, i) => ({ ...r, i, level: LEVEL[r.d] ? r.d : "other" }));
   const cell = (r) => `<span class="cell-q ${r.x === 1 ? "exact" : r.x === 0 ? "wrong" : "unscored"}" data-q="${r.i}" style="--i:${r.i}"></span>`;
   const levels = LEVELS.map(([key, label]) => {
-    const rs = results.filter((r) => r.level === key), scored = rs.filter((r) => r.x != null);
-    return rs.length ? `<span class="lvl-name">${label}</span><span class="cells">${rs.map(cell).join("")}</span>`
-      + `<span class="lvl-ratio">${scored.length ? `${scored.filter((r) => r.x === 1).length}/${scored.length}` : "—"}</span>` : "";
+    const rs = results.filter((r) => r.level === key), scored = rs.filter((r) => r.x != null), exact = scored.filter((r) => r.x === 1).length;
+    return rs.length ? `<span class="lvl-head"><span class="lvl-name">${label}</span>`
+      + `<span class="lvl-ratio${exact < scored.length ? " miss" : ""}">${scored.length ? `${exact}/${scored.length}` : "—"}</span></span>`
+      + `<span class="cells">${rs.map(cell).join("")}</span>` : "";
   }).join("");
   const trend = (e.history || []).length > 1
     ? `<div class="ev-trend-head"><b>Au fil des évaluations</b><span class="grow"></span><span class="lg"><i class="lg-line"></i>score</span>`
