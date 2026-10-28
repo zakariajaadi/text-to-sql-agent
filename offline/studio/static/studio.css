@@ -492,7 +492,8 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .map .node .refs { fill: var(--accent-ink); font-size: 9.5px; }   /* the references it joins, in pills: their names */
 .map .node .gauge-bg { fill: var(--chip); }
 .map .node .gauge-fill { fill: var(--bar); transition: fill 0.2s; }
-.map .node:hover .box, .map .node:focus .box { stroke: var(--ink); outline: none; }
+.map .node:focus { outline: none; }   /* the focus ring of the browser on the box clicked: its line in ink says it */
+.map .node:hover .box, .map .node:focus .box { stroke: var(--ink); }
 .map .node.near .box { stroke: var(--accent); }
 .map .node.on .box { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; }
 .map .node.on .nm { fill: var(--accent-ink); font-weight: 500; }
