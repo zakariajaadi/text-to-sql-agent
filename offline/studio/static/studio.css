@@ -1043,7 +1043,6 @@ body.map-open { overflow: hidden; }
   flex: 1 1 0; min-width: 0; border-radius: 2px 2px 0 0; background: var(--bar); cursor: pointer; transform-origin: bottom;
   transition: background-color 0.2s, opacity 0.2s;
 }
-.bars .b.grp { margin-left: 4px; }   /* the next table */
 .bars .b.changed { background: var(--warn); }
 .bars .b.nil { background: transparent; box-shadow: inset 0 0 0 1px var(--bar); }
 .bars .b.leaving { background: transparent; box-shadow: inset 0 0 0 1px var(--warn); }
@@ -1052,6 +1051,12 @@ body.map-open { overflow: hidden; }
 .bars .b.stack { display: flex; flex-direction: column; gap: 1px; background: none; }
 .bars .b.stack i { display: block; background: var(--bar); border-radius: 2px 2px 0 0; transition: background-color 0.2s; }
 .bars .b.stack i.hid { background: repeating-linear-gradient(135deg, var(--bar) 0 1.5px, transparent 1.5px 4px); opacity: 0.7; }
+/* the bars a lens places (studio.js placeLens): at rest past 40 a silhouette, the bars touching and square; under the
+   lens they part and round; the hidden columns pale there (hatching in a silhouette turns to grass) */
+.bars.lens { position: relative; display: block; cursor: crosshair; }
+.bars.lens .b { position: absolute; bottom: 0; border-radius: var(--r, 2px) var(--r, 2px) 0 0; }
+.bars.lens .b.stack i { border-radius: var(--r, 2px) var(--r, 2px) 0 0; }
+.bars.lens.sil .b.stack i.hid { background: color-mix(in srgb, var(--bar) 35%, transparent); opacity: 1; }
 .read-viz.focusing .b:not(.on) { opacity: 0.22; }
 .read-viz .b.on:not(.listed):not(.changed):not(.stack), .read-viz .b.on.stack i:not(.hid) { background: var(--ink-2); }
 .drawing .read-viz .b { animation: bar-grow 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(var(--i) * 14ms); }
@@ -1062,11 +1067,10 @@ body.map-open { overflow: hidden; }
 .sw.searched { background: var(--bar); }
 /* the joins: an arc each over the line of tables, lighter when they are many; those of the tables under the pointer
    in the accent */
-.arcs-box { height: 100%; }
+.arcs-box { height: 100%; cursor: crosshair; }
 .arcs path { fill: none; stroke: var(--edge-on); stroke-width: 1.2; stroke-opacity: var(--arc-alpha, 1); transition: stroke 0.2s, opacity 0.2s, stroke-width 0.2s; }
 .arcs circle { fill: var(--surface); stroke: var(--edge-on); stroke-width: 1.3; transition: fill 0.2s, stroke 0.2s, opacity 0.2s; }
 .arcs circle.lone { stroke: var(--muted); stroke-dasharray: 2 2; }
-.arcs .hits rect { fill: transparent; cursor: pointer; }
 .read-viz.focusing .arcs path:not(.on) { opacity: 0.12; }
 .read-viz.focusing .arcs circle:not(.on):not(.near) { opacity: 0.35; }
 .arcs path.on { stroke: var(--accent); stroke-width: 1.8; stroke-opacity: 1; }

@@ -3110,7 +3110,7 @@ function indexVerdict(idx, db = ui.db) {
 // What moved since the overview was last drawn: the database, its index, its eval (what plays when the page is drawn
 // again), the default word of each card, the table under the pointer ({tables, col, q, metric}), the observer that
 // draws the chart and the joins again at another width
-const OV = { db: null, built: null, eval: null, notes: {}, focus: null, resize: null };
+const OV = { db: null, built: null, eval: null, notes: {}, focus: null, resize: null, lens: { c: 0, g: 0, to: { c: 0, g: 0 }, raf: 0 }, values: null };
 const ROLLED = new Map();   // the text each rolling figure last showed, by its key: {text, db}
 const DIGITS = [..."0123456789"].map((d) => `<span>${d}</span>`).join("");
 const stillPage = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -3226,18 +3226,19 @@ const vizBar = (h, cls, attrs, i) => `<span class="b${cls ? ` ${cls}` : ""}" sty
 // rows and values on a log scale: a table of 8 rows stays visible next to one of 600 000
 const logShare = (n, max) => (n ? Math.log10(n + 1) / Math.log10(max + 1) : 0);
 
-// The picture of each card, the tables in the same order in all of them (the joined ones side by side)
+// The picture of each card, the tables in the same order in all of them (the joined ones side by side); the bars of
+// the tables, the columns and the values placed by the lens (placeLens)
 function cardViz(key, idx) {
   const c = idx.cards, tables = c.tables, leaving = leavingIndex(idx);
   const status = Object.fromEntries(idx.tables.map((t) => [t.name, t.status]));
   if (key === "tables") {
     const max = Math.max(1, ...tables.map((t) => t.rows || 0));
-    return `<div class="bars">${tables.map((t, i) => vizBar(Math.max(logShare(t.rows, max), 0.06),
+    return `<div class="bars lens" data-lens="tables">${tables.map((t, i) => vizBar(Math.max(logShare(t.rows, max), 0.06),
       leaving.includes(t.name) ? "leaving" : status[t.name] === "changed" ? "changed" : t.rows ? "" : "nil", `data-table="${esc(t.name)}"`, i)).join("")}</div>`;
   }
   if (key === "columns") {
     const max = Math.max(1, ...tables.map((t) => t.kinds.length + t.hidden));
-    return `<div class="bars">${tables.map((t, i) => `<span class="b stack" style="height:${Math.max((t.kinds.length + t.hidden) / max * 100, 6).toFixed(1)}%;--i:${i}" data-table="${esc(t.name)}">`
+    return `<div class="bars lens" data-lens="columns">${tables.map((t, i) => `<span class="b stack" style="height:${Math.max((t.kinds.length + t.hidden) / max * 100, 6).toFixed(1)}%;--i:${i}" data-table="${esc(t.name)}">`
       + `${t.hidden ? `<i class="hid" style="flex-grow:${t.hidden}"></i>` : ""}${t.kinds.length ? `<i style="flex-grow:${t.kinds.length}"></i>` : ""}</span>`).join("")}</div>`;
   }
   if (key === "joins") return '<div class="arcs-box" data-arcs></div>';
@@ -3246,9 +3247,8 @@ function cardViz(key, idx) {
     const cols = tables.flatMap((t) => t.values.map(([column, count, where]) => ({ table: t.name, column, count, where })));
     if (!cols.length) return "";
     const max = Math.max(1, ...cols.map((v) => v.count)), total = (where) => cols.filter((v) => v.where === where).reduce((n, v) => n + v.count, 0);
-    const bars = cols.map((v, i) => vizBar(v.count ? logShare(v.count, max) : 0.3, `${v.where}${i && cols[i - 1].table !== v.table ? " grp" : ""}`,
-      `data-table="${esc(v.table)}" data-col="${esc(v.column)}"`, i)).join("");
-    return `<div class="bars short">${bars}</div><div class="viz-keys"><span><i class="sw listed"></i>dans les fiches <b>${fmt.format(total("listed"))}</b></span>`
+    const bars = cols.map((v, i) => vizBar(v.count ? logShare(v.count, max) : 0.3, v.where, `data-table="${esc(v.table)}" data-col="${esc(v.column)}"`, i)).join("");
+    return `<div class="bars short lens" data-lens="values">${bars}</div><div class="viz-keys"><span><i class="sw listed"></i>dans les fiches <b>${fmt.format(total("listed"))}</b></span>`
       + `<span><i class="sw searched"></i>cherchées <b>${fmt.format(total("searched"))}</b></span></div>`;
   }
   // the metrics, the refused ones first
@@ -3272,28 +3272,123 @@ function sampleGrid(table, rows) {
   return `<div class="srow hdr">${cells}</div>${`<div class="srow">${cells}</div>`.repeat(Math.max(rows, 0))}`;
 }
 
+// ── The lens of the bars, a Dock (Furnas 1986): at rest past 40 bars a silhouette of one piece, the bars touching;
+// the pointer near, the bars under it widen and part, the far ones close up, the total width the same. The cards
+// share the order of the tables: the lens opens at the same place in the four (its centre c counted in tables) ──
+
+// The place of n bars in W px, the lens at c (an index) with a strength g (0 at rest, 1 open). Each bar weighs
+// 1 + G·e^(−(i−c)²/2σ²) and takes its share of what the gaps leave; G is set for the bar under the pointer to reach
+// T px (14, or 1.6 times its width at rest when that is already wide). extra: a gap more after a bar (the next table
+// in the values), kept out of the silhouette
+function lensLayout(n, W, c, g, extra = []) {
+  const rest = n > 40 ? 0 : 2, base = (W - (n - 1) * rest) / Math.max(n, 1);
+  const sigma = Math.max(1.5, n / 20), k = sigma * Math.sqrt(2 * Math.PI), T = Math.max(14, base * 1.6);
+  const G = Math.max(0, (T * n - W) / (W - T * k));
+  const s = Array.from({ length: n }, (_, i) => Math.exp(-((i - c) ** 2) / (2 * sigma * sigma)) * g);
+  const gaps = s.slice(0, -1).map((v, i) => rest + (2 - rest) * v + (rest ? extra[i] || 0 : 0));
+  const weights = s.map((v) => 1 + G * v), sum = weights.reduce((a, b) => a + b, 0) || 1;
+  const avail = W - gaps.reduce((a, b) => a + b, 0), w = weights.map((v) => (avail * v) / sum), x = [];
+  w.reduce((at, wi, i) => { x.push(at); return at + wi + (gaps[i] || 0); }, 0);
+  return { x, w, s, rest };
+}
+const lerpAt = (list, c) => {
+  const a = Math.max(0, Math.min(list.length - 1, Math.floor(c))), b = Math.min(list.length - 1, a + 1);
+  return list[a] + (list[b] - list[a]) * Math.max(0, c - a);
+};
+
+// The categorical columns in the order of the tables, and where the columns of each table sit (their middle)
+function valueColumns(idx) {
+  const cols = [], middle = [];
+  idx.cards.tables.forEach((t, i) => {
+    const start = cols.length;
+    t.values.forEach(([column]) => cols.push({ table: i, name: t.name, column }));
+    middle.push(cols.length > start ? (start + cols.length - 1) / 2 : start - 0.5);
+  });
+  return { cols, middle };
+}
+
+// The bars of the three cards and the dots of the joins where the lens puts them
+function placeLens(animateArcs = false) {
+  const idx = ui.idx, root = document.querySelector(".overview");
+  if (!root || !idx?.cards) return;
+  const { c, g } = OV.lens, n = idx.cards.tables.length, v = OV.values;
+  const place = (box, count, centre, extra) => {
+    if (!box) return;
+    const L = lensLayout(count, box.clientWidth, centre, g, extra);
+    box.classList.toggle("sil", L.rest === 0);
+    [...box.children].forEach((el, i) => {
+      el.style.left = `${L.x[i].toFixed(2)}px`;
+      el.style.width = `${Math.max(L.w[i], 0.5).toFixed(2)}px`;
+      el.style.setProperty("--r", `${(L.rest ? 2 : 2 * L.s[i]).toFixed(1)}px`);
+    });
+  };
+  place(root.querySelector('[data-lens="tables"]'), n, c);
+  place(root.querySelector('[data-lens="columns"]'), n, c);
+  if (v?.cols.length) place(root.querySelector('[data-lens="values"]'), v.cols.length, lerpAt(v.middle, c), v.cols.map((x, j) => (v.cols[j + 1] && v.cols[j + 1].table !== x.table ? 2 : 0)));
+  drawArcs(idx, animateArcs);
+}
+
+// The lens follows the pointer in a short ease, opens and closes; still without movement
+function runLens() {
+  cancelAnimationFrame(OV.lens.raf);
+  const step = () => {
+    const l = OV.lens, k = stillPage() ? 1 : 0.3, kg = stillPage() ? 1 : 0.18;
+    l.c += (l.to.c - l.c) * k;
+    l.g += (l.to.g - l.g) * kg;
+    const done = Math.abs(l.to.c - l.c) < 0.01 && Math.abs(l.to.g - l.g) < 0.005;
+    if (done) { l.c = l.to.c; l.g = l.to.g; }
+    placeLens();
+    if (!done) l.raf = requestAnimationFrame(step);
+  };
+  OV.lens.raf = requestAnimationFrame(step);
+}
+
+// The pointer over a card of bars or over the joins: where it is in the row at rest (as the Dock does, not in the
+// bars it moves) gives the table followed, the lens there; over the values, the table of the column under it
+function aimLens(e, box) {
+  const idx = ui.idx, tables = idx.cards.tables, r = box.getBoundingClientRect();
+  const f = Math.max(0, Math.min(0.9999, (e.clientX - r.left) / r.width));
+  let c, focus;
+  if (box.dataset.lens === "values") {
+    const col = OV.values.cols[Math.floor(f * OV.values.cols.length)];
+    c = col.table;
+    focus = { tables: [col.name], col: col.column };
+  } else {
+    c = f * tables.length - 0.5;
+    focus = { tables: [tables[Math.max(0, Math.min(tables.length - 1, Math.round(c)))].name] };
+  }
+  if (OV.lens.g < 0.01) OV.lens.c = c;   // opening: the lens starts where the pointer is
+  OV.lens.to = { c, g: 1 };
+  if (JSON.stringify(focus) !== JSON.stringify(OV.focus)) { OV.focus = focus; applyOvFocus(); }
+  runLens();
+}
+
 // The joins as arcs over the line of tables, in the order of the other cards; a table without a join a hollow dot.
-// Each arc as high as the root of its span (the joins of a hub nest, the near ones low, the far ones high), lighter
-// when they are many; the dot of a table larger the more it is joined
+// Each arc as high as the root of its span at rest (the joins of a hub nest, the near ones low, the far ones high),
+// lighter when they are many; the dot of a table larger the more it is joined. The dots sit under the bars of the
+// tables as the lens places them (only the feet of the arcs move); those of the tables followed in the accent
 function drawArcs(idx, animate) {
   const box = document.querySelector("[data-arcs]");
   if (!box || !idx.cards) return;
-  const tables = idx.cards.tables.map((t) => t.name), joins = idx.cards.joins, W = box.clientWidth, H = box.clientHeight || 72;
-  const n = tables.length, g = n > 50 ? 1 : 2, s = (W - (n - 1) * g) / n, x = (i) => i * (s + g) + s / 2, y = H - 5;   // many tables: closer
-  const pos = new Map(tables.map((t, i) => [t, x(i)])), degree = new Map();
+  const tables = idx.cards.tables.map((t) => t.name), joins = idx.cards.joins, W = box.clientWidth, H = box.clientHeight || 72, y = H - 5;
+  const L = lensLayout(tables.length, W, OV.lens.c, OV.lens.g), rest = lensLayout(tables.length, W, 0, 0);
+  const at = new Map(tables.map((t, i) => [t, i])), x = (i) => L.x[i] + L.w[i] / 2, x0 = (i) => rest.x[i] + rest.w[i] / 2, degree = new Map();
   joins.forEach(([a, b]) => new Set([a, b]).forEach((t) => degree.set(t, (degree.get(t) || 0) + 1)));
-  const span = Math.max(1, ...joins.map(([a, b]) => Math.abs((pos.get(a) ?? 0) - (pos.get(b) ?? 0))));
+  const span = Math.max(1, ...joins.map(([a, b]) => Math.abs(x0(at.get(a) ?? 0) - x0(at.get(b) ?? 0))));
+  const set = new Set(OV.focus?.tables || []), near = new Set();
   const paths = joins.map(([a, b], k) => {
-    const xa = pos.get(a), xb = pos.get(b);
-    if (xa == null || xb == null) return "";
-    const h = (6 + (H - 18) * Math.sqrt(Math.abs(xb - xa) / span)) / 0.75;   // a cubic curve peaks at 3/4 of its handles
+    const ia = at.get(a), ib = at.get(b);
+    if (ia == null || ib == null) return "";
+    const xa = x(ia), xb = x(ib), on = set.has(a) || set.has(b);
+    if (on) near.add(a).add(b);
+    const h = (6 + (H - 18) * Math.sqrt(Math.abs(x0(ib) - x0(ia)) / span)) / 0.75;   // a cubic curve peaks at 3/4 of its handles
     const d = a === b ? `M${xa - 3},${y - 1} C${xa - 10},${y - 20} ${xa + 10},${y - 20} ${xa + 3},${y - 1}` : `M${xa},${y} C${xa},${y - h} ${xb},${y - h} ${xb},${y}`;
-    return `<path pathLength="1" class="${animate ? "draw" : ""}" data-s="${esc(a)}" data-t="${esc(b)}" d="${d}" style="--i:${k}"/>`;
+    return `<path pathLength="1" class="${animate ? "draw" : ""}${on ? " on" : ""}" data-s="${esc(a)}" data-t="${esc(b)}" d="${d}" style="--i:${k}"/>`;
   }).join("");
-  const dots = tables.map((t, i) => `<circle class="${degree.has(t) ? "" : "lone"}" cx="${x(i)}" cy="${y}" r="${(2.6 + Math.min(3, (degree.get(t) || 0) / 8)).toFixed(1)}" data-table="${esc(t)}"/>`).join("");
-  const hits = tables.map((t, i) => `<rect x="${x(i) - s / 2 - g / 2}" y="0" width="${s + g}" height="${H}" data-table="${esc(t)}"/>`).join("");
+  const dots = tables.map((t, i) => `<circle class="${degree.has(t) ? "" : "lone"}${set.has(t) ? " on" : near.has(t) ? " near" : ""}" cx="${x(i).toFixed(2)}" cy="${y}"`
+    + ` r="${(2.6 + Math.min(3, (degree.get(t) || 0) / 8) + 1.5 * L.s[i]).toFixed(1)}" data-table="${esc(t)}"/>`).join("");
   box.innerHTML = `<svg class="arcs" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="--arc-alpha:${Math.min(1, Math.max(0.3, 16 / Math.max(joins.length, 1))).toFixed(2)}" aria-hidden="true">`
-    + `${paths}${dots}<g class="hits">${hits}</g></svg>`;
+    + `${paths}${dots}</svg>`;
 }
 
 const LEVELS = [["simple", "Simples"], ["medium", "Moyennes"], ["hard", "Difficiles"], ["other", "Autres"]];
@@ -3414,7 +3509,7 @@ function evalProgress() {
 // or of a metric: followed in every card
 function ovPointer(e) {
   const idx = ui.idx;
-  if (!idx?.cards) return;
+  if (!idx?.cards || e.target.closest("[data-lens], [data-arcs]")) return;   // the lens follows those (aimLens)
   const q = e.target.closest(".cell-q"), met = e.target.closest("[data-metric]");
   const col = e.target.closest(".read-viz [data-col]"), table = e.target.closest(".read-viz [data-table]");
   const focus = q ? { tables: idx.eval.results[Number(q.dataset.q)].tables, q: Number(q.dataset.q) }
@@ -3429,17 +3524,12 @@ function ovPointer(e) {
 function applyOvFocus() {
   const idx = ui.idx, root = document.querySelector(".overview");
   if (!root || !idx?.cards) return;
-  const f = OV.focus, set = new Set(f?.tables || []), near = new Set();
+  const f = OV.focus, set = new Set(f?.tables || []);
   root.querySelectorAll(".read-viz").forEach((v) => v.classList.toggle("focusing", Boolean(f) && !v.querySelector("[data-samples]")));
   root.querySelectorAll(".read-viz [data-table]").forEach((el) => {
     el.classList.toggle("on", set.has(el.dataset.table) && (!f.col || !el.dataset.col || el.dataset.col === f.col));
   });
-  root.querySelectorAll(".arcs path").forEach((p) => {
-    const on = set.has(p.dataset.s) || set.has(p.dataset.t);
-    p.classList.toggle("on", on);
-    if (on) near.add(p.dataset.s).add(p.dataset.t);
-  });
-  root.querySelectorAll(".arcs circle").forEach((c) => c.classList.toggle("near", near.has(c.dataset.table)));
+  drawArcs(idx, false);   // the joins of the tables followed, in the accent
   root.querySelectorAll("[data-metric]").forEach((li) => {
     const m = idx.cards.metrics.find((x) => x.name === li.dataset.metric);
     li.classList.toggle("on", Boolean(f) && (f.metric ? f.metric === m.name : m.tables.some((t) => set.has(t))));
@@ -3502,6 +3592,9 @@ function renderIndex(el, message) {
   }
   const mode = OV.db !== ui.db ? "draw" : OV.eval !== idx.eval?.at ? "extend" : OV.built !== idx.built_at ? "mark" : "";
   Object.assign(OV, { db: ui.db, eval: idx.eval?.at, built: idx.built_at, focus: mode === "draw" ? null : OV.focus });
+  cancelAnimationFrame(OV.lens.raf);
+  OV.lens = { c: 0, g: 0, to: { c: 0, g: 0 }, raf: 0 };
+  OV.values = idx.cards ? valueColumns(idx) : null;
   const cards = idx.trace && idx.cards, figures = cards ? agentFigures(idx) : [];
   OV.notes = Object.fromEntries(figures.map((f) => [f.key, { note: f.note, tone: f.tone }]));
   const read = cards ? CARD_GROUPS.map(([title, keys]) => `<h3 class="read-group">${title}</h3><div class="read-cards">`
@@ -3518,19 +3611,23 @@ function renderIndex(el, message) {
   </div>`;
   const overview = el.querySelector(".overview");
   drawEvalChart(idx, mode);
-  drawArcs(idx, mode === "draw");
-  rollFigures(el);
   applyOvFocus();
+  placeLens(mode === "draw");   // after the focus: its arcs drawn once, from the left on another database
+  rollFigures(el);
   evalProgress();
   overview.addEventListener("pointerover", ovPointer);
+  overview.querySelectorAll("[data-lens], [data-arcs]").forEach((box) => {
+    box.addEventListener("pointermove", (e) => aimLens(e, box));
+    box.addEventListener("pointerleave", () => { OV.lens.to = { ...OV.lens.to, g: 0 }; runLens(); });
+  });
   overview.addEventListener("pointerleave", () => { if (OV.focus) { OV.focus = null; applyOvFocus(); } });
-  // another width (the window, the side panel folding under): the chart and the joins drawn again, still
+  // another width (the window, the side panel folding under): the chart, the bars and the joins placed again, still
   OV.resize?.disconnect();
   let width = overview.querySelector(".overview-main").clientWidth;
   OV.resize = new ResizeObserver(([entry]) => {
     if (Math.round(entry.contentRect.width) === Math.round(width) || !document.body.contains(overview)) return;
     width = entry.contentRect.width;
-    drawEvalChart(ui.idx, ""); drawArcs(ui.idx, false); applyOvFocus();
+    drawEvalChart(ui.idx, ""); placeLens(); applyOvFocus();
   });
   OV.resize.observe(overview.querySelector(".overview-main"));
   el.querySelectorAll("[data-setup]").forEach((button) => { button.onclick = () => setupGo(button.dataset.setup); });
