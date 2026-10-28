@@ -3110,7 +3110,7 @@ function indexVerdict(idx, db = ui.db) {
 // What moved since the overview was last drawn: the database, its index, its eval (what plays when the page is drawn
 // again), the default word of each card, the table under the pointer ({tables, col, q, metric}), the observer that
 // draws the chart and the joins again at another width
-const OV = { db: null, built: null, eval: null, notes: {}, focus: null, resize: null, lens: { c: 0, g: 0, to: { c: 0, g: 0 }, raf: 0 }, values: null };
+const OV = { db: null, built: null, eval: null, notes: {}, focus: null, resize: null, lens: { c: 0, g: 0, v: null, to: { c: 0, g: 0, v: null }, raf: 0 }, values: null };
 const ROLLED = new Map();   // the text each rolling figure last showed, by its key: {text, db}
 const DIGITS = [..."0123456789"].map((d) => `<span>${d}</span>`).join("");
 const stillPage = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -3276,19 +3276,39 @@ function sampleGrid(table, rows) {
 // the pointer near, the bars under it widen and part, the far ones close up, the total width the same. The cards
 // share the order of the tables: the lens opens at the same place in the four (its centre c counted in tables) ──
 
-// The place of n bars in W px, the lens at c (an index) with a strength g (0 at rest, 1 open). Each bar weighs
-// 1 + G·e^(−(i−c)²/2σ²) and takes its share of what the gaps leave; G is set for the bar under the pointer to reach
-// T px (14, or 1.6 times its width at rest when that is already wide). extra: a gap more after a bar (the next table
-// in the values), kept out of the silhouette
+// The place of n bars in W px, the lens at c (an index, the bars' middles at 0, 1, 2…) with a strength g (0 at rest,
+// 1 open). As a fisheye menu (Bederson, 2000): each bar near the pointer gains the same pixels on both sides of it,
+// up to T px for the one under it (16, or 1.8 times its width at rest when that is already wide), e^(−(i−c)²/2σ²)
+// of it further; what they gain, each side of the pointer takes from its own bars at rest, so the point under the
+// pointer stays under it and the ends stay at the ends (near an end, the lens moves in a little instead; it spreads
+// over a third of the card at most, so that elsewhere both sides hold their half). Each bar
+// gives up half of the gap on each of its sides; extra: a gap more after a bar (the next table in the values), kept
+// out of the silhouette
 function lensLayout(n, W, c, g, extra = []) {
-  const rest = n > 40 ? 0 : 2, base = (W - (n - 1) * rest) / Math.max(n, 1);
-  const sigma = Math.max(1.5, n / 20), k = sigma * Math.sqrt(2 * Math.PI), T = Math.max(14, base * 1.6);
-  const G = Math.max(0, (T * n - W) / (W - T * k));
+  const rest = n > 40 ? 0 : 2, base = (W - (n - 1) * rest) / Math.max(n, 1), least = 0.6;
+  const top = Math.max(0, Math.max(16, base * 1.8) - base) + (2 - rest);
+  // the spread of the lens: wider with more bars, yet what it gains (top·σ·√2π) no more than a third of the card,
+  // so that a side has room for its half
+  const sigma = Math.max(1.5, Math.min(n / 20, (0.35 * W) / ((top || 1) * 2.5)));
   const s = Array.from({ length: n }, (_, i) => Math.exp(-((i - c) ** 2) / (2 * sigma * sigma)) * g);
-  const gaps = s.slice(0, -1).map((v, i) => rest + (2 - rest) * v + (rest ? extra[i] || 0 : 0));
-  const weights = s.map((v) => 1 + G * v), sum = weights.reduce((a, b) => a + b, 0) || 1;
-  const avail = W - gaps.reduce((a, b) => a + b, 0), w = weights.map((v) => (avail * v) / sum), x = [];
-  w.reduce((at, wi, i) => { x.push(at); return at + wi + (gaps[i] || 0); }, 0);
+  const gain = s.map((v) => top * v);
+  const u = Math.max(1e-6, Math.min(n - 1e-6, c + 0.5)), i0 = Math.floor(u), f0 = u - i0;
+  // what each side gains; near an end, its side too short, the lens moves in a little (as the Dock's ends move out)
+  // rather than squeezing: the bars it widens still cover the pointer
+  let left = gain.slice(0, i0).reduce((a, b) => a + b, 0) + f0 * gain[i0];
+  let right = gain.slice(i0 + 1).reduce((a, b) => a + b, 0) + (1 - f0) * gain[i0];
+  const needL = least * u + left, needR = least * (n - u) + right, fit = Math.min(1, Math.max(0, W - least * n) / ((left + right) || 1));
+  left *= fit; right *= fit;
+  const P = fit < 1 ? least * u + left : Math.min(Math.max((u / n) * W, needL), W - needR);
+  const rL = (P - left) / u, rR = (W - P - right) / (n - u);
+  const slot = gain.map((gn, i) => (i < i0 ? rL + gn * fit : i > i0 ? rR + gn * fit : f0 * (rL + gn * fit) + (1 - f0) * (rR + gn * fit)));
+  const gap = (i) => (i < 0 || i >= n - 1 ? 0 : rest + (2 - rest) * s[i] + (rest ? extra[i] || 0 : 0));
+  const x = [], w = [];
+  slot.reduce((at, sl, i) => {
+    x.push(at + gap(i - 1) / 2);
+    w.push(Math.max(sl - (gap(i - 1) + gap(i)) / 2, 0.5));
+    return at + sl;
+  }, 0);
   return { x, w, s, rest };
 }
 const lerpAt = (list, c) => {
@@ -3324,7 +3344,8 @@ function placeLens(animateArcs = false) {
   };
   place(root.querySelector('[data-lens="tables"]'), n, c);
   place(root.querySelector('[data-lens="columns"]'), n, c);
-  if (v?.cols.length) place(root.querySelector('[data-lens="values"]'), v.cols.length, lerpAt(v.middle, c), v.cols.map((x, j) => (v.cols[j + 1] && v.cols[j + 1].table !== x.table ? 2 : 0)));
+  const centre = OV.lens.v ?? (v?.cols.length ? lerpAt(v.middle, c) : 0);   // over the values: the column under the pointer
+  if (v?.cols.length) place(root.querySelector('[data-lens="values"]'), v.cols.length, centre, v.cols.map((x, j) => (v.cols[j + 1] && v.cols[j + 1].table !== x.table ? 2 : 0)));
   drawArcs(idx, animateArcs);
 }
 
@@ -3335,8 +3356,9 @@ function runLens() {
     const l = OV.lens, k = stillPage() ? 1 : 0.3, kg = stillPage() ? 1 : 0.18;
     l.c += (l.to.c - l.c) * k;
     l.g += (l.to.g - l.g) * kg;
-    const done = Math.abs(l.to.c - l.c) < 0.01 && Math.abs(l.to.g - l.g) < 0.005;
-    if (done) { l.c = l.to.c; l.g = l.to.g; }
+    l.v = l.to.v == null ? null : (l.v ?? l.to.v) + (l.to.v - (l.v ?? l.to.v)) * k;
+    const done = Math.abs(l.to.c - l.c) < 0.01 && Math.abs(l.to.g - l.g) < 0.005 && Math.abs((l.to.v ?? 0) - (l.v ?? 0)) < 0.01;
+    if (done) { l.c = l.to.c; l.g = l.to.g; l.v = l.to.v ?? null; }
     placeLens();
     if (!done) l.raf = requestAnimationFrame(step);
   };
@@ -3348,17 +3370,18 @@ function runLens() {
 function aimLens(e, box) {
   const idx = ui.idx, tables = idx.cards.tables, r = box.getBoundingClientRect();
   const f = Math.max(0, Math.min(0.9999, (e.clientX - r.left) / r.width));
-  let c, focus;
+  let c, v = null, focus;
   if (box.dataset.lens === "values") {
-    const col = OV.values.cols[Math.floor(f * OV.values.cols.length)];
+    const n = OV.values.cols.length, col = OV.values.cols[Math.floor(f * n)];
+    v = f * n - 0.5;   // the lens on the column under the pointer, the other cards on its table
     c = col.table;
     focus = { tables: [col.name], col: col.column };
   } else {
     c = f * tables.length - 0.5;
     focus = { tables: [tables[Math.max(0, Math.min(tables.length - 1, Math.round(c)))].name] };
   }
-  if (OV.lens.g < 0.01) OV.lens.c = c;   // opening: the lens starts where the pointer is
-  OV.lens.to = { c, g: 1 };
+  if (OV.lens.g < 0.01) Object.assign(OV.lens, { c, v });   // opening: the lens starts where the pointer is
+  OV.lens.to = { c, v, g: 1 };
   if (JSON.stringify(focus) !== JSON.stringify(OV.focus)) { OV.focus = focus; applyOvFocus(); }
   runLens();
 }
@@ -3593,7 +3616,7 @@ function renderIndex(el, message) {
   const mode = OV.db !== ui.db ? "draw" : OV.eval !== idx.eval?.at ? "extend" : OV.built !== idx.built_at ? "mark" : "";
   Object.assign(OV, { db: ui.db, eval: idx.eval?.at, built: idx.built_at, focus: mode === "draw" ? null : OV.focus });
   cancelAnimationFrame(OV.lens.raf);
-  OV.lens = { c: 0, g: 0, to: { c: 0, g: 0 }, raf: 0 };
+  OV.lens = { c: 0, g: 0, v: null, to: { c: 0, g: 0, v: null }, raf: 0 };
   OV.values = idx.cards ? valueColumns(idx) : null;
   const cards = idx.trace && idx.cards, figures = cards ? agentFigures(idx) : [];
   OV.notes = Object.fromEntries(figures.map((f) => [f.key, { note: f.note, tone: f.tone }]));
@@ -3618,7 +3641,7 @@ function renderIndex(el, message) {
   overview.addEventListener("pointerover", ovPointer);
   overview.querySelectorAll("[data-lens], [data-arcs]").forEach((box) => {
     box.addEventListener("pointermove", (e) => aimLens(e, box));
-    box.addEventListener("pointerleave", () => { OV.lens.to = { ...OV.lens.to, g: 0 }; runLens(); });
+    box.addEventListener("pointerleave", () => { OV.lens.to = { ...OV.lens.to, g: 0 }; runLens(); });   // closes where it is
   });
   overview.addEventListener("pointerleave", () => { if (OV.focus) { OV.focus = null; applyOvFocus(); } });
   // another width (the window, the side panel folding under): the chart, the bars and the joins placed again, still
