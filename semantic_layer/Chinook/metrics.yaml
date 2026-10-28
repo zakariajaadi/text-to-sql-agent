@@ -16,13 +16,6 @@ revenue:
   time_dimension: invoice.invoicedate
   origin: ai
 
-invoice_count:
-  description: Number of distinct invoices (purchases).
-  synonyms: [number of invoices, purchases, number of purchases, nombre de factures, achats]
-  expr: COUNT(DISTINCT invoice.invoiceid)
-  time_dimension: invoice.invoicedate
-  origin: ai
-
 average_invoice_value:
   description: Average amount of an invoice (per invoice, not per invoice line).
   synonyms: [average basket, average purchase, average invoice, panier moyen, facture moyenne]
@@ -37,4 +30,4 @@ tracks_sold:
   time_dimension: invoice.invoicedate
   origin: ai
 
-ignore: []
+ignore: [invoice_count]

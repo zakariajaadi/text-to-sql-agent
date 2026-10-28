@@ -8,6 +8,7 @@
 
 album:
   rows: 347
+  partitions: 0
   keys:
     albumid:
       non_null: 347
@@ -25,8 +26,10 @@ album:
         a a a a: 0.086
         a a a a a: 0.043
         a a a a a a: 0.029
+      distinct: 347
 artist:
   rows: 275
+  partitions: 0
   keys:
     artistid:
       non_null: 275
@@ -41,8 +44,10 @@ artist:
         a a a a a a: 0.065
         a a a a a: 0.044
         a a a a: 0.036
+      distinct: 275
 customer:
   rows: 59
+  partitions: 0
   keys:
     customerid:
       non_null: 59
@@ -55,11 +60,13 @@ customer:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 57
     lastname:
       filled: 1.0
       shapes:
         a: 0.983
         a a a: 0.017
+      distinct: 59
     company:
       filled: 0.169
       shapes:
@@ -69,6 +76,7 @@ customer:
         a - a a a a a.a.: 0.017
         a a a a.a.: 0.017
         a a.a.a.: 0.017
+      distinct: 10
     address:
       filled: 1.0
       shapes:
@@ -78,6 +86,7 @@ customer:
         9 a a: 0.051
         9, a a: 0.034
         99, a a: 0.034
+      distinct: 59
     city:
       filled: 1.0
       shapes:
@@ -86,15 +95,18 @@ customer:
         a a a: 0.034
         'a ': 0.017
         a a a a: 0.017
+      distinct: 53
     state:
       filled: 0.508
       shapes:
         a: 0.508
+      distinct: 25
     country:
       filled: 1.0
       shapes:
         a: 0.915
         a a: 0.085
+      distinct: 24
     postalcode:
       filled: 0.932
       shapes:
@@ -104,6 +116,7 @@ customer:
         99999-999: 0.102
         99999-9999: 0.051
         '999999': 0.034
+      distinct: 55
     phone:
       filled: 0.983
       shapes:
@@ -113,12 +126,14 @@ customer:
         +99 999 99999999: 0.051
         +99 99 999 99 99: 0.034
         +99 999 9999 9999: 0.034
+      distinct: 58
     fax:
       filled: 0.203
       shapes:
         +9 a999a 999-9999: 0.102
         +99 a99a 9999-9999: 0.085
         +999 9 9999 9999: 0.017
+      distinct: 12
     email:
       filled: 1.0
       shapes:
@@ -128,9 +143,14 @@ customer:
         a99@a.a: 0.034
         a.a@a.a.a: 0.017
         a9@a.a.a: 0.017
+      distinct: 59
   exclude:
-    fax: personal data
     email: personal data
+    firstname: personal data
+    lastname: personal data
+    address: personal data
+    phone: personal data
+    fax: personal data
 customer_cdc:
   rows: 65
   partitions: 0
@@ -295,6 +315,7 @@ customer_snapshot:
     fax: personal data
 employee:
   rows: 8
+  partitions: 0
   keys:
     employeeid:
       non_null: 8
@@ -304,15 +325,18 @@ employee:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 8
     firstname:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 8
     title:
       filled: 1.0
       shapes:
         a a: 0.625
         a a a: 0.375
+      distinct: 5
     address:
       filled: 1.0
       shapes:
@@ -322,41 +346,59 @@ employee:
         9999 9 a a: 0.125
         9999 a a a: 0.125
         99999 a a a: 0.125
+      distinct: 8
     city:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 3
     state:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 1
     country:
       filled: 1.0
       shapes:
         a: 1.0
+      distinct: 1
     postalcode:
       filled: 1.0
       shapes:
         a9a 9a9: 1.0
+      distinct: 8
     phone:
       filled: 1.0
       shapes:
         +9 a999a 999-9999: 0.875
         9 a999a 999-9999: 0.125
+      distinct: 7
     fax:
       filled: 1.0
       shapes:
         +9 a999a 999-9999: 0.875
         9 a999a 999-9999: 0.125
+      distinct: 8
     email:
       filled: 1.0
       shapes:
         a@a.a: 1.0
+      distinct: 8
+  filled:
+    reportsto: 0.875
+    birthdate: 1.0
+    hiredate: 1.0
   exclude:
-    fax: personal data
     email: personal data
+    lastname: personal data
+    firstname: personal data
+    birthdate: personal data
+    address: personal data
+    phone: personal data
+    fax: personal data
 genre:
   rows: 25
+  partitions: 0
   keys:
     genreid:
       non_null: 25
@@ -371,8 +413,10 @@ genre:
         a/a: 0.08
         a a a a: 0.04
         a a/a: 0.04
+      distinct: 25
 invoice:
   rows: 412
+  partitions: 0
   keys:
     invoiceid:
       non_null: 412
@@ -390,6 +434,7 @@ invoice:
         9 a a: 0.051
         9, a a: 0.034
         99, a a: 0.034
+      distinct: 59
     billingcity:
       filled: 1.0
       shapes:
@@ -398,15 +443,18 @@ invoice:
         a a a: 0.034
         'a ': 0.017
         a a a a: 0.017
+      distinct: 53
     billingstate:
       filled: 0.51
       shapes:
         a: 0.51
+      distinct: 25
     billingcountry:
       filled: 1.0
       shapes:
         a: 0.915
         a a: 0.085
+      distinct: 24
     billingpostalcode:
       filled: 0.932
       shapes:
@@ -416,6 +464,10 @@ invoice:
         99999-999: 0.102
         99999-9999: 0.051
         a9 9a: 0.034
+      distinct: 55
+  filled:
+    invoicedate: 1.0
+    total: 1.0
 invoice_delta:
   rows: 412
   partitions: 60
@@ -476,6 +528,7 @@ invoice_delta:
     date_technique: 1.0
 invoiceline:
   rows: 2240
+  partitions: 0
   keys:
     invoicelineid:
       non_null: 2240
@@ -487,8 +540,12 @@ invoiceline:
       non_null: 2240
       distinct: 1984
   text_columns: {}
+  filled:
+    unitprice: 1.0
+    quantity: 1.0
 mediatype:
   rows: 5
+  partitions: 0
   keys:
     mediatypeid:
       non_null: 5
@@ -500,8 +557,10 @@ mediatype:
         a a a: 0.4
         a a a a: 0.4
         a a-9 a a: 0.2
+      distinct: 5
 playlist:
   rows: 18
+  partitions: 0
   keys:
     playlistid:
       non_null: 18
@@ -516,8 +575,10 @@ playlist:
         99a a: 0.056
         a a a: 0.056
         a-a-a 9: 0.056
+      distinct: 14
 playlisttrack:
   rows: 8715
+  partitions: 0
   keys:
     playlistid:
       non_null: 8715
@@ -528,6 +589,7 @@ playlisttrack:
   text_columns: {}
 track:
   rows: 3503
+  partitions: 0
   keys:
     trackid:
       non_null: 3503
@@ -551,6 +613,7 @@ track:
         a a a a: 0.13
         a a a a a: 0.062
         a a a a a a: 0.024
+      distinct: 3257
     composer:
       filled: 0.721
       shapes:
@@ -560,3 +623,8 @@ track:
         a a a: 0.025
         a/a: 0.021
         a a, a a: 0.021
+      distinct: 853
+  filled:
+    milliseconds: 1.0
+    bytes: 1.0
+    unitprice: 1.0
