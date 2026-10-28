@@ -39,6 +39,8 @@ offline/eval/results/*
 !.chainlit/translations/en-US.json
 !.chainlit/translations/fr-FR.json
 src/.chainlit/
+# Studio design mockups, drafts tried in the browser and never served by the app
+offline/studio/static/_maquette-*
 .files/
 .vscode/
 .claude/
