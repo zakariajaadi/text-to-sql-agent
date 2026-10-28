@@ -28,9 +28,13 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const SQL_KW = /\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|AS|AND|OR|NOT|IN|EXISTS|DISTINCT|COUNT|SUM|AVG|MIN|MAX|CASE|WHEN|THEN|ELSE|END|WITH|UNION|DESC|ASC|IS|NULL|BETWEEN|LIKE|ROUND|CAST|CREATE|TABLE)\b/gi;
 const sqlHtml = (sql) => esc(sql).replace(SQL_KW, (m) => `<span class="sql-kw">${m}</span>`);
 const plural = (n, word) => `${fmt.format(n)} ${word}${n > 1 ? "s" : ""}`;
+// A word of a sentence with what it covers under the pointer; the ones said both in a tab and in the guided setup
+const hint = (word, tip) => `<span class="hint" tabindex="0">${word}<span class="hint-tip">${tip}</span></span>`;
+const WRITTEN = hint("rédigées", "À partir de la structure des tables et de leur profil");
+const TESTED = hint("testées", "Lignes comptées deux fois, mesures vides, dates manquantes");
 
-// The screens of a database: their title, sentence, filter and actions (none: the screen only shows); TABS, the ones in
-// the bar of tabs
+// The screens of a database: their title, sentence, filter and actions (none: the screen only shows), ai the actions that
+// have the IA write (its star before them); TABS, the ones in the bar of tabs
 const STEPS = {
   overview: { title: "Vue d'ensemble", key: "index", todo: "À réindexer" },
   scope: {
@@ -41,32 +45,32 @@ const STEPS = {
   },
   profile: {
     number: 1, title: "Profilage", key: "profile", todo: "À profiler",
-    text: "On examine le contenu réel de chaque table pour que l'agent la lise correctement : les colonnes vides, les dates ou montants enregistrés comme du texte, les données personnelles, et les partitions, qui disent s'il faut lire la dernière photo ou toutes.",
+    text: `L'agent lit correctement chaque table grâce à son ${hint("profil", "Colonnes vides, dates ou montants enregistrés comme du texte, données personnelles, partitions : lire la dernière photo ou toutes")}, mesuré sur son contenu réel.`,
     primary: (n) => `Profiler la sélection (${n})`, secondary: () => "Profiler les manquantes",
   },
   semantics: {
     number: 2, title: "Descriptions", key: "semantics", todo: "À décrire",
-    text: "L'agent choisit ses tables et écrit ses requêtes à partir de ces descriptions. L'IA les rédige à partir de la structure des tables et de leur profil ; tu les relis et tu les corriges ici.",
+    text: `L'agent choisit ses tables et écrit ses requêtes grâce à ces descriptions, ${WRITTEN} par l'IA et à relire ici.`,
     // tables never described first; then, when only columns are left to describe, the tables that hold them
     primary: () => {
       const s = ui.data?.summary;
       return s && s.tables === s.described && s.partial ? `Compléter les descriptions (${fmt.format(s.partial)})` : "Décrire les manquantes";
     },
-    secondary: (n) => `Redécrire la sélection (${n})`,
+    secondary: (n) => `Redécrire la sélection (${n})`, ai: ["primary", "secondary"],
   },
   relations: {
     number: 3, title: "Jointures", key: "relations", todo: "Isolées",
-    text: "L'agent passe d'une table à l'autre grâce à ces jointures. Chacune est vérifiée sur les données : la part des valeurs d'une table qu'on retrouve dans l'autre.",
-    primary: () => "Chercher les jointures", secondary: () => "Ajouter une jointure",
+    text: `L'agent passe d'une table à l'autre grâce à ces jointures, ${hint("vérifiées", "Part des valeurs d'une table qu'on retrouve dans l'autre")} sur les données.`,
+    primary: () => "Chercher les jointures", secondary: () => "Ajouter une jointure", ai: ["primary"],
   },
   metrics: {
     number: 4, title: "Métriques", key: "metrics", todo: "À revoir",
-    text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose ; chacune est testée sur les données (lignes comptées deux fois, mesures vides, dates manquantes). Une métrique modifiée arrive chez l'agent à son prochain démarrage, sans réindexer.",
-    primary: () => "Proposer des métriques", secondary: () => (ui.testing ? "Arrêter les tests" : "Tout tester"),
+    text: `L'agent reprend telles quelles ces formules, proposées par l'IA et ${TESTED} sur les données, relues à chaque démarrage, sans réindexer.`,
+    primary: () => "Proposer des métriques", secondary: () => (ui.testing ? "Arrêter les tests" : "Tout tester"), ai: ["primary"],
   },
   index: {
     number: 5, title: "Fiches", key: "index", todo: "À réindexer",
-    text: "Ce que l'agent lit de chaque table : sa fiche, faite des descriptions et des jointures, et les valeurs de ses colonnes catégorielles lues dans la base. Une correction n'arrive chez l'agent qu'une fois réindexée, à son prochain démarrage.",
+    text: `L'agent lit chaque table dans sa ${hint("fiche", "Structure, descriptions, jointures et valeurs des colonnes catégorielles lues dans la base")}. Une correction n'arrive chez l'agent qu'une fois réindexée, à son prochain démarrage.`,
   },
 };
 const TABS = ["overview", "profile", "semantics", "relations", "metrics", "index"];
@@ -200,7 +204,7 @@ function switchDb(db) {
 // The database and its tabs, the sentence, filter and actions of the current tab
 function renderStep() {
   const step = STEPS[ui.step];
-  $("step-text").textContent = step.text || "";
+  $("step-text").innerHTML = step.text || "";
   $("origin-legend").innerHTML = ORIGIN_LEGEND;
   $("origin-legend").hidden = !ORIGIN_STEPS.includes(ui.step);
   $("tab-bar").hidden = !step.text && !step.primary;
@@ -221,6 +225,20 @@ function renderStep() {
   renderActions();
   renderJob();   // a job of another screen folds into its quiet line
 }
+
+// The bubble of a word (hint), centred under it, slid back inside the panel that holds it (overflow: hidden, the
+// setup) or the window when the word ends a narrow line
+function placeHint(e) {
+  const word = e.target.closest?.(".hint");
+  if (!word) return;
+  const tip = word.querySelector(".hint-tip");
+  tip.style.setProperty("--shift", "0px");
+  const box = word.closest(".panel")?.getBoundingClientRect(), r = tip.getBoundingClientRect(), pad = 8;
+  const left = Math.max(box?.left ?? 0, 0) + pad, right = Math.min(box?.right ?? innerWidth, innerWidth) - pad;
+  tip.style.setProperty("--shift", `${r.right > right ? right - r.right : r.left < left ? left - r.left : 0}px`);
+}
+document.addEventListener("mouseover", placeHint);
+document.addEventListener("focusin", placeHint);
 
 // The name of the database, what it is, its size and its index; its actions on all of it (an eval needs questions)
 function renderBase() {
@@ -461,8 +479,9 @@ function renderActions() {
   const step = STEPS[ui.step];
   $("run-primary").hidden = !step.primary;
   $("run-secondary").hidden = !step.secondary;
-  if (step.primary) $("run-primary").textContent = step.primary(ui.selected.size);
-  if (step.secondary) $("run-secondary").textContent = step.secondary(ui.selected.size);
+  const label = (which) => `${step.ai?.includes(which) ? AI_STAR : ""}${esc(step[which](ui.selected.size))}`;
+  if (step.primary) $("run-primary").innerHTML = label("primary");
+  if (step.secondary) $("run-secondary").innerHTML = label("secondary");
   // "Ajouter une jointure", the tests of the metrics and a change of the scope start no job
   $("run-primary").toggleAttribute("data-job", ui.step !== "scope");
   $("run-secondary").toggleAttribute("data-job", !["relations", "metrics", "scope"].includes(ui.step));
@@ -853,6 +872,8 @@ const ORIGIN = {
 // The mark of an origin (attrs: data attributes, hidden), its title said on hover
 const originMark = (kind, title = ORIGIN[kind].says, attrs = "") =>
   `<svg class="origin ${kind}" viewBox="0 0 16 16" role="img" aria-label="${esc(title)}" ${attrs}><title>${esc(title)}</title>${ORIGIN[kind].path}</svg>`;
+// The star of the IA before a button that has it write: describe, find the joins, propose metrics
+const AI_STAR = `<svg class="origin ai" viewBox="0 0 16 16" aria-hidden="true">${ORIGIN.ai.path}</svg>`;
 // A mark before what it qualifies (a pill)
 const withOrigin = (kind, html, title) => `<span class="origin-item">${originMark(kind, title)}${html}</span>`;
 
@@ -902,14 +923,14 @@ function renderSemantics(d, el, message) {
   el.innerHTML = `<div class="detail-head"><h2>${esc(d.name)}</h2><span class="figures" id="sem-figures">${semanticsFigures(d)}</span>
       <span class="grow"></span><span class="save-state" id="save-state"></span>
       <button class="btn ghost small" id="mark-read" title="Les descriptions réécrites par l'IA sortent de « à relire »" ${d.counts.rewritten ? "" : "hidden"}>Tout marquer relu</button>
-      <button class="btn ghost small" id="describe-again" data-job title="L'IA réécrit les descriptions de cette table ; celles corrigées par toi sont gardées">Redécrire</button></div>
+      <button class="btn ghost small" id="describe-again" data-job title="L'IA réécrit les descriptions de cette table ; celles corrigées par toi sont gardées">${AI_STAR}Redécrire</button></div>
     <div class="confirm" id="sem-confirm" role="group" aria-label="Redécrire ${esc(d.name)}" hidden></div>
     ${missing.length ? `<div class="note with-action"><span>${plural(missing.length, "colonne")} sans description : ${missing.map((c) => `<span class="mono">${esc(c)}</span>`).join(", ")}.</span>
-      <button class="btn ghost small" id="describe-missing" data-job title="${COMPLETE_DESCRIPTIONS}">Compléter</button></div>` : ""}
+      <button class="btn ghost small" id="describe-missing" data-job title="${COMPLETE_DESCRIPTIONS}">${AI_STAR}Compléter</button></div>` : ""}
     ${message ? `<p class="note error">${esc(message)}</p>` : ""}
-    <div class="table-text" data-draft="description">
+    <div class="table-text lead" data-draft="description">
       <label class="field-label" for="sem-description">Description de la table</label>
-      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited, d.description)}<textarea class="edit block" id="sem-description" rows="2">${esc(value("description", d.description))}</textarea></span>
+      <span class="desc-cell block">${descriptionMarks("", d.description_rewritten, d.description_edited, d.description)}<textarea class="edit block" id="sem-description" rows="1" placeholder="Décrire cette table…">${esc(value("description", d.description))}</textarea></span>
     </div>
     <div class="columns">
       <div class="sline head"><span>Colonne</span><span>Type</span><span>Description</span><span class="num">Catégorielle</span></div>
@@ -1202,7 +1223,7 @@ function redescribeTable(d) {
     text: `L'IA réécrit les <b>${plural(written, "description")}</b> qu'elle a écrites. `
       + `${edited > 1 ? `Tes <b>${fmt.format(edited)} corrections</b> restent telles quelles` : "Ta <b>correction</b> reste telle quelle"} : ${list}.`,
     edited,
-    button: (replace) => `Redécrire ${plural(replace ? written + edited : written, "description")}`,
+    button: (replace) => `Redécrire ${plural(replace ? written + edited : written, "description")}`, ai: true,
     run: (replace) => runJob("semantics", { tables: [d.name], fresh: true, replace_edited: replace }),
   });
 }
@@ -1218,23 +1239,25 @@ function redescribeSelection() {
       + `${edited > 1 ? `Tes <b>${fmt.format(edited)} corrections</b> restent telles quelles` : "Ta <b>correction</b> reste telle quelle"}`
       + ` (${names(chosen.filter((t) => t.edited).map((t) => t.name))}).`,
     edited,
-    button: () => `Redécrire ${plural(chosen.length, "table")}`,
+    button: () => `Redécrire ${plural(chosen.length, "table")}`, ai: true,
     run,
   });
 }
 
 // The strip before an action that costs or exposes: what it does, and before describing again what the LLM keeps,
-// the corrections replaced on a click (the box only when there are corrections: edited). job: it starts a job (data-job)
-function openConfirm(strip, { text, edited, button, run, job = true }) {
+// the corrections replaced on a click (the box only when there are corrections: edited). job: it starts a job (data-job);
+// ai: the IA writes (its star on the button)
+function openConfirm(strip, { text, edited, button, run, job = true, ai = false }) {
+  const label = (replace) => `${ai ? AI_STAR : ""}${esc(button(replace))}`;
   strip.innerHTML = `<p>${text}</p>
     <span class="confirm-actions">
       ${edited ? `<label class="check"><input type="checkbox" data-replace>Remplacer aussi ${edited > 1 ? `mes ${fmt.format(edited)} corrections` : "ma correction"}</label>` : ""}
       <button class="btn small ghost" type="button" data-cancel>Annuler</button>
-      <button class="btn small primary" type="button" data-run${job ? " data-job" : ""}>${button(false)}</button>
+      <button class="btn small primary" type="button" data-run${job ? " data-job" : ""}>${label(false)}</button>
     </span>`;
   strip.hidden = false;
   const replace = strip.querySelector("[data-replace]"), go = strip.querySelector("[data-run]");
-  if (replace) replace.onchange = () => { go.textContent = button(replace.checked); };
+  if (replace) replace.onchange = () => { go.innerHTML = label(replace.checked); };
   strip.querySelector("[data-cancel]").onclick = () => closeConfirm(strip);
   go.onclick = () => { closeConfirm(strip); run(Boolean(replace?.checked)); };
   gateButtons();
@@ -2646,8 +2669,8 @@ function renderMetric(el, message) {
       ${m.rule ? "" : '<button class="btn ghost small quiet" data-retire="1" title="Elle sort de metrics.yaml et l\'IA ne la proposera plus">Retirer</button>'}</div>
     ${note}${error}${rule}
     <div class="metric-fields">
-      <div data-draft="description"><label class="field-label" for="met-description">${editedMark(m, "description")}Description</label>
-        <textarea class="edit block" id="met-description" rows="1">${esc(draftValue(m, "description"))}</textarea>${refused("description")}</div>
+      <div class="lead" data-draft="description"><label class="field-label" for="met-description">Description</label>
+        <span class="desc-cell block">${editedMark(m, "description")}<textarea class="edit block" id="met-description" rows="1" placeholder="Dire ce que mesure cette métrique…">${esc(draftValue(m, "description"))}</textarea></span>${refused("description")}</div>
       <div data-draft="synonyms"><label class="field-label" for="met-syn-add">${editedMark(m, "synonyms")}Synonymes</label>
         <div class="syn-box" id="met-syn-box"><input type="text" id="met-syn-add" placeholder="+ ajouter" autocomplete="off"></div></div>
       <div class="formula-line">
@@ -3963,9 +3986,9 @@ $("search-results").addEventListener("click", (e) => {
 const GUIDE = {
   scope: { title: "Choisir les tables", text: "Les tables de la base que l'agent et le pipeline voient : toutes, celles qui arriveront aussi, ou une liste. Une table hors de la liste n'est jamais profilée, décrite ni indexée, et une requête de l'agent qui la lit est bloquée." },
   profile: { title: "Profiler les tables", text: STEPS.profile.text },
-  semantics: { title: "Décrire les tables", text: "L'agent choisit ses tables et écrit ses requêtes à partir de ces descriptions. L'IA les rédige à partir de la structure des tables et de leur profil ; tu pourras les relire et les corriger ensuite dans l'onglet Descriptions." },
+  semantics: { title: "Décrire les tables", text: `L'agent choisit ses tables et écrit ses requêtes grâce à ces descriptions, ${WRITTEN} par l'IA et à relire ensuite dans l'onglet Descriptions.` },
   relations: { title: "Relier les tables", text: STEPS.relations.text },
-  metrics: { title: "Proposer des métriques", text: "L'agent copie ces formules au lieu de refaire ses calculs. L'IA les propose et chacune est testée sur les données. Une base peut s'en passer : l'agent calcule alors lui-même." },
+  metrics: { title: "Proposer des métriques", text: `L'agent reprend telles quelles ces formules, proposées par l'IA et ${TESTED} sur les données. Une base peut s'en passer : l'agent calcule alors lui-même.` },
   index: { title: "Indexer et évaluer", text: "L'index écrit la fiche de chaque table, ce que l'agent lit vraiment, et les valeurs des colonnes catégorielles lues dans la base. L'évaluation pose ensuite les questions de test à l'agent et compare ses réponses aux lignes attendues." },
 };
 const GUIDE_STEPS = ["scope", "profile", "semantics", "relations", "metrics", "index"];
@@ -4021,7 +4044,8 @@ function guideStep(key, base, p) {
   const size = (t) => [t.rows != null ? plural(t.rows, "ligne") : null, t.columns != null ? plural(t.columns, "colonne") : null].filter(Boolean).join(" · ");
   const progress = (done, total, label) => `<div class="guide-progress"><div class="guide-count"><span><b>${fmt.format(done)}</b> ${label} sur ${fmt.format(total)}</span>`
     + `<span class="figures">${pct(total ? done / total : null)}</span></div><div class="meter" aria-hidden="true"><span style="width:${total ? done / total * 100 : 0}%"></span></div></div>`;
-  const action = (label, job, note = "", primary = true) => `<button class="btn${primary ? " primary" : ""}" type="button" data-guide-run="${job}" data-job>${label}</button>`
+  const action = (label, job, note = "", primary = true) => `<button class="btn${primary ? " primary" : ""}" type="button" data-guide-run="${job}" data-job>`
+    + `${["semantics", "relations", "metrics"].includes(job) ? AI_STAR : ""}${label}</button>`
     + (note ? `<span class="muted-text">${note}</span>` : "");
   const list = (title, items) => !items.length ? "" : `<div class="guide-list"><div class="guide-list-head">${title} · ${fmt.format(items.length)}</div>`
     + items.map((it) => `<div class="guide-row"><span class="mono">${esc(it.name)}</span><span class="figures">${esc(it.size)}</span>${it.pill}</div>`).join("") + "</div>";

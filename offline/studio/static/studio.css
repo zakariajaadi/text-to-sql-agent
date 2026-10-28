@@ -379,6 +379,19 @@ button.pill:hover { box-shadow: inset 0 0 0 1px currentColor; }
 .edit:focus { border-color: var(--accent); background: var(--surface); outline: none; }
 .edit::placeholder { color: var(--warn-ink); }
 .edit.block { margin: 0; padding: 8px 10px; border-color: var(--line); font-size: var(--fs-md); }
+/* The description of a table or a metric, the lead text under its name: larger, in ink, a light ground on hover, its
+   frame only while typing or changed; its label kept for screen readers */
+.lead > .field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.lead .edit.block {
+  font-size: 0.9375rem; line-height: 1.55; border-color: transparent; padding: 4px 8px; margin: 0 0 0 -8px; cursor: text;
+  transition: border-color 0.2s, background 0.2s;
+}
+.lead .edit.block:hover { background: var(--hover); }
+.lead .edit.block:focus { border-color: var(--accent); background: var(--surface); }
+.lead.modified .edit.block { border-color: var(--accent); }
+.lead .desc-cell.block > .origin { margin-top: 10px; margin-right: 6px; }
+.lead .desc-cell.block > .todo-dot { margin-top: 12px; }
+.table-text.lead { padding-bottom: 16px; }
 .edit.date { width: auto; margin: 0; padding: 3px 8px; border-color: var(--line); font-family: var(--font-mono); font-size: var(--fs-sm); }
 /* A field just written: its frame green a moment (flashSaved) */
 .sline {
@@ -414,6 +427,9 @@ input.switch:checked::after { left: 14px; }
 .origin.you { stroke: var(--ink); stroke-width: 1.4; }
 .origin-item { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
 .field-label .origin { margin-right: 5px; }   /* a field of a metric corrected by you */
+/* a button that has the IA write: its star before the label, in orchid; white on the orange of a primary one */
+.btn > .origin { margin-right: 6px; }
+.btn.primary > .origin.ai { fill: currentColor; }
 .origin-legend { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; }
 body[data-view="home"] .origin-legend, body[data-view="wizard"] .origin-legend { display: none; }
 .origin-legend > span { display: inline-flex; align-items: center; gap: 5px; }
@@ -730,7 +746,7 @@ body.map-open { overflow: hidden; }
 /* ── Metrics: the formula, the query a test runs, what the data says ── */
 .list-group { padding: 12px 14px 6px; font-size: var(--fs-xs); color: var(--muted); border-bottom: 1px solid var(--line); }
 .row.aside .cell { color: var(--muted); }
-.metric-fields { padding: 0 14px 14px; display: grid; gap: 10px; }
+.metric-fields { padding: 0 14px 14px; display: grid; gap: 14px; }
 .metric-fields .said { margin: 0; font-size: var(--fs-md); }
 .formula-line { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; align-items: start; }
 .edit.block.mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
@@ -754,13 +770,14 @@ body.map-open { overflow: hidden; }
   text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
 }
 .link-btn:hover { color: var(--accent-ink); }
-/* The synonyms: a pill each in a framed field, the input at the end; its ✕ on hover (always on a touch screen); a word
-   another metric has too in amber, that metric named */
+/* The synonyms: a pill each, the input at the end, no frame but on hover (a light ground) and while typing; its ✕ on
+   hover (always on a touch screen); a word another metric has too in amber, that metric named */
 .syn-box {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 38px; padding: 5px 8px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: text;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 38px; padding: 5px 8px; margin: 0 -8px;
+  border: 1px solid transparent; border-radius: var(--radius-sm); cursor: text; transition: border-color 0.2s, background 0.2s;
 }
-.syn-box:focus-within { border-color: var(--accent); }
+.syn-box:hover { background: var(--hover); }
+.syn-box:focus-within { border-color: var(--accent); background: var(--surface); }
 .syn { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--chip); font-size: var(--fs-sm); cursor: auto; }
 .syn small { font-size: var(--fs-xs); }
 .syn.shared { background: var(--warn-soft); color: var(--warn-ink); }
@@ -1178,6 +1195,16 @@ body.map-open { overflow: hidden; }
 .tab-count { margin-left: 5px; font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
 .tab-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px 24px; flex-wrap: wrap; }
 .tab-bar p { margin: 0; flex: 1 1 520px; font-size: var(--fs-md); line-height: 1.55; color: var(--ink-2); }
+/* a word of a sentence that says more in a bubble on hover, focus or tap; centred under the word, slid by --shift
+   (placeHint) for a panel (overflow: hidden, the setup) or the window not to cut it when the word ends a line */
+.hint { position: relative; cursor: help; text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+.hint-tip {
+  position: absolute; left: 50%; transform: translateX(calc(-50% + var(--shift, 0px))); top: calc(100% + 6px); z-index: 3; width: max-content; max-width: min(400px, 80vw);
+  padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); font-size: var(--fs-sm); line-height: 1.5; color: var(--ink-2);
+  pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.1s, visibility 0.1s;
+}
+.hint:hover .hint-tip, .hint:focus .hint-tip { opacity: 1; visibility: visible; }
 /* the Vue d'ensemble: what the agent reads of the database, its setup on the side; no list of tables */
 .detail.bare { background: none; border: 0; overflow: visible; }
 .detail.menu-open { overflow: visible; }   /* a menu of a property open, past the bottom of a short card */
