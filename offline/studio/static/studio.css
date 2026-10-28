@@ -1023,17 +1023,19 @@ body.map-open { overflow: hidden; }
   font-size: var(--fs-sm); color: var(--ink-2); cursor: help; border-radius: var(--radius-sm);
   text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 3px;
 }
-/* what a figure is in a bubble on hover, focus or tap of its name, what is wrong first */
+/* what a figure is in a bubble on hover, focus or tap of its name, what is wrong first; out of the layout while hidden,
+   or the bubble of the last row lengthens the page past the body and the backdrop ends on a straight edge above it */
 .figure-tip {
   position: absolute; left: 0; top: calc(100% + 8px); z-index: 3; width: max-content; max-width: min(320px, 80vw);
-  display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  display: none; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); font-size: var(--fs-sm); line-height: 1.5; color: var(--ink-2); cursor: auto;
-  pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.1s, visibility 0.1s;
+  pointer-events: none; opacity: 0; transition: opacity 0.1s, display 0.1s allow-discrete;
 }
 .figure-tip p { margin: 0; }
 .figure-tip .issue { color: var(--ink); }
 .figure-tip .mono { font-family: var(--font-mono); font-size: var(--fs-xs); }
-.read-label:hover + .figure-tip, .read-label:focus + .figure-tip { opacity: 1; visibility: visible; }
+.read-label:hover + .figure-tip, .read-label:focus + .figure-tip { display: grid; opacity: 1; }
+@starting-style { .read-label:hover + .figure-tip, .read-label:focus + .figure-tip { opacity: 0; } }
 .read-card:nth-child(3n) .figure-tip { left: auto; right: 0; }
 /* the word under a figure; a dot before it when that figure needs looking at, amber or red; the accent when it speaks
    of the tables under the pointer */
