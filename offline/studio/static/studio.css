@@ -900,7 +900,7 @@ body.map-open { overflow: hidden; }
 /* The card of a table on the Périmètre: the button that moves it in or out of the scope */
 .scope-actions { display: flex; gap: 8px; margin: 0 14px 14px; }
 .dash { display: grid; gap: 18px; padding: 14px; border-top: 1px solid var(--line); container-type: inline-size; }
-.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .tile { background: var(--bg); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
 .tile.warn { background: var(--warn-soft); }
 .tile.warn .tile-foot { color: var(--warn-ink); }
@@ -909,15 +909,13 @@ body.map-open { overflow: hidden; }
 .tile-label { font-size: var(--fs-sm); color: var(--ink-2); }
 .tile-value { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
 .tile-value small, .hero small { font-size: var(--fs-sm); font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 4px; }
+.tile-value small.of { font-size: var(--fs-lg); margin-left: 1px; }   /* the whole after the part, greyed: 37/42 */
 .tile-foot { font-size: var(--fs-xs); color: var(--muted); }
 .hero { font-size: var(--fs-hero); font-weight: 600; line-height: 1.05; letter-spacing: -0.04em; }
 .hero small { font-size: var(--fs-xl); }   /* the unit of the score, the size of a title */
 .hero-unit { font-size: var(--fs-xs); color: var(--muted); }
 .meter { display: flex; height: 8px; max-width: 420px; margin-bottom: 4px; border-radius: 999px; overflow: hidden; background: var(--chip); }
 .meter span { background: var(--good); }
-@container (max-width: 760px) {
-  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @container (max-width: 560px) {
   .tiles { grid-template-columns: minmax(0, 1fr); }
 }

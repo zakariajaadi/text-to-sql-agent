@@ -2945,9 +2945,9 @@ function scopeSummary(sc) {
       <span class="grow"></span><button class="btn ghost small" type="button" id="scope-overview">← Vue d'ensemble</button></div><!--message-->
     ${scopeMode(sc)}${scopeVerdict(sc)}
     <div class="dash"><div class="tiles">
-      ${indexTile("Dans la base", c.base == null ? "—" : fmt.format(c.base),
-        c.base == null ? "La base ne répond pas : les tables viennent des fichiers." : "Toutes ses tables, lues dans la base.")}
-      ${indexTile("Dans le périmètre", fmt.format(c.scope), "Ce que l'agent et le pipeline voient.")}
+      ${indexTile("Dans le périmètre", fmt.format(c.scope) + (c.base == null ? "" : `<small class="of">/${fmt.format(c.base)}</small>`),
+        c.base == null ? "Ce que l'agent et le pipeline voient. La base ne répond pas : les tables viennent des fichiers."
+          : `Ce que l'agent et le pipeline voient, sur les ${plural(c.base, "table")} de la base.`)}
       ${indexTile("Dans l'index", sc.trace ? fmt.format(c.indexed) : "—",
         sc.trace ? `${c.indexed > 1 ? "Fiches" : "Fiche"} que l'agent lit aujourd'hui.` : "Pas de trace : réindexer pour la voir.")}
       ${indexTile("Hors périmètre", fmt.format(outside), outside
