@@ -233,7 +233,9 @@ td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: mid
 tr:last-child td { border-bottom: 0; }
 td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
 .mini { display: flex; gap: 2px; height: 10px; min-width: 120px; max-width: 220px; }
-.mini span { display: block; height: 100%; border-radius: 2px; }
+.mini span { display: block; height: 100%; border-radius: 2px; position: relative; cursor: pointer; }
+/* A hit area taller than the 10px mark, the 2px gaps shared between neighbours */
+.mini span::before { content: ""; position: absolute; inset: -7px -1px; }
 
 /* ── Latency ────────────────────────────────────────── */
 .lat-wrap { width: 100%; min-width: 0; }
@@ -256,7 +258,7 @@ td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
 .chip-btn:hover { color: var(--ink); }
 .q-count { font-size: 0.82rem; color: var(--muted); margin-left: auto; }
 .q-list { display: grid; border-top: 1px solid var(--line); }
-details.q { border-bottom: 1px solid var(--line); }
+details.q { border-bottom: 1px solid var(--line); scroll-margin-top: 16px; }
 details.q > summary {
   list-style: none; cursor: pointer; padding: 11px 4px;
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center;
@@ -312,7 +314,9 @@ pre.sql + pre.sql { margin-top: 6px; }
 .tip b { font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) {
   .bar, .status-bar span, .meter span { transition: width 300ms ease; }
+  details.q.flash > summary { animation: q-flash 1.6s ease-out; }
 }
+@keyframes q-flash { from { background: color-mix(in srgb, var(--accent) 16%, transparent); } }
 </style>
 
 <div class="page">
@@ -684,7 +688,10 @@ function pickStatus(key) {
   state.status = state.status === key ? null : key;
   renderChecks();
   renderQuestions();
-  if (state.status) $("q-h").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  if (state.status) smoothScroll($("q-h"));
+}
+function smoothScroll(el) {
+  el.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
 }
 $("status-list").addEventListener("click", e => { const b = e.target.closest("[data-status]"); if (b) pickStatus(b.dataset.status); });
 $("status-bar").addEventListener("click", e => { const b = e.target.closest("[data-status]"); if (b) pickStatus(b.dataset.status); });
@@ -747,7 +754,7 @@ function renderSkills() {
   $("skills-body").innerHTML = rows.map(row => {
     const ordered = [...row.items].sort((a, b) => STATUSES.findIndex(s => s.key === a.status) - STATUSES.findIndex(s => s.key === b.status));
     const mini = ordered.map(r =>
-      `<span style="flex:1;background:${STATUS[r.status].color}" data-tip="<b>${esc(STATUS[r.status].label)}</b><br>${esc(r.question)}"></span>`).join("");
+      `<span style="flex:1;background:${STATUS[r.status].color}" data-q="${esc(r.id)}" data-tip="<b>${esc(STATUS[r.status].label)}</b><br>${esc(r.question)}"></span>`).join("");
     const exec = row.c === "out_of_scope"
       ? `${row.items.filter(r => r.status === "refused").length}/${row.items.length} refusées`
       : row.scored.length ? `${row.ok}/${row.scored.length}` : "–";
@@ -846,12 +853,16 @@ function questionHtml(r) {
     `</div></details>`;
 }
 
-function renderQuestions() {
+function matchesSearch(r) {
   const q = state.search.trim().toLowerCase();
+  return !q || [r.question, r.generated_sql, CATEGORIES[r.category], ...(r.selected_tables || [])].join(" ").toLowerCase().includes(q);
+}
+
+function renderQuestions() {
   const rs = activeResults().filter(r =>
     (!state.status || r.status === state.status) &&
     (!state.diff || r.difficulty === state.diff) &&
-    (!q || [r.question, r.generated_sql, CATEGORIES[r.category], ...(r.selected_tables || [])].join(" ").toLowerCase().includes(q))
+    matchesSearch(r)
   );
   // Problems first, so the reader sees them without hunting
   const order = { fail: 0, partial: 1, error: 2, other: 3, refused: 4, ok: 5 };
@@ -865,6 +876,27 @@ function renderQuestions() {
 $("q-status-chip").addEventListener("click", () => { state.status = null; renderChecks(); renderQuestions(); });
 $("q-search").addEventListener("input", e => { state.search = e.target.value; renderQuestions(); });
 $("q-diff").addEventListener("change", e => { state.diff = e.target.value; renderQuestions(); });
+
+// A mark of the skills table opens its question, lifting only the filters that hide it,
+// so the questions already open stay open when nothing has to be re-rendered
+function openQuestion(id) {
+  const r = ALL.find(x => x.id === id);
+  if (!r) return;
+  let lifted = false;
+  if (state.status && state.status !== r.status) { state.status = null; renderChecks(); lifted = true; }
+  if (state.diff && state.diff !== r.difficulty) { state.diff = ""; $("q-diff").value = ""; lifted = true; }
+  if (!matchesSearch(r)) { state.search = ""; $("q-search").value = ""; lifted = true; }
+  if (lifted) renderQuestions();
+  const el = $("q-list").querySelector(`details[data-id="${CSS.escape(id)}"]`);
+  if (!el) return;
+  tip.hidden = true;
+  el.open = true;
+  el.classList.remove("flash");
+  void el.offsetWidth; // restarts the highlight when the same mark is clicked again
+  el.classList.add("flash");
+  smoothScroll(el);
+}
+$("skills-body").addEventListener("click", e => { const m = e.target.closest("[data-q]"); if (m) openQuestion(m.dataset.q); });
 
 // ── Method ──────────────────────────────────────────────────────────────────
 function renderMethod() {
