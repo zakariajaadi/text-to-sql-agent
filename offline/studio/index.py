@@ -172,10 +172,13 @@ def eval_run(results: dict | None, modified: float | None, history: list[dict] |
     `results`: each question in short (q, difficulty d, exact x: 1, 0 or None when not compared, latency, the
     tables it read). `history`: the score of each eval over time ({at, scored, exact}, oldest first) from the
     lines of offline/eval/history.py, the last eval as its last point (dated like it).
+    `at` is the whole run, which tells whether the eval measures the index; `measured_at` its last measure, a partial
+    rerun or a rescore after it, which the panel says and the last point of the curve takes.
     """
     if results is None:
         return None
-    run_at = (results.get("meta") or {}).get("run_at")
+    meta   = results.get("meta") or {}
+    run_at = meta.get("run_at")
     rows   = results.get("results") or []
     scores = [r.get("exec_exact") for r in rows]
     scored = [s for s in scores if s is not None]
@@ -185,9 +188,11 @@ def eval_run(results: dict | None, modified: float | None, history: list[dict] |
         "scored":    len(scored),
         "exact":     sum(1 for s in scored if s),
     }
+    later  = [meta.get("rescored_at"), *(rerun.get("at") for rerun in meta.get("partial_reruns") or [])]
+    run["measured_at"] = max([run["at"], *(datetime.fromisoformat(at).timestamp() for at in later if at)], key=lambda t: t or 0)
     points = [{"at": datetime.fromisoformat(line["at"]).timestamp(), "scored": line["scored"], "exact": line["exact"]}
               for line in history or [] if line.get("scored")]
-    last   = {"at": run["at"], "scored": run["scored"], "exact": run["exact"]}
+    last   = {"at": run["measured_at"], "scored": run["scored"], "exact": run["exact"]}
     if points and (points[-1]["scored"], points[-1]["exact"]) == (last["scored"], last["exact"]):
         points[-1] = last   # the line of this run: its date as the panel says it
     elif last["scored"]:

@@ -3492,7 +3492,7 @@ function evalPanel(idx, db) {
   return `<section class="panel eval-panel">${head(count + link)}
     <div class="ev-body"><div class="ev-main">
         <div class="ev-score" id="ev-score">${e.scored ? `${rollSlot("score", fmt.format(Math.round(e.exact / e.scored * 100)))}<small>%</small>` : "—"}</div>
-        <div class="ev-sub">réponses exactes</div><div class="ev-when">Mesurée le ${when(e.at)}</div>
+        <div class="ev-sub">réponses exactes</div><div class="ev-when">Mesurée le ${when(e.measured_at)}</div>
         ${levels ? `<div class="ev-levels">${levels}</div>` : ""}</div>
       <div class="ev-trend">${trend}</div></div>
     ${results.length ? `<div class="ev-question" id="ev-question">${QUESTION_HINT}</div>` : ""}</section>`;
@@ -3667,8 +3667,8 @@ function renderIndex(el, message) {
     else el.innerHTML = '<p class="placeholder">Choisis une table pour voir sa fiche, telle que l\'agent la lit.</p>';
     return;
   }
-  const mode = OV.db !== ui.db ? "draw" : OV.eval !== idx.eval?.at ? "extend" : OV.built !== idx.built_at ? "mark" : "";
-  Object.assign(OV, { db: ui.db, eval: idx.eval?.at, built: idx.built_at, focus: mode === "draw" ? null : OV.focus });
+  const mode = OV.db !== ui.db ? "draw" : OV.eval !== idx.eval?.measured_at ? "extend" : OV.built !== idx.built_at ? "mark" : "";
+  Object.assign(OV, { db: ui.db, eval: idx.eval?.measured_at, built: idx.built_at, focus: mode === "draw" ? null : OV.focus });
   cancelAnimationFrame(OV.lens.raf);
   OV.lens = { g: 0, gTo: 0, at: {}, to: {}, raf: 0 };
   OV.orders = idx.cards ? cardOrders(idx) : null;

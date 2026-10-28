@@ -3,7 +3,7 @@ checked against the documents, the progress of an index and of an eval, the rout
 every database the same way and searches through them (offline/studio/home.py)."""
 
 import json
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -197,6 +197,15 @@ def test_the_last_eval_of_a_database():
     assert [(p["scored"], p["exact"]) for p in points] == [(3, 1), (3, 2)] and points[-1]["at"] == run["at"]
     points = eval_run(results, 5.0, history[:1])["history"]
     assert [(p["scored"], p["exact"]) for p in points] == [(3, 1), (3, 2)]
+
+    # Questions asked again, or the queries scored again, after the run: the panel and the last point say the day of
+    # that last measure, while whether the eval measures the index stays the run's date
+    assert run["measured_at"] == run["at"]
+    meta = {**results["meta"], "rescored_at": "2026-10-25T09:00", "partial_reruns": [{"at": "2026-10-28T10:00", "questions": ["q"]}]}
+    history = [{"at": "2026-10-22T20:00", "scored": 3, "exact": 2}, {"at": "2026-10-28T10:00", "scored": 3, "exact": 2}]
+    later = eval_run({**results, "meta": meta}, 5.0, history)
+    assert later["at"] == run["at"] and later["measured_at"] == datetime(2026, 10, 28, 10).timestamp()
+    assert [p["at"] for p in later["history"]] == [run["at"], later["measured_at"]]
 
 
 def test_the_history_of_the_evals(tmp_path):
