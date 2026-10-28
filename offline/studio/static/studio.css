@@ -1103,7 +1103,7 @@ body.map-open { overflow: hidden; }
 @property --fade-down { syntax: "<length>"; inherits: false; initial-value: 0px; }
 .mlist {
   position: relative; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; height: 100%;
-  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; font-size: var(--fs-xs);
+  overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: none; font-size: var(--fs-xs);
   -webkit-mask-image: linear-gradient(transparent 0, #000 var(--fade-up), #000 calc(100% - var(--fade-down)), transparent 100%);
   mask-image: linear-gradient(transparent 0, #000 var(--fade-up), #000 calc(100% - var(--fade-down)), transparent 100%);
   transition: --fade-up 0.2s, --fade-down 0.2s;
@@ -1113,12 +1113,13 @@ body.map-open { overflow: hidden; }
 .mlist.more-down { --fade-down: 14px; }
 .mlist li:first-child { margin-top: auto; }   /* at the bottom when they fit, the first one reachable when they don't */
 .mlist li {
-  flex: none; display: grid; grid-template-columns: 7px auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 1px 6px;
+  flex: none; display: grid; grid-template-columns: 7px minmax(0, max-content) minmax(0, 1fr); gap: 8px; align-items: center; padding: 1px 6px;
   border-radius: var(--radius-sm); cursor: pointer; transition: opacity 0.2s, background-color 0.2s;
 }
 .mlist li.on { background: var(--hover); }
 .read-viz.focusing .mlist li:not(.on) { opacity: 0.3; }
-.mlist .nm { font-family: var(--font-mono); color: var(--ink); white-space: nowrap; }
+/* a name wider than the card cut, its tables then gone: the longest of them would widen the card */
+.mlist .nm { font-family: var(--font-mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mlist .tb { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
 .m-dot.bad { background: var(--bad-ink); }
