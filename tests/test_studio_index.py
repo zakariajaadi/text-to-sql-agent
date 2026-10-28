@@ -211,10 +211,11 @@ def test_the_history_of_the_evals(tmp_path):
 
 
 def test_the_tables_in_one_reading_order():
-    # the joined tables side by side from the most joined one, the largest group first, the ones without a join last
+    # the most joined table in the middle of its group, the tables it reaches by turns on its right and its left, the
+    # largest group first, the ones without a join last
     pairs = [("invoice", "customer"), ("invoiceline", "invoice"), ("invoiceline", "track"), ("album", "artist"), ("employee", "employee")]
     tables = ["album", "artist", "customer", "employee", "genre", "invoice", "invoiceline", "track"]
-    assert reading_order(tables, pairs) == ["invoice", "invoiceline", "customer", "track", "album", "artist", "employee", "genre"]
+    assert reading_order(tables, pairs) == ["customer", "invoice", "invoiceline", "track", "album", "artist", "employee", "genre"]
 
 
 def test_what_the_cards_of_the_overview_draw():
@@ -224,7 +225,7 @@ def test_what_the_cards_of_the_overview_draw():
                       sizes={"invoice": 412, "customer": 59})
     cards = view["cards"]
     assert [t["name"] for t in cards["tables"]] == ["customer", "invoice", "legacy"] and cards["joins"] == [["invoice", "customer"]]
-    invoice = cards["tables"][1]
+    invoice = cards["tables"][1]   # customer first (two tables joined once: the first by name), invoice on its right
     # its rows, a kind per column shown, email hidden, city searched and country without values
     assert (invoice["rows"], invoice["kinds"], invoice["hidden"]) == (412, "nnsss", 1)
     assert invoice["values"] == [["city", 53, "searched"], ["country", 0, "dropped"]]

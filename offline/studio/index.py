@@ -211,8 +211,9 @@ def column_kind(column_type: str | None) -> str:
 def reading_order(tables: list[str], pairs: list[tuple[str, str]]) -> list[str]:
     """
     The tables in one order for every card of the Vue d'ensemble, the joined ones next to each other: each group
-    of joined tables from its most joined one, breadth first (the most joined neighbour first), the largest group
-    first, the tables without a join last.
+    of joined tables around its most joined one, in its middle, the tables reached from it breadth first (the most
+    joined neighbour first) placed by turns on its right and its left, the nearest closest to it (the joins of a hub
+    nest instead of piling up); the largest group first, the tables without a join last.
     """
     links = {t: set() for t in tables}
     for a, b in pairs:
@@ -224,15 +225,16 @@ def reading_order(tables: list[str], pairs: list[tuple[str, str]]) -> list[str]:
     for start in sorted((t for t in tables if links[t]), key=rank):
         if start in seen:
             continue
-        group, queue = [], [start]
+        reached, queue = [], [start]
         seen.add(start)
         while queue:
             table = queue.pop(0)
-            group.append(table)
+            reached.append(table)
             for other in sorted(links[table] - seen, key=rank):
                 seen.add(other)
                 queue.append(other)
-        groups.append(group)
+        right, left = reached[1::2], reached[2::2]
+        groups.append([*reversed(left), start, *right])
     groups.sort(key=len, reverse=True)
     return [t for group in groups for t in group] + sorted(t for t in tables if not links[t])
 

@@ -1060,15 +1060,16 @@ body.map-open { overflow: hidden; }
 .viz-keys b { font-weight: 500; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
 .sw.searched { background: var(--bar); }
-/* the joins: an arc each over the line of tables, those of the tables under the pointer in the accent */
+/* the joins: an arc each over the line of tables, lighter when they are many; those of the tables under the pointer
+   in the accent */
 .arcs-box { height: 100%; }
-.arcs path { fill: none; stroke: var(--edge-on); stroke-width: 1.3; transition: stroke 0.2s, opacity 0.2s, stroke-width 0.2s; }
+.arcs path { fill: none; stroke: var(--edge-on); stroke-width: 1.2; stroke-opacity: var(--arc-alpha, 1); transition: stroke 0.2s, opacity 0.2s, stroke-width 0.2s; }
 .arcs circle { fill: var(--surface); stroke: var(--edge-on); stroke-width: 1.3; transition: fill 0.2s, stroke 0.2s, opacity 0.2s; }
 .arcs circle.lone { stroke: var(--muted); stroke-dasharray: 2 2; }
 .arcs .hits rect { fill: transparent; cursor: pointer; }
 .read-viz.focusing .arcs path:not(.on) { opacity: 0.12; }
 .read-viz.focusing .arcs circle:not(.on):not(.near) { opacity: 0.35; }
-.arcs path.on { stroke: var(--accent); stroke-width: 2; }
+.arcs path.on { stroke: var(--accent); stroke-width: 1.8; stroke-opacity: 1; }
 .arcs circle.on { fill: var(--accent); stroke: var(--accent); }
 .arcs circle.near { stroke: var(--ink); }
 /* the sample rows of a table: its header, then a row of cells each */

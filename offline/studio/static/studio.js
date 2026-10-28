@@ -3272,23 +3272,28 @@ function sampleGrid(table, rows) {
   return `<div class="srow hdr">${cells}</div>${`<div class="srow">${cells}</div>`.repeat(Math.max(rows, 0))}`;
 }
 
-// The joins as arcs over a line of tables, in the order of the other cards; a table without a join a hollow dot
+// The joins as arcs over the line of tables, in the order of the other cards; a table without a join a hollow dot.
+// Each arc as high as the root of its span (the joins of a hub nest, the near ones low, the far ones high), lighter
+// when they are many; the dot of a table larger the more it is joined
 function drawArcs(idx, animate) {
   const box = document.querySelector("[data-arcs]");
   if (!box || !idx.cards) return;
-  const tables = idx.cards.tables.map((t) => t.name), W = box.clientWidth, H = box.clientHeight || 72, n = tables.length, g = 2;
-  const s = (W - (n - 1) * g) / n, x = (i) => i * (s + g) + s / 2, y = H - 5, pos = new Map(tables.map((t, i) => [t, x(i)]));
-  const linked = new Set(idx.cards.joins.flat());
-  const paths = idx.cards.joins.map(([a, b], k) => {
+  const tables = idx.cards.tables.map((t) => t.name), joins = idx.cards.joins, W = box.clientWidth, H = box.clientHeight || 72;
+  const n = tables.length, g = n > 50 ? 1 : 2, s = (W - (n - 1) * g) / n, x = (i) => i * (s + g) + s / 2, y = H - 5;   // many tables: closer
+  const pos = new Map(tables.map((t, i) => [t, x(i)])), degree = new Map();
+  joins.forEach(([a, b]) => new Set([a, b]).forEach((t) => degree.set(t, (degree.get(t) || 0) + 1)));
+  const span = Math.max(1, ...joins.map(([a, b]) => Math.abs((pos.get(a) ?? 0) - (pos.get(b) ?? 0))));
+  const paths = joins.map(([a, b], k) => {
     const xa = pos.get(a), xb = pos.get(b);
     if (xa == null || xb == null) return "";
-    const h = Math.min(H - 12, Math.abs(xb - xa) * 0.28 + 7) / 0.75;   // a cubic curve peaks at 3/4 of its handles
+    const h = (6 + (H - 18) * Math.sqrt(Math.abs(xb - xa) / span)) / 0.75;   // a cubic curve peaks at 3/4 of its handles
     const d = a === b ? `M${xa - 3},${y - 1} C${xa - 10},${y - 20} ${xa + 10},${y - 20} ${xa + 3},${y - 1}` : `M${xa},${y} C${xa},${y - h} ${xb},${y - h} ${xb},${y}`;
     return `<path pathLength="1" class="${animate ? "draw" : ""}" data-s="${esc(a)}" data-t="${esc(b)}" d="${d}" style="--i:${k}"/>`;
   }).join("");
-  const dots = tables.map((t, i) => `<circle class="${linked.has(t) ? "" : "lone"}" cx="${x(i)}" cy="${y}" r="2.8" data-table="${esc(t)}"/>`).join("");
+  const dots = tables.map((t, i) => `<circle class="${degree.has(t) ? "" : "lone"}" cx="${x(i)}" cy="${y}" r="${(2.6 + Math.min(3, (degree.get(t) || 0) / 8)).toFixed(1)}" data-table="${esc(t)}"/>`).join("");
   const hits = tables.map((t, i) => `<rect x="${x(i) - s / 2 - g / 2}" y="0" width="${s + g}" height="${H}" data-table="${esc(t)}"/>`).join("");
-  box.innerHTML = `<svg class="arcs" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true">${paths}${dots}<g class="hits">${hits}</g></svg>`;
+  box.innerHTML = `<svg class="arcs" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="--arc-alpha:${Math.min(1, Math.max(0.3, 16 / Math.max(joins.length, 1))).toFixed(2)}" aria-hidden="true">`
+    + `${paths}${dots}<g class="hits">${hits}</g></svg>`;
 }
 
 const LEVELS = [["simple", "Simples"], ["medium", "Moyennes"], ["hard", "Difficiles"], ["other", "Autres"]];
