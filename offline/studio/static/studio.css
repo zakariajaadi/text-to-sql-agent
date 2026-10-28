@@ -501,7 +501,7 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .map .node.path .box { stroke: var(--path); stroke-width: 1.8; }
 .map .node.path .gauge-fill { fill: var(--path); }
 .map .node.dim { opacity: 0.35; }
-.map g.node.gone { opacity: 0; pointer-events: none; }
+.map g.node.gone, .map.hovering g.node.gone { opacity: 0; pointer-events: none; }   /* hidden on a hover too */
 /* a relation: its line (solid measured, pale never measured, amber dashes weak), its ends (a crow's foot: many rows,
    a bar: one); those of the table chosen in orange, flowing slowly from the many to the one; the path in blue */
 .map .e { transition: opacity 0.15s; }
