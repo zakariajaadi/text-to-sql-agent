@@ -3501,12 +3501,13 @@ function evalPanel(idx, db) {
 const shortDay = (seconds) => new Date(seconds * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
 
 // The score of each eval, evenly spaced (runs months apart stay readable), the indexes between them as diamonds placed
-// by date, the last point in the accent. mode: "draw" the line from the left (another database), "extend" its last
-// segment (a new eval), "mark" the last diamond (a new index), "" still
+// by date, the last point in the accent; as high as the column of the score beside it, its dates on the line of its
+// last questions. mode: "draw" the line from the left (another database), "extend" its last segment (a new eval),
+// "mark" the last diamond (a new index), "" still
 function drawEvalChart(idx, mode) {
   const box = $("ev-chart");
   if (!box) return;
-  const points = idx.eval.history, W = Math.max(box.clientWidth, 200), H = 168, L = 40, R = 14, T = 10, B = 24;
+  const points = idx.eval.history, W = Math.max(box.clientWidth, 200), H = Math.max(box.clientHeight, 168), L = 40, R = 14, T = 10, B = 24;
   const builds = [...(idx.builds || []), ...(idx.built_at ? [idx.built_at] : [])].filter((t) => t >= points[0].at);
   const after = builds.filter((t) => t >= points.at(-1).at);
   const step = (W - L - R) / Math.max(points.length - 1 + (after.length ? 0.6 : 0), 1), X = (i) => L + i * step;
