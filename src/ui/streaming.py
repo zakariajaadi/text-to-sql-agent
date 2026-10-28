@@ -22,6 +22,7 @@ A rejected query shows as it runs: "Requête rejetée par Hive", "Requête SQL c
 import asyncio
 import re
 import time
+import uuid
 from functools import cache
 
 import chainlit as cl
@@ -173,10 +174,13 @@ class TurnRenderer:
             return
         self._attach_result_card()
         if self.run_id:
-            payload = {"run_id": str(self.run_id)}
+            # Each button carries the id of the other one, so a vote removes both: one vote per answer
+            run_id, up_id, down_id = str(self.run_id), str(uuid.uuid4()), str(uuid.uuid4())
             self.answer_msg.actions = [
-                cl.Action(name="thumbs_up",   payload=payload, label="👍"),
-                cl.Action(name="thumbs_down", payload=payload, label="👎"),
+                cl.Action(id=up_id,   name="thumbs_up",   payload={"run_id": run_id, "other_id": down_id},
+                          icon="thumbs-up",   tooltip="Bonne réponse"),
+                cl.Action(id=down_id, name="thumbs_down", payload={"run_id": run_id, "other_id": up_id},
+                          icon="thumbs-down", tooltip="Réponse à revoir"),
             ]
         await self.answer_msg.update()
         await self._send_follow_ups()

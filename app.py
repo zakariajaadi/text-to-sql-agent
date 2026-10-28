@@ -101,17 +101,24 @@ async def on_message(message: cl.Message):
     await turn.finalize_answer()
 
 
-@cl.action_callback("thumbs_up")
-async def on_thumbs_up(action: cl.Action):
+async def record_vote(action: cl.Action, score: int):
+    """Send the vote to LangSmith, then leave only the chosen thumb: one vote per answer."""
     run_id = action.payload.get("run_id")
     if cfg.langsmith.tracing and run_id:
-        ls_client.create_feedback(run_id=run_id, key="user_feedback", score=1)
+        ls_client.create_feedback(run_id=run_id, key="user_feedback", score=score)
     await action.remove()
+    # The frontend removes an action by its id alone
+    if other_id := action.payload.get("other_id"):
+        await cl.Action(id=other_id, name="", payload={}).remove()
+    # The chosen thumb comes back without a callback; its "voted-" id styles it (filled, not clickable, custom.css)
+    await cl.Action(id=f"voted-{uuid.uuid4()}", name="vote_cast", payload={}, icon=action.icon).send(for_id=action.forId)
+
+
+@cl.action_callback("thumbs_up")
+async def on_thumbs_up(action: cl.Action):
+    await record_vote(action, score=1)
 
 
 @cl.action_callback("thumbs_down")
 async def on_thumbs_down(action: cl.Action):
-    run_id = action.payload.get("run_id")
-    if cfg.langsmith.tracing and run_id:
-        ls_client.create_feedback(run_id=run_id, key="user_feedback", score=0)
-    await action.remove()
+    await record_vote(action, score=0)

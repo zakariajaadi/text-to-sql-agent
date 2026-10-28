@@ -289,11 +289,34 @@ html:not(.dark) .mascot.is-out .m-antenna {
   transform: translateY(0) scale(0.98);
 }
 
+/* Feedback buttons under an answer (Lucide thumbs, src/ui/streaming.py): muted at rest like Chainlit's copy button,
+   primary on hover */
+button:has(svg.lucide-thumbs-up):hover,
+button:has(svg.lucide-thumbs-down):hover {
+  color: hsl(var(--primary));
+}
+/* After a vote only the chosen thumb is left (app.py, record_vote): filled in primary, no longer clickable,
+   with one bounce as it appears */
+@keyframes vote-pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+button[id^="voted-"] {
+  color: hsl(var(--primary));
+  pointer-events: none;
+}
+button[id^="voted-"] svg {
+  fill: currentColor;
+  animation: vote-pop 380ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #welcome-title .welcome-title-name,
   #welcome-screen > div:first-child > *,
   #welcome-screen #message-composer,
-  #starters > button {
+  #starters > button,
+  button[id^="voted-"] svg {
     animation: none;
   }
   #starters > button:hover,
