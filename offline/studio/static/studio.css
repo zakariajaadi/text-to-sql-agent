@@ -22,6 +22,8 @@
   --none: #cfccc6;
   --key-ink: #3c3489;
   --key-soft: #eeedfe;
+  --ai: #a865c9;           /* what the IA proposed: an orchid, apart from the violet of the keys */
+  --ai-shine: #9032c2;     /* its star as the IA just wrote it */
   --type-ink: #0c447c;
   --type-soft: #e6f1fb;
   --bar: #b3aea6;          /* a bar that only measures: grey, amber when it is to check */
@@ -57,6 +59,7 @@
     --good-ink: #3cc43c; --good-soft: rgba(12, 163, 12, 0.16); --warn-ink: #fab219; --warn-soft: rgba(250, 178, 25, 0.14);
     --bad-ink: #f07a7a; --bad-soft: rgba(224, 85, 85, 0.14); --none: #45443f; --chip: #262624;
     --key-ink: #cecbf6; --key-soft: rgba(127, 119, 221, 0.22); --type-ink: #b5d4f4; --type-soft: rgba(55, 138, 221, 0.20);
+    --ai: #cf9be8; --ai-shine: #ecc4ff;
     --bar: #6e6b65; --path: #378add; --path-ink: #85b7eb; --edge: #4a4844; --edge-on: #a29e97;
     --hover: rgba(255, 255, 255, 0.04); --ring: rgba(255, 255, 255, 0.10); --dot: rgba(240, 239, 236, 0.26);
     --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
@@ -70,6 +73,7 @@
   --good-ink: #3cc43c; --good-soft: rgba(12, 163, 12, 0.16); --warn-ink: #fab219; --warn-soft: rgba(250, 178, 25, 0.14);
   --bad-ink: #f07a7a; --bad-soft: rgba(224, 85, 85, 0.14); --none: #45443f; --chip: #262624;
   --key-ink: #cecbf6; --key-soft: rgba(127, 119, 221, 0.22); --type-ink: #b5d4f4; --type-soft: rgba(55, 138, 221, 0.20);
+  --ai: #cf9be8; --ai-shine: #ecc4ff;
   --bar: #6e6b65; --path: #378add; --path-ink: #85b7eb; --edge: #4a4844; --edge-on: #a29e97;
   --hover: rgba(255, 255, 255, 0.04); --ring: rgba(255, 255, 255, 0.10); --dot: rgba(240, 239, 236, 0.26);
   --glow-1: rgba(238, 115, 80, 0.10); --glow-2: rgba(238, 115, 80, 0.07);
@@ -420,10 +424,15 @@ input.switch:checked::after { left: 14px; }
 .save-state.ok { color: var(--good-ink); }
 .save-state.warn { color: var(--warn-ink); }
 .save-state.error { color: var(--bad-ink); }
-/* Where a value comes from (studio.js ORIGIN): measured on the data and proposed by the IA in grey, decided by you
-   in ink, a shape each; a description the IA rewrote over a text: an amber dot, to read again */
+/* Where a value comes from (studio.js ORIGIN): measured on the data in grey, proposed by the IA in orchid, decided by
+   you in ink, a shape each; a description the IA rewrote over a text: an amber dot, to read again */
 .origin { width: 12px; height: 12px; flex: none; vertical-align: -2px; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.origin.ai { fill: var(--muted); stroke: none; }
+.origin.ai { fill: var(--ai); stroke: none; }
+/* a description the IA just wrote (studio.js openTable): its star shines once, then rests */
+.origin.ai.fresh { animation: shine 1.3s ease-out; }
+@keyframes shine {
+  30% { fill: var(--ai-shine); transform: scale(1.35) rotate(20deg); filter: drop-shadow(0 0 3px var(--ai-shine)); }
+}
 .origin.you { stroke: var(--ink); stroke-width: 1.4; }
 .origin-item { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; }
 .field-label .origin { margin-right: 5px; }   /* a field of a metric corrected by you */
@@ -433,6 +442,7 @@ input.switch:checked::after { left: 14px; }
 .origin-legend { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; }
 body[data-view="home"] .origin-legend, body[data-view="wizard"] .origin-legend { display: none; }
 .origin-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.origin-legend > .ai { color: var(--ai); }
 .origin-legend > .you { color: var(--ink); }
 .origin-legend > .review { color: var(--warn-ink); }
 .origin-legend .todo-dot { margin: 0; }
@@ -1160,7 +1170,7 @@ body.map-open { overflow: hidden; }
   0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
   50% { box-shadow: 0 0 0 5px var(--accent-soft); }
 }
-@media (prefers-reduced-motion: reduce) { .halo.running, .pill.running, .to-decide.first { animation: none; } .edit { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .halo.running, .pill.running, .to-decide.first, .origin.ai.fresh { animation: none; } .edit { transition: none; } }
 
 /* What the studio never shows, and the legend of the marks of origin on the tabs that have them */
 .footer { display: flex; align-items: center; gap: 6px 28px; flex-wrap: wrap; font-size: var(--fs-xs); line-height: 1.5; color: var(--muted); }

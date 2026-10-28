@@ -642,14 +642,29 @@ async function openTable(name, { again = false } = {}) {
   ui.current = name;
   if (ui.step === "scope") { renderRows(); showCurrentRow(); renderDetail(); if (fromList) showCard(); return; }   // its state is in the list
   renderRows(); showCurrentRow();
-  const step = ui.step, db = encodeURIComponent(ui.db), table = encodeURIComponent(name);
+  const step = ui.step, db = encodeURIComponent(ui.db), table = encodeURIComponent(name), shown = ui.detail;
   try {
     ui.detail = await api(step === "index" ? `/api/db/${db}/index/${table}`
       : `/api/db/${db}/tables/${table}${step === "profile" ? "" : "/semantics"}`);
   } catch (e) {
     ui.detail = { name, error: e.message };
   }
-  if (ui.current === name && ui.step === step) { renderDetail(); if (fromList) showCard(); }
+  if (ui.current !== name || ui.step !== step) return;
+  renderDetail();
+  // The descriptions the IA just wrote in the card open as its job ends: their star shines once, drawn again it rests
+  if (again && step === "semantics" && shown?.name === name && !ui.detail.error) {
+    const fresh = freshDescriptions(shown, ui.detail);
+    $("detail").querySelectorAll(".origin.ai[data-ai]").forEach((mark) => mark.classList.toggle("fresh", fresh.has(mark.dataset.ai)));
+  }
+  if (fromList) showCard();
+}
+
+// The descriptions of a table the IA wrote since the card showed it (column: its name, "" for the table)
+function freshDescriptions(before, after) {
+  const was = new Map((before.columns || []).map((c) => [c.column, c.description]));
+  const fresh = new Set((after.columns || []).filter((c) => c.description && !c.edited && c.description !== was.get(c.column)).map((c) => c.column));
+  if (after.description && !after.description_edited && after.description !== before.description) fresh.add("");
+  return fresh;
 }
 
 // The row opened, in view in its list, which scrolls on its own (a table opened from the search, a list scrolled away)
@@ -859,7 +874,7 @@ function semanticsFigures(d) {
 }
 
 // ── Where a value comes from, the same marks and words on every tab: measured on the data (the profile, the rules,
-// the measure of a relation), proposed by the IA (both grey), decided by you (ink); an amber dot, rewritten by the
+// the measure of a relation) in grey, proposed by the IA in orchid, decided by you (ink); an amber dot, rewritten by the
 // IA over a text: to read again; no mark when the origin is unknown (written before the studio kept it) ──
 
 const PENCIL = '<path d="M10.5 2.5l3 3L6 13l-3.5.5L3 10z"/>';
