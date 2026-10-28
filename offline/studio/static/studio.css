@@ -489,6 +489,7 @@ body:is([data-step="relations"], [data-step="metrics"], [data-step="index"]) .ro
 .map .node text { font-family: var(--font-mono); pointer-events: none; }
 .map .node .nm { fill: var(--ink); font-size: 11px; }
 .map .node .rows { fill: var(--muted); font-size: 9.5px; }
+.map .node .refs { fill: var(--accent-ink); font-size: 9.5px; }   /* the references it joins, in pills: their names */
 .map .node .gauge-bg { fill: var(--chip); }
 .map .node .gauge-fill { fill: var(--bar); transition: fill 0.2s; }
 .map .node:hover .box, .map .node:focus .box { stroke: var(--ink); outline: none; }
@@ -602,6 +603,7 @@ body.map-open { overflow: hidden; }
 .map-legend path.unchecked { stroke: var(--edge); }
 .map-legend path.weak { stroke: var(--warn); stroke-dasharray: 4 3; }
 .map-legend path.end { stroke: var(--ink-2); stroke-width: 1.3; stroke-linecap: round; }
+.map-legend .refs-key { font-family: var(--font-mono); font-size: 9.5px; font-weight: 400; color: var(--accent-ink); }
 .legend-sep { width: 1px; height: 12px; background: var(--line); }
 .add-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--line); font-size: var(--fs-sm); }
 .map-tools select, .add-form select {

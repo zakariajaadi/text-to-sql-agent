@@ -1362,15 +1362,123 @@ const pathLayers = () => new Map((ui.path.result?.layers || []).flatMap((tables,
 const onPath = (r, layer) => layer.has(r.source) && layer.has(r.target) && Math.abs(layer.get(r.source) - layer.get(r.target)) === 1;
 
 // What the map last drew: where each table was moved from its place in the layout (a table that moves glides from
-// there), the animations of the camera and of the path, a map drawn before the rows of its tables were read
-const MAP = { shift: null, db: null, camera: 0, packet: 0, rowless: false };
+// there), the animations of the camera and of the path, a map drawn before the rows of its tables were read; the
+// layout it draws (mapLayout) and the one being computed
+const MAP = { shift: null, db: null, camera: 0, packet: 0, rowless: false, layout: null, computing: null };
 const compactRows = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
 
+// ── The layout of the map: ELK Layered (static/vendor/elk.bundled.js, loaded with the tab) lays out the tables joined
+// to others, in layers from left to right, its lines at right angles around the tables. A reference joined by several
+// tables is not a box among them, its lines crossing the map: its name is written in a pill under each table joining
+// it, and its box waits on a row under the map with the tables joined to none ──
+const PILL_USERS = 2;      // a reference joined by this many tables or more: in pills
+const PILL_CHAR  = 5.8;    // a character of the pills (monospace, 9.5px)
+const PILL_LINE  = 40;     // characters of the pills of a table at most, the others counted ("+2")
+const ELK_OPTIONS = {
+  "elk.algorithm": "layered", "elk.direction": "RIGHT", "elk.edgeRouting": "ORTHOGONAL",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "64", "elk.spacing.nodeNode": "14", "elk.layered.spacing.edgeNodeBetweenLayers": "14",
+  "elk.spacing.edgeEdge": "6", "elk.layered.spacing.edgeEdgeBetweenLayers": "6", "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+  "elk.layered.thoroughness": "10", "elk.separateConnectedComponents": "true", "elk.padding": "[top=40,left=40,bottom=40,right=40]",
+};
+
+let elkLoading = null;
+function loadElk() {
+  elkLoading ||= new Promise((resolve, reject) => {
+    const script = Object.assign(document.createElement("script"), { src: "/static/vendor/elk.bundled.js" });
+    script.onload = () => resolve(new window.ELK());
+    script.onerror = () => reject(new Error("elk.bundled.js"));
+    document.head.append(script);
+  });
+  return elkLoading;
+}
+
+// The references in pills (joined by PILL_USERS tables or more), and the pills of each table: the ones it joins (a
+// reference in pills joining another one carries its pill too, on its box under the map)
+function mapPills() {
+  const refs = new Set(ui.rel.references || []), users = new Map(), pills = {};
+  ui.rel.relations.forEach((r) => {
+    if (refs.has(r.target) && r.source !== r.target) users.set(r.target, (users.get(r.target) || new Set()).add(r.source));
+  });
+  const pilled = new Set([...users].filter(([, u]) => u.size >= PILL_USERS).map(([t]) => t));
+  ui.rel.relations.forEach((r) => { if (pilled.has(r.target) && r.source !== r.target) (pills[r.source] ||= new Set()).add(r.target); });
+  return { pilled, pills: Object.fromEntries(Object.entries(pills).map(([t, s]) => [t, [...s].sort()])) };
+}
+const pillLine = (list) => {
+  let line = "", k = 0;
+  for (const t of list) {
+    const next = line ? `${line} · ${t}` : t;
+    if (next.length > PILL_LINE && line) break;
+    line = next; k++;
+  }
+  return k < list.length ? `${line} +${list.length - k}` : line;
+};
+
+// The layout a map is drawn from, for the database and its relations of now
+const layoutKey = () => `${ui.db}|${(ui.rel.references || []).join(",")}|${ui.rel.relations.map((r) => `${r.source}>${r.target}`).join(",")}`;
+
+// {db, key, nodes: {table: {x, y, w, h, line}}, routes: {joinKey: points}, width, height, pilled}: the tables ELK lays
+// out, then a row of the tables joined to none (or to references only), a row of the references in pills
+async function computeLayout(key) {
+  const laid = ui.rel.layout.nodes, { pilled, pills } = mapPills();
+  const size = (t) => {
+    const line = pills[t] ? pillLine(pills[t]) : "";
+    return { w: Math.max(laid[t].w, line ? Math.ceil(PILL_CHAR * line.length + 20) : 0), h: laid[t].h + (line ? 12 : 0), line, refs: pills[t] || [] };
+  };
+  const core = ui.rel.relations.filter((r) => laid[r.source] && laid[r.target] && r.source !== r.target && !pilled.has(r.source) && !pilled.has(r.target));
+  const joined = [...new Set(core.flatMap((r) => [r.source, r.target]))];
+  const elk = await loadElk();
+  const out = await elk.layout({ id: "map", layoutOptions: ELK_OPTIONS,
+    children: joined.map((t) => ({ id: t, width: size(t).w, height: size(t).h })),
+    edges: core.map((r) => ({ id: joinKey(r), sources: [r.source], targets: [r.target] })) });
+  const nodes = Object.fromEntries(out.children.map((c) => [c.id, { ...size(c.id), x: c.x, y: c.y, w: c.width, h: c.height }]));
+  const routes = Object.fromEntries(out.edges.filter((e) => e.sections?.length).map((e) => {
+    const s = e.sections[0];
+    return [e.id, [s.startPoint, ...(s.bendPoints || []), s.endPoint].map((p) => [p.x, p.y])];
+  }));
+  const width = Math.max(600, out.width);
+  let y = joined.length ? out.height : 40;
+  const row = (tables) => {
+    let x = 40, h = 0;
+    tables.forEach((t) => {
+      const s = size(t);
+      if (x + s.w > width - 40 && x > 40) { x = 40; y += h + 14; h = 0; }
+      nodes[t] = { ...s, x, y };
+      x += s.w + 14; h = Math.max(h, s.h);
+    });
+    if (tables.length) y += h + 40;
+  };
+  const rest = Object.keys(laid).filter((t) => !nodes[t]);
+  row(rest.filter((t) => !pilled.has(t)));
+  row(rest.filter((t) => pilled.has(t)));
+  return { db: ui.db, key, nodes, routes, width, height: y, pilled };
+}
+
+// ELK not loaded: the layout of the server, every table a box, every line drawn from side to side
+const serverLayout = (key) => ({ db: ui.db, key, nodes: ui.rel.layout.nodes, routes: {}, width: ui.rel.layout.width,
+  height: ui.rel.layout.height, pilled: new Set() });
+
+// The layout to draw: the one of these relations, or while it is computed the last one of this database (its tables
+// then glide to their new places); none yet: the map waits for it, drawn again once it is there
+function mapLayout() {
+  const key = layoutKey();
+  if (MAP.layout?.key !== key && MAP.computing !== key) {
+    MAP.computing = key;
+    computeLayout(key).catch(() => serverLayout(key)).then((layout) => {
+      if (MAP.computing !== key) return;
+      MAP.computing = null;
+      MAP.layout = layout;
+      if (ui.step === "relations" && ui.rel && layoutKey() === key) renderDetail();
+    });
+  }
+  return MAP.layout?.db === ui.db ? MAP.layout : null;
+}
+
 // The map as it shows: the boxes of the layout, and the table chosen with its neighbours in the middle of the view (its
-// tables on its left, the ones it joins on its right, the others gone); each relation from the side of one table to the
-// side of the other, the relations of a side spread along it by the height of their other end
-function mapGeometry() {
-  const { nodes: laid } = ui.rel.layout, layer = pathLayers(), cur = layer.size ? null : ui.current;
+// tables on its left, the ones it joins on its right, the others gone). The whole map and a path: the lines ELK drew,
+// a line to a reference in pills only on the path. A table chosen: each of its relations from the side of one table to
+// the side of the other, the relations of a side spread along it by the height of their other end
+function mapGeometry(L) {
+  const laid = L.nodes, layer = pathLayers(), cur = layer.size ? null : ui.current;
   const nodes = Object.fromEntries(Object.entries(laid).map(([t, n]) => [t, { ...n, dx: n.x, dy: n.y, gone: false }]));
   if (cur && nodes[cur]) {
     const places = centredPlaces(nodes, cur);
@@ -1384,9 +1492,11 @@ function mapGeometry() {
   const box = { x, y, w: Math.max(...list.map((n) => n.x + n.w)) + 70 - x, h: Math.max(...list.map((n) => n.y + n.h)) + 30 - y };
   const rels = ui.rel.relations, offset = rels.map(() => ({ s: 0, t: 0 })), sides = new Map();
   const side = (s, t) => (t.x > s.x + s.w + 8 ? ["r", "l"] : t.x + t.w < s.x - 8 ? ["l", "r"] : ["r", "r"]);
-  const drawn = (r) => shown[r.source] && shown[r.target] && (!cur || r.source === cur || r.target === cur);
+  const drawn = (r) => shown[r.source] && shown[r.target] && (cur ? r.source === cur || r.target === cur
+    : !L.pilled.has(r.source) && !L.pilled.has(r.target) || onPath(r, layer));
+  const route = (r) => !cur && L.routes[joinKey(r)];
   rels.forEach((r, i) => {
-    if (!drawn(r) || r.source === r.target) return;
+    if (!drawn(r) || route(r) || r.source === r.target) return;
     const s = shown[r.source], t = shown[r.target], [ss, ts] = side(s, t);
     for (const [key, end, other] of [[`${r.source}|${ss}`, "s", t], [`${r.target}|${ts}`, "t", s]]) {
       if (!sides.has(key)) sides.set(key, []);
@@ -1397,9 +1507,9 @@ function mapGeometry() {
     const h = shown[key.split("|")[0]].h, step = ends.length > 1 ? Math.min(7, (h - 12) / (ends.length - 1)) : 0;
     ends.sort((a, b) => a.y - b.y).forEach((p, j) => { offset[p.i][p.end] = (j - (ends.length - 1) / 2) * step; });
   }
-  const edges = rels.map((r, i) => (drawn(r)
-    ? { r, i, ...edgePath(shown[r.source], shown[r.target], r.source === r.target, offset[i].s, offset[i].t) } : null));
-  return { nodes, shown, edges, box, cur, layer };
+  const edges = rels.map((r, i) => (!drawn(r) ? null : route(r) ? { r, i, ...routePath(route(r)) }
+    : { r, i, ...edgePath(shown[r.source], shown[r.target], r.source === r.target, offset[i].s, offset[i].t) }));
+  return { nodes, shown, edges, box, cur, layer, width: L.width, height: L.height };
 }
 
 // The table chosen in the middle of the view: it stays where it is, the tables that join it in columns on its left, the
@@ -1422,26 +1532,46 @@ function centredPlaces(nodes, cur) {
   return places;
 }
 
-// The curve of a relation, horizontal at its two ends, from the side of a table to the side of the other: left to right
-// between two columns, right to left when the table pointed to is on the left, out on the right and back within one
-// column, a loop for a table pointing to itself. ds, dt: the place of each end along its side; dirs: where the line
-// goes out of each end (1 right, -1 left)
+// The line of a relation at right angles, as ELK draws the whole map, from the side of a table to the side of the
+// other: left to right between two columns, turning half way; right to left when the table pointed to is on the left;
+// out on the right and back within one column; a loop for a table pointing to itself. ds, dt: the place of each end
+// along its side; dirs: where the line goes out of each end (1 right, -1 left)
 function edgePath(s, t, self, ds = 0, dt = 0) {
+  const line = (P, dirs) => ({ d: roundedPath(P), start: P[0], end: P.at(-1), dirs });
   if (self) {
     const x = s.x + s.w, y = s.y + s.h / 2;
-    return { d: `M${x} ${y + 5} C${x + 34} ${y + 22} ${x + 34} ${y - 22} ${x + 2} ${y - 5}`, start: [x, y + 5], end: [x + 2, y - 5], dirs: [1, 1] };
+    return line([[x, y + 5], [x + 18, y + 5], [x + 18, y - 5], [x, y - 5]], [1, 1]);
   }
   const sy = s.y + s.h / 2 + ds, ty = t.y + t.h / 2 + dt;
-  const curve = (x1, x2, bend, dirs) => ({ d: `M${x1} ${sy} C${x1 + bend} ${sy} ${x2 - bend} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs });
-  if (t.x > s.x + s.w + 8) return curve(s.x + s.w, t.x, Math.max(30, (t.x - s.x - s.w) * 0.45), [1, -1]);
-  if (t.x + t.w < s.x - 8) return curve(s.x, t.x + t.w, -Math.max(30, (s.x - t.x - t.w) * 0.45), [-1, 1]);
-  const x1 = s.x + s.w, x2 = t.x + t.w, out = Math.max(x1, x2) + 40;
-  return { d: `M${x1} ${sy} C${out} ${sy} ${out} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs: [1, 1] };
+  const turn = (x1, x2, dirs) => line([[x1, sy], [(x1 + x2) / 2, sy], [(x1 + x2) / 2, ty], [x2, ty]], dirs);
+  if (t.x > s.x + s.w + 8) return turn(s.x + s.w, t.x, [1, -1]);
+  if (t.x + t.w < s.x - 8) return turn(s.x, t.x + t.w, [-1, 1]);
+  const x1 = s.x + s.w, x2 = t.x + t.w, out = Math.max(x1, x2) + 30;
+  return line([[x1, sy], [out, sy], [out, ty], [x2, ty]], [1, 1]);
+}
+
+// A line ELK routed: its points, the way it goes out of each end (none when it leaves a table up or down)
+function routePath(P) {
+  const way = (a, b) => (Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1]) ? Math.sign(b[0] - a[0]) || 1 : 0);
+  return { d: roundedPath(P), start: P[0], end: P.at(-1), dirs: [way(P[0], P[1]), way(P.at(-1), P.at(-2))] };
+}
+
+// A line through points at right angles, its corners rounded
+function roundedPath(P, r = 6) {
+  let d = `M${P[0]}`;
+  for (let i = 1; i < P.length - 1; i++) {
+    const [p, c, n] = [P[i - 1], P[i], P[i + 1]], d1 = Math.hypot(c[0] - p[0], c[1] - p[1]), d2 = Math.hypot(n[0] - c[0], n[1] - c[1]);
+    if (!d1 || !d2) continue;   // a corner of no length: the line goes straight on
+    const k = Math.min(r, d1 / 2, d2 / 2);
+    d += `L${c[0] + (p[0] - c[0]) * k / d1} ${c[1] + (p[1] - c[1]) * k / d1}Q${c} ${c[0] + (n[0] - c[0]) * k / d2} ${c[1] + (n[1] - c[1]) * k / d2}`;
+  }
+  return `${d}L${P.at(-1)}`;
 }
 
 // What an end of a relation holds, as in the diagrams of databases: many rows a crow's foot (its toes on the table),
-// one row a bar; unknown ("?") nothing
+// one row a bar; unknown ("?") nothing, nor at an end leaving its table up or down
 function endMark(kind, [x, y], dir) {
+  if (!dir) return "";
   if (kind === "n") { const q = x + dir * 9; return `M${x} ${y - 5}L${q} ${y}M${x} ${y + 5}L${q} ${y}`; }
   if (kind === "1") { const b = x + dir * 7; return `M${b} ${y - 5}L${b} ${y + 5}`; }
   return "";
@@ -1471,11 +1601,12 @@ function mapSvg(g) {
       layer.has(table) ? "path" : "", path && !layer.has(table) ? "dim" : "", n.gone ? "gone" : ""].join(" ");
     const t = rows?.get(table), count = t?.rows, share = count ? Math.log10(count + 1) / Math.log10(max + 1) : 0;
     const said = !t ? "" : count == null ? "lignes non comptées" : count ? `${compactRows.format(count)} ligne${count > 1 ? "s" : ""}` : "vide";
-    return `<g class="${cls}" data-table="${esc(table)}" tabindex="${n.gone ? -1 : 0}" role="button" aria-label="${esc(table)}"
+    return `<g class="${cls}" data-table="${esc(table)}" data-refs="${esc((n.refs || []).join(" "))}" tabindex="${n.gone ? -1 : 0}" role="button" aria-label="${esc(table)}"
         style="transform:translate(${n.dx - n.x}px,${n.dy - n.y}px)">
-      ${t ? `<title>${esc(table)} · ${typeName(t.type).toLowerCase()}</title>` : ""}
+      ${t ? `<title>${esc(table)} · ${typeName(t.type).toLowerCase()}${n.refs?.length ? ` · joint ${n.refs.join(", ")}` : ""}</title>` : ""}
       <rect class="box" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="7"/>
       <text class="nm" x="${n.x + 10}" y="${n.y + 15}">${esc(table)}</text><text class="rows" x="${n.x + 10}" y="${n.y + 27}">${said}</text>
+      ${n.line ? `<text class="refs" x="${n.x + 10}" y="${n.y + 40}">${esc(n.line)}</text>` : ""}
       <rect class="gauge-bg" x="${n.x + 8}" y="${n.y + n.h - 5}" width="${n.w - 16}" height="2" rx="1"/>
       <rect class="gauge-fill" x="${n.x + 8}" y="${n.y + n.h - 5}" width="${count ? Math.max(share * (n.w - 16), 2) : 0}" height="2" rx="1"/></g>`;
   }).join("");
@@ -1624,7 +1755,7 @@ function runPacket(g) {
 }
 
 // A table under the pointer, on the map or in the list: its relations and the tables they join stand out, the rest
-// fades; its relations flow
+// fades; its relations flow. A reference in pills: the tables carrying its pill
 function lightTable(table) {
   const svg = $("map");
   if (!svg) return;
@@ -1636,7 +1767,7 @@ function lightTable(table) {
     e.classList.add("hl");
     [e.dataset.s, e.dataset.t].forEach((t) => svg.querySelector(`.node[data-table="${CSS.escape(t)}"]`)?.classList.add("hl"));
   });
-  svg.querySelector(`.node[data-table="${CSS.escape(table)}"]`)?.classList.add("hl");
+  svg.querySelectorAll(".node").forEach((n) => { if (n.dataset.table === table || n.dataset.refs.split(" ").includes(table)) n.classList.add("hl"); });
 }
 $("rows").addEventListener("mouseover", (e) => { if (ui.step === "relations") lightTable(e.target.closest(".row[data-table]")?.dataset.table ?? null); });
 $("rows").addEventListener("mouseleave", () => { if (ui.step === "relations") lightTable(null); });
@@ -1645,7 +1776,7 @@ $("rows").addEventListener("mouseleave", () => { if (ui.step === "relations") li
 // gliding from where they were, the view going to what is shown (another table, a path, the whole map), then a drag
 // that moves it, the zoom, the hover of a table and the label of a relation, the mini-map, the path travelled
 function setupMap(g) {
-  const wrap = $("map-wrap"), svg = $("map"), { width, height } = ui.rel.layout;
+  const wrap = $("map-wrap"), svg = $("map"), { width, height } = g;
   const cw = wrap.clientWidth || 800;
   svg.style.height = ui.mapBig ? "" : `${Math.max(260, Math.min(600, Math.round(height * Math.min(cw / width, 1.25))))}px`;
   const ch = svg.clientHeight, key = g.cur || (g.layer.size ? `${ui.path.a}>${ui.path.b}` : null);
@@ -2036,7 +2167,9 @@ function wireJoins(el) {
 function renderRelations(el, message) {
   const rel = ui.rel;
   if (!rel) { el.innerHTML = '<p class="placeholder">Lecture des jointures…</p>'; return; }
-  const geo = mapGeometry();
+  const layout = mapLayout();
+  if (!layout) { el.innerHTML = '<p class="placeholder">Disposition de la carte…</p>'; return; }
+  const geo = mapGeometry(layout);
   const cur = ui.current, tables = ui.data?.tables.map((t) => t.name) || [], layer = pathLayers(), path = layer.size > 0;
   const mine = (r) => r.source === cur || r.target === cur;
   // a table chosen (or a path) does not filter the list: its joins stand out there, its groups open
@@ -2097,7 +2230,9 @@ function renderRelations(el, message) {
       + `<button type="button" id="zoom-fit" aria-label="Ajuster" title="${cur ? `Ajuster sur ${esc(cur)} et les tables qu'elle joint` : "Ajuster sur toute la carte"}">${fit}</button></div>
       <div class="map-legend"><span>${line("on")}vérifiée</span><span>${line("unchecked")}non mesurée</span><span>${line("weak")}faible</span>
         <span class="legend-sep"></span><span title="Une table dont plusieurs lignes vont vers une même ligne de l'autre">${end("M2 6H21M2 1L11 6M2 11L11 6")}plusieurs</span>
-        <span title="Une seule ligne de la table pour chaque ligne de l'autre">${end("M1 6H20M14 1V11")}une</span></div>
+        <span title="Une seule ligne de la table pour chaque ligne de l'autre">${end("M1 6H20M14 1V11")}une</span>
+        ${layout.pilled.size ? `<span class="legend-sep"></span><span title="Un référentiel joint par ${PILL_USERS} tables ou plus : son nom sous chacune d'elles, `
+          + `sa boîte sous la carte"><b class="refs-key">nom</b>référentiel</span>` : ""}</div>
       <div class="map-mini" id="map-mini" hidden></div>
       <button class="map-expand" type="button" id="map-expand" aria-label="${big ? "Réduire la carte" : "Agrandir la carte"}" title="${big ? "Réduire (Échap)" : "Agrandir la carte"}">`
       + `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">${expand}</svg></button>

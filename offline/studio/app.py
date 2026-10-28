@@ -546,12 +546,16 @@ def _update_relations(db: str, version: str, change) -> None:
 
 @app.get("/api/db/{db}/relations")
 def relations(db: str):
-    """The Relations screen: the relations with their evidence, the ignored ones, the map of the tables."""
+    """The Relations screen: the relations with their evidence, the ignored ones, the map of the tables, and the
+    tables typed as references (the map writes them in pills on the tables joining them, not as boxes)."""
     _db_config(db)
     listing = _listing(db)
-    view = relations_view(listing["tables"], load_relations_file(db), load_profile(db))
+    profile = load_profile(db)
+    view = relations_view(listing["tables"], load_relations_file(db), profile)
     columns = {table: [c["name"] for c in cols] for table, cols in listing["columns"].items()}
-    return {**view, "columns": columns, "version": _relations_version(db)}
+    types = _table_types(db, listing, profile, load_semantics(db), load_fk_relations(db))
+    references = [t for t in listing["tables"] if types[t]["type"] == "reference"]
+    return {**view, "columns": columns, "references": references, "version": _relations_version(db)}
 
 
 @app.get("/api/db/{db}/relations/path")
