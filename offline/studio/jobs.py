@@ -50,6 +50,8 @@ PHASES   = (("] Built: ", "documents"), (" schemas to Chroma.", "values"))
 QUESTION = re.compile(r"^\[(?P<n>\d+)/(?P<total>\d+)\] ")
 # A table described again (semantics --fresh): the descriptions the LLM changed, the ones corrected by hand kept
 REWRITTEN = re.compile(r"\] \S+: (?P<rewritten>\d+) description\(s\) rewritten, to read again(?:; (?P<kept>\d+) corrected by hand kept)?$")
+# The columns the LLM described without being able to tell their meaning or unit, to state by hand
+UNCLEAR   = re.compile(r"\] (?P<unclear>\d+) column description\(s\) unclear, to state by hand$")
 # Lines of offline/query_cancel.py on a stop
 CANCELLED     = "the running query is cancelled on the cluster"
 NOT_CANCELLED = "the running query could not be cancelled"
@@ -85,6 +87,7 @@ class Job:
     progress: list[int] | None = None                         # eval: [question, questions]
     rewritten: int = 0                                        # semantics --fresh: descriptions the LLM changed
     kept: int = 0                                             # ... and the ones corrected by hand it kept
+    unclear: int = 0                                          # semantics: columns described, their meaning unclear
     detected: dict = field(default_factory=lambda: {"formats": 0, "empty": 0, "personal": 0})   # profile: summed
     values_kept: int = 0                                      # index: tables whose values were kept (data unchanged)
     embedded: list[int] | None = None                         # index: [documents embedded, documents], when not all
@@ -122,6 +125,8 @@ class Job:
         elif described := REWRITTEN.search(message):
             self.rewritten += int(described["rewritten"])
             self.kept      += int(described["kept"] or 0)
+        elif doubted := UNCLEAR.search(message):
+            self.unclear += int(doubted["unclear"])
         elif failed := FAILED.search(message):
             self.failed.append(failed["table"])
         elif CHECKING in message:
@@ -160,7 +165,7 @@ class Job:
             "stopped_at": self.stopped_at, "cancel": self.cancel,
             "current": self.current, "current_since": self.current_since, "done": self.done, "failed": self.failed,
             "started_tables": self.started_tables, "checked": self.checked, "phase": self.phase, "progress": self.progress,
-            "rewritten": self.rewritten, "kept": self.kept,
+            "rewritten": self.rewritten, "kept": self.kept, "unclear": self.unclear,
             "detected": self.detected, "to_check": self.to_check, "added": self.added,
             "values_kept": self.values_kept, "embedded": self.embedded,
             "lines": self.lines[start:], "next_line": self.first_line + len(self.lines),

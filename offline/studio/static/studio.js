@@ -218,6 +218,7 @@ function renderStep() {
   $("list-name").textContent = metrics ? "Métrique" : "Table";
   $("list-status").textContent = metrics || ui.step === "scope" ? "État" : ui.step === "index" ? "Index" : "Statut";
   $("filters").querySelector('[data-filter="review"]').hidden = ui.step !== "semantics";
+  $("filters").querySelector('[data-filter="unclear"]').hidden = ui.step !== "semantics" || !ui.data?.tables.some((t) => t.unclear);
   $("filters").querySelector('[data-filter="noread"]').hidden = ui.step !== "profile" || !ui.data?.tables.some((t) => t.read_warn);
   $("type-filter-wrap").hidden = ui.step !== "profile";
   $("back-to-list").textContent = metrics ? "← Métriques" : "← Tables";
@@ -360,15 +361,17 @@ function renderHeader() {
     metrics: ui.met ? ui.met.counts.check + ui.met.counts.error : 0,
     index: ui.idx ? ui.idx.counts.changed + ui.idx.counts.missing : 0 }[STEPS[ui.step].key];
   const review = ui.data.tables.filter((t) => t.rewritten).length;
+  const unclear = ui.data.tables.filter((t) => t.unclear).length;
   const noread = ui.data.tables.filter((t) => t.read_warn).length;
   const all = ui.step === "metrics" ? ui.met?.metrics.length ?? 0 : ui.step === "scope" ? ui.scope?.tables.length ?? 0 : s.tables;
-  const counts = { all, todo, review, noread };
-  const labels = { all: "Toutes", todo: STEPS[ui.step].todo, review: "À relire", noread: "Sans mode" };
+  const counts = { all, todo, review, unclear, noread };
+  const labels = { all: "Toutes", todo: STEPS[ui.step].todo, review: "À relire", unclear: "À préciser", noread: "Sans mode" };
   $("filters").querySelector('[data-filter="noread"]').hidden = ui.step !== "profile" || !noread;
+  $("filters").querySelector('[data-filter="unclear"]').hidden = ui.step !== "semantics" || !unclear;
   const noReview = ui.step === "metrics" && !todo;   // no metric to review: no empty filter
   $("filters").querySelector('[data-filter="todo"]').hidden = noReview;
-  // the last one given a mode, or reviewed: back to every row, not an empty list
-  if ((ui.filter === "noread" && !noread) || (ui.filter === "todo" && noReview)) {
+  // the last one given a mode, stated or reviewed: back to every row, not an empty list
+  if ((ui.filter === "noread" && !noread) || (ui.filter === "unclear" && !unclear) || (ui.filter === "todo" && noReview)) {
     ui.filter = "all";
     [...$("filters").children].forEach((c) => c.classList.toggle("on", c.dataset.filter === "all"));
   }
@@ -412,6 +415,7 @@ function statusPill(table) {
   }
   if (status === "none") return '<span class="pill todo">à décrire</span>';
   if (status === "partial") return `<span class="pill decide" title="Colonnes ajoutées depuis la dernière description">${table.undescribed} col. à décrire</span>`;
+  if (table.unclear) return `<span class="pill decide" title="Colonnes dont l'IA n'a pas su dire le sens ou l'unité : à préciser par toi">${fmt.format(table.unclear)} à préciser</span>`;
   if (table.rewritten) return `<span class="pill decide" title="Descriptions réécrites par l'IA, à relire">${fmt.format(table.rewritten)} à relire</span>`;
   return '<span class="pill done">décrite</span>';
 }
@@ -432,7 +436,8 @@ function visibleRows() {
   }
   const type = ui.step === "profile" ? $("type-filter").value : "";   // the type chosen in the list of the Profilage tab
   const todo = indexScreen() ? (t) => ["changed", "missing"].includes(indexStatus(t.name)) : (t) => t.status[key] !== "done";
-  const shown = ui.filter === "review" ? (t) => t.rewritten > 0 : ui.filter === "noread" ? (t) => t.read_warn : todo;
+  const shown = ui.filter === "review" ? (t) => t.rewritten > 0 : ui.filter === "unclear" ? (t) => t.unclear > 0
+    : ui.filter === "noread" ? (t) => t.read_warn : todo;
   return (ui.data?.tables || []).filter((t) => (!q || t.name.toLowerCase().includes(q)) && (ui.filter === "all" || shown(t))
     && (!type || (t.type || "none") === type));
 }
@@ -868,6 +873,7 @@ function semanticsFigures(d) {
   const hidden = c.columns - c.visible;
   return [`${fmt.format(c.described)}/${plural(c.visible, "colonne")} décrite${c.visible > 1 ? "s" : ""}`,
     hidden ? `${fmt.format(hidden)} cachée${hidden > 1 ? "s" : ""}` : null,
+    c.unclear ? `${fmt.format(c.unclear)} à préciser` : null,
     c.rewritten ? `${fmt.format(c.rewritten)} à relire` : null,
     c.categorical ? `${fmt.format(c.categorical)} catégorielle${c.categorical > 1 ? "s" : ""}` : "aucune catégorielle",
     c.edited ? `${fmt.format(c.edited)} corrigée${c.edited > 1 ? "s" : ""} par toi` : null].filter(Boolean).join(" · ");
@@ -895,13 +901,18 @@ const withOrigin = (kind, html, title) => `<span class="origin-item">${originMar
 // The legend of the tabs that show origins, in the footer (the marks say it on hover too)
 const ORIGIN_LEGEND = `<span>Origine :</span>${["data", "ai", "you"].map((kind) =>
   `<span class="${kind}">${originMark(kind)}${ORIGIN[kind].says}</span>`).join("")}`
-  + '<span class="review"><span class="todo-dot"></span>à relire</span>';
+  + '<span class="review"><span class="todo-dot"></span>à relire</span>'
+  + '<span class="unclear"><span class="unclear-mark" aria-hidden="true">?</span>à préciser</span>';
 const ORIGIN_STEPS = ["profile", "semantics", "relations", "metrics"];
 
 // The marks of a description (column: its name, "" for the table): rewritten by the IA (an amber dot, to read
 // again), written by the IA or corrected by you (kept when the table is described again), none while it is empty;
 // toggled as it is saved
 const rewrittenDot = (column, on) => `<span class="todo-dot" data-dot="${esc(column)}" title="Réécrite par l'IA par-dessus ton texte : à relire" ${on ? "" : "hidden"}></span>`;
+// A column whose meaning or unit the IA could not tell: a button, pressed it keeps the description as it is (a draft
+// field, written by « Enregistrer »); a correction of its text states it too
+const UNCLEAR_SAYS = "À préciser : l'IA n'a pas su dire le sens ou l'unité de cette colonne. Écris-le, ou clique si la description te convient telle quelle";
+const unclearMark = (column) => `<button type="button" class="unclear-mark" data-unclear="${esc(column)}" title="${UNCLEAR_SAYS}" aria-label="${UNCLEAR_SAYS}">?</button>`;
 const descriptionMarks = (column, rewritten, edited, text) => rewrittenDot(column, rewritten)
   + originMark("ai", "Rédigée par l'IA", `data-ai="${esc(column)}" ${edited || !text ? "hidden" : ""}`)
   + originMark("you", "Corrigée par toi : gardée quand l'IA redécrit", `data-hand="${esc(column)}" ${edited && text ? "" : "hidden"}`);
@@ -930,7 +941,7 @@ function renderSemantics(d, el, message) {
     return `<div class="sline" data-draft-row="${esc(c.column)}">
       <span class="cell">${esc(c.column)}${key}</span>
       <span class="cell mono" title="${esc(c.type || "")}">${esc((c.type || "—").toLowerCase())}</span>
-      <span class="desc-cell">${descriptionMarks(c.column, c.rewritten, c.edited, c.description)}<textarea class="edit" rows="1" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(value(`column:${c.column}`, c.description))}</textarea></span>
+      <span class="desc-cell">${c.unclear ? unclearMark(c.column) : ""}${descriptionMarks(c.column, c.rewritten, c.edited, c.description)}<textarea class="edit" rows="1" data-column="${esc(c.column)}" placeholder="Ajouter une description…" aria-label="Description de ${esc(c.column)}">${esc(value(`column:${c.column}`, c.description))}</textarea></span>
       <label class="switch-cell">${values}<input type="checkbox" class="switch" data-column="${esc(c.column)}" ${value(`categorical:${c.column}`, c.categorical) ? "checked" : ""} aria-label="${esc(c.column)} catégorielle"></label>
     </div>`;
   }).join("");
@@ -969,6 +980,10 @@ function renderSemantics(d, el, message) {
   });
   el.querySelectorAll("input.switch").forEach((box) => box.addEventListener("change", () => {
     change(`categorical:${box.dataset.column}`, box.checked, columns.get(box.dataset.column).categorical);
+  }));
+  el.querySelectorAll("button.unclear-mark").forEach((mark) => mark.addEventListener("click", () => {
+    const key = `unclear:${mark.dataset.unclear}`;
+    change(key, key in draftFields("semantics", d.name), true);
   }));
   bindDraftBar();
 }
@@ -2478,7 +2493,15 @@ function showDraft() {
   el.classList.toggle("has-draft", n > 0);   // the bar sticks to the bottom of the screen, past the card
   el.querySelectorAll("[data-draft]").forEach((field) => field.classList.toggle("modified", field.dataset.draft in fields));
   el.querySelectorAll("[data-draft-row]").forEach((row) => {
-    row.classList.toggle("modified", `column:${row.dataset.draftRow}` in fields || `categorical:${row.dataset.draftRow}` in fields);
+    row.classList.toggle("modified", ["column", "categorical", "unclear"].some((f) => `${f}:${row.dataset.draftRow}` in fields));
+  });
+  el.querySelectorAll("button.unclear-mark").forEach((mark) => {
+    const written = `column:${mark.dataset.unclear}` in fields, kept = `unclear:${mark.dataset.unclear}` in fields;
+    mark.classList.toggle("stated", written || kept);
+    mark.disabled = written;
+    mark.setAttribute("aria-pressed", String(kept));
+    mark.title = written ? "Ta correction la sort de « à préciser » à l'enregistrement"
+      : kept ? "Gardée telle quelle : sort de « à préciser » à l'enregistrement. Clique pour annuler" : UNCLEAR_SAYS;
   });
   el.querySelectorAll("[data-refused]").forEach((note) => {
     note.hidden = error?.field !== note.dataset.refused;
@@ -3982,10 +4005,10 @@ function pipelineSteps(base) {
         none: "Aucun périmètre choisi : toutes les tables, celles qui arriveront aussi" }[sc.origin] },
     { key: "profile", state: s.profiled === s.tables ? "done" : s.profiled ? "partial" : "todo",
       count: `${fmt.format(s.profiled)}/${fmt.format(s.tables)}`, tip: `${fmt.format(s.profiled)} tables profilées sur ${fmt.format(s.tables)}` },
-    { key: "semantics", state: !undescribed && !s.partial && !s.rewritten ? "done" : s.described ? "partial" : "todo",
+    { key: "semantics", state: !undescribed && !s.partial && !s.rewritten && !s.unclear ? "done" : s.described ? "partial" : "todo",
       count: `${fmt.format(s.described)}/${fmt.format(s.tables)}`,
       tip: `${fmt.format(s.described)} tables décrites sur ${fmt.format(s.tables)}`
-        + (s.rewritten ? `, ${fmt.format(s.rewritten)} à relire` : "") + (s.partial ? `, ${fmt.format(s.partial)} à compléter` : "") },
+        + (s.unclear ? `, ${fmt.format(s.unclear)} à préciser` : "") + (s.rewritten ? `, ${fmt.format(s.rewritten)} à relire` : "") + (s.partial ? `, ${fmt.format(s.partial)} à compléter` : "") },
     { key: "relations", state: s.relations || s.tables < 2 ? "done" : "todo", count: s.relations ? fmt.format(s.relations) : "—",
       tip: s.relations ? `${plural(s.relations, "jointure")}${s.isolated ? `, ${plural(s.isolated, "table")} sans jointure` : ""}` : "Pas encore cherchées" },
     { key: "metrics", state: errors.length ? "bad" : s.metrics ? "done" : "todo",
@@ -4019,6 +4042,7 @@ function nextStep(base, steps) {
   if (step.key === "semantics") {
     const undescribed = s.tables - s.described;
     return undescribed ? next(`Décrire ${plural(undescribed, "table")}`, "l'agent n'en aurait que la structure brute.", "Ouvrir les descriptions")
+      : s.unclear ? next(`Préciser ${plural(s.unclear, "table")}`, "l'IA n'a pas su dire le sens ou l'unité de certaines colonnes.", "Ouvrir les descriptions")
       : s.rewritten ? next(`Relire ${plural(s.rewritten, "table")}`, "l'IA a réécrit des descriptions.", "Ouvrir les descriptions")
       : next(`Compléter ${plural(s.partial, "table")}`, "des colonnes sont arrivées depuis leur description.", "Ouvrir les descriptions");
   }
@@ -4273,6 +4297,7 @@ function guideStep(key, base, p) {
     body = progress(s.described - s.partial, s.tables, "tables décrites") + done
       + (n ? `<div class="guide-action">${action(n > 1 ? `Décrire les ${fmt.format(n)} manquantes` : "Décrire la manquante", "semantics",
         "Quelques secondes d'IA par table. Les descriptions corrigées par toi ne sont pas touchées.")}</div>` : "")
+      + (s.unclear ? `<p class="guide-note">${plural(s.unclear, "table")} ${s.unclear > 1 ? "ont" : "a"} des colonnes dont l'IA n'a pas su dire le sens ou l'unité, à préciser dans l'onglet Descriptions.</p>` : "")
       + (s.rewritten ? `<p class="guide-note">${plural(s.rewritten, "table")} ${s.rewritten > 1 ? "ont" : "a"} des descriptions réécrites par l'IA, à relire dans l'onglet Descriptions.</p>` : "")
       + list("À décrire", todo.map((t) => ({ name: t.name, size: size(t),
         pill: t.status.semantics === "none" ? '<span class="pill todo">à décrire</span>' : '<span class="pill decide">à compléter</span>' })));
@@ -4560,15 +4585,16 @@ function semanticsJobTitle(job, now) {
   if (job.stopped) return ["Description arrêtée · rien n'est écrit : tables.yaml n'est mis à jour qu'à la fin", "stopped"];
   if (job.returncode) return ["Échec de la description · voir les logs", "failed"];
   if (!sent) return ["Rien à décrire : chaque table a déjà ses descriptions", ""];
+  const unclear = job.unclear ? ` · <b>${plural(job.unclear, "colonne")} à préciser</b>` : "";
   if (job.command.includes("--fresh")) {
     // Described again: what the LLM changed, to read again, and the corrections made by hand it kept
     const which = sent > 2 ? plural(sent, "table") : job.started_tables.map(esc).join(", ");
     const changed = job.rewritten ? `${plural(job.rewritten, "description")} ${job.rewritten > 1 ? "réécrites" : "réécrite"}, à relire`
       : "aucune description changée";
     const kept = job.kept ? ` · ${job.kept > 1 ? `tes ${fmt.format(job.kept)} corrections gardées` : "ta correction gardée"}` : "";
-    return [`Description terminée · ${which} · <b>${changed}</b>${kept}`, ""];
+    return [`Description terminée · ${which} · <b>${changed}</b>${kept}${unclear}`, ""];
   }
-  return [`Description terminée · ${plural(sent, "table")} ${sent > 1 ? "décrites" : "décrite"} · à relire`, ""];
+  return [`Description terminée · ${plural(sent, "table")} ${sent > 1 ? "décrites" : "décrite"} · à relire${unclear}`, ""];
 }
 
 // A relations run: the measured ones, the LLM (phase llm), then the relations without evidence checked on the data

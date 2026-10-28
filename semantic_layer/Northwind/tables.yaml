@@ -115,13 +115,14 @@ orders:
     requireddate: Date the order is required to be delivered.
     shippeddate: Date the order was actually shipped.
     shipvia: Identifier of the shipping company used.
-    freight: 'UNCLEAR: shipping cost, currency not stated.'
+    freight: Shipping cost, currency not stated.
     shipname: Name of the recipient at the shipping address.
     shipaddress: Street address for delivery.
     shipcity: City for delivery.
     shipregion: Region or state for delivery.
     shippostalcode: Postal code for delivery.
     shipcountry: Country for delivery.
+  unclear_columns: [freight]
 
 products:
   description: One row per product available for sale, including pricing, inventory levels, and supplier information.

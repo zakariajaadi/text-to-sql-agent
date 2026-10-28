@@ -137,10 +137,10 @@ def test_table_rows():
 def test_table_rows_count_the_corrections_and_the_texts_to_read_again():
     semantics = {"agence": {"description": "Agences", "columns": {"code": "Code.", "ville": "Ville."},
                             "exclude_columns": ["fax"], "edited_description": True, "edited_columns": ["code"],
-                            "rewritten_columns": ["ville", "fax"]}}
+                            "rewritten_columns": ["ville", "fax"], "unclear_columns": ["ville", "fax"]}}
     row = table_rows(["agence"], {"agence": ["code", "ville", "fax"]}, {}, semantics, [], {}, personal=False)[0]
     # a column hidden from the agent is not counted
-    assert (row["edited"], row["rewritten"], row["status"]["semantics"]) == (2, 1, "done")
+    assert (row["edited"], row["rewritten"], row["unclear"], row["status"]["semantics"]) == (2, 1, 1, "done")
 
 
 DB_COLUMNS = [{"name": "id_dossier", "type": "BIGINT"}, {"name": "date_deblocage", "type": "STRING"},
@@ -251,6 +251,13 @@ def test_job_counts_the_descriptions_rewritten_and_kept():
                     "[awb] b: 3 description(s) rewritten, to read again"):
         job.add_line(f"2026-10-24 10:00:01 | INFO     | offline.semantic_gen.tables:generate:160 - {message}")
     assert (job.to_dict()["rewritten"], job.to_dict()["kept"]) == (15, 2)
+
+
+def test_job_counts_the_columns_unclear():
+    job = Job(id=1, db="awb", step="semantics", tables=["a"], command=[])
+    job.add_line("2026-10-24 10:00:01 | INFO     | offline.semantic_gen.tables:generate:215 - "
+                 "[awb] 4 column description(s) unclear, to state by hand")
+    assert job.to_dict()["unclear"] == 4
 
 
 def test_job_counts_the_tables_sent_to_the_llm():
@@ -441,7 +448,8 @@ def test_semantics_detail():
     assert (lines["agence"]["distinct"], lines["agence"]["sampled"], lines["agence"]["categorical"]) == (412, True, False)
     assert lines["statut"]["categorical"] and lines["commentaire"]["excluded"]
     # the excluded column is not counted: the agent does not see it
-    assert detail["counts"] == {"columns": 4, "described": 2, "visible": 3, "categorical": 1, "edited": 0, "rewritten": 0}
+    assert detail["counts"] == {"columns": 4, "described": 2, "visible": 3, "categorical": 1,
+                                "edited": 0, "rewritten": 0, "unclear": 0}
 
 
 def test_edit_semantics():
@@ -475,6 +483,23 @@ def test_a_description_corrected_is_kept_and_read():
     assert "edited_columns" not in edit_semantics(ENTRY, "categorical", True, "statut")
 
 
+def test_an_unclear_description_is_stated_or_kept_as_it_is():
+    order = [c["name"] for c in SEM_COLUMNS]
+    entry = {**ENTRY, "unclear_columns": ["id_dossier", "statut"]}
+    # corrected: no longer unclear, the other one still is
+    corrected = edit_semantics(entry, "column", "État du dossier : A = accordé, R = refusé.", "statut")
+    assert (corrected["unclear_columns"], corrected["edited_columns"]) == (["id_dossier"], ["statut"])
+    # kept as it is: no longer unclear, its text untouched and not a correction
+    kept = edit_semantics(corrected, "unclear", False, "id_dossier", order)
+    assert "unclear_columns" not in kept and kept["columns"]["id_dossier"] == "Numéro du dossier."
+    assert kept["edited_columns"] == ["statut"]
+    assert edit_semantics(kept, "unclear", True, "agence", order)["unclear_columns"] == ["agence"]
+    # read is for the texts the LLM rewrote: an unclear one stays to state
+    assert edit_semantics(entry, "read", None)["unclear_columns"] == ["id_dossier", "statut"]
+    lines = {c["column"]: c for c in semantics_detail("dossier", entry, SEM_FACTS, SEM_COLUMNS)["columns"]}
+    assert (lines["statut"]["unclear"], lines["agence"]["unclear"]) == (True, False)
+
+
 def test_semantics_detail_marks_each_description():
     entry = {**ENTRY, "edited_columns": ["statut"], "rewritten_description": True, "rewritten_columns": ["id_dossier"]}
     detail = semantics_detail("dossier", entry, SEM_FACTS, SEM_COLUMNS)
@@ -500,6 +525,18 @@ def test_a_description_edited_from_the_page(client, tmp_path):
     assert edit({"field": "description", "value": "Les dossiers de prêt."},
                 {"field": "column", "column": "inconnue", "value": "x"}).status_code == 400
     assert yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]["description"] == "Dossiers"
+
+
+def test_an_unclear_description_kept_from_the_page(client, tmp_path):
+    (tmp_path / "awb" / "tables.yaml").write_text(yaml.safe_dump({"dossier": {
+        "description": "Dossiers", "columns": {"montant": "Montant, devise non précisée."}, "unclear_columns": ["montant"]}}))
+    detail = client.get("/api/db/awb/tables/dossier/semantics").json()
+    assert detail["counts"]["unclear"] == 1
+    detail = client.post("/api/db/awb/tables/dossier/semantics", json={
+        "changes": [{"field": "unclear", "column": "montant", "value": False}], "version": detail["version"]}).json()
+    assert detail["counts"]["unclear"] == 0
+    written = yaml.safe_load((tmp_path / "awb" / "tables.yaml").read_text())["dossier"]
+    assert "unclear_columns" not in written and written["columns"]["montant"] == "Montant, devise non précisée."
 
 
 def test_the_type_and_the_date_chosen_in_the_contenu_card(client, tmp_path):

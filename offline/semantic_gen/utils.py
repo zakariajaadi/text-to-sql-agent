@@ -114,6 +114,8 @@ SEMANTICS_HEADER = """\
 #                          table is described again (--fresh), unless --replace-edited
 #   rewritten_description, rewritten_columns : descriptions the LLM wrote again over another text
 #                          (--fresh), to read again; the studio drops them once read
+#   unclear_columns      : columns whose meaning or unit the LLM could not tell, to state by hand
+#                          (« à préciser » in the studio); a correction drops them
 
 """
 
@@ -121,7 +123,7 @@ SEMANTICS_HEADER = """\
 SEMANTICS_KEY_ORDER = [
     "description", "data_as_of", "table_type", "read_mode", "key_columns", "partition_column", "version_column",
     "categorical_columns", "formats", "keep_as_text", "exclude_columns", "keep_columns", "columns",
-    "edited_description", "edited_columns", "rewritten_description", "rewritten_columns",
+    "edited_description", "edited_columns", "rewritten_description", "rewritten_columns", "unclear_columns",
 ]
 
 

@@ -320,7 +320,7 @@ def table_semantics(db: str, table: str):
 
 
 class SemanticsChange(BaseModel):
-    field: Literal["description", "column", "categorical", "read"]
+    field: Literal["description", "column", "categorical", "unclear", "read"]
     value: str | bool | None = None
     column: str | None = None
 
@@ -333,8 +333,8 @@ class SemanticsEdit(BaseModel):
 @app.post("/api/db/{db}/tables/{table}/semantics")
 def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
     """
-    The draft of the Descriptions card saved (the description of the table, of its columns, categorical), written
-    at once or not at all; or the descriptions the LLM rewrote marked read.
+    The draft of the Descriptions card saved (the description of the table, of its columns, categorical, unclear),
+    written at once or not at all; or the descriptions the LLM rewrote marked read.
     """
     _db_config(db)
     listing = _listing(db)
@@ -342,7 +342,7 @@ def edit_table_semantics(db: str, table: str, request: SemanticsEdit):
         raise HTTPException(404, f"Table inconnue : {table}")
     order = [c["name"] for c in listing["columns"].get(table) or []]
     for change in request.changes:
-        if change.field in ("column", "categorical") and order and change.column not in order:
+        if change.field in ("column", "categorical", "unclear") and order and change.column not in order:
             raise HTTPException(400, f"Colonne inconnue : {table}.{change.column}")
 
     def edit(entry: dict | None) -> dict:

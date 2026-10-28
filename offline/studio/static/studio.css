@@ -446,6 +446,15 @@ body[data-view="home"] .origin-legend, body[data-view="wizard"] .origin-legend {
 .origin-legend > .you { color: var(--ink); }
 .origin-legend > .review { color: var(--warn-ink); }
 .origin-legend .todo-dot { margin: 0; }
+.origin-legend > .unclear { color: var(--accent-ink); }
+.origin-legend .unclear-mark { cursor: default; box-shadow: none; }
+/* A column whose meaning the IA could not tell: pressed, its description kept as it is (faded, until saved) */
+.unclear-mark { flex: none; width: 14px; height: 14px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: var(--accent-soft); color: var(--accent-ink); font: 600 10px/14px var(--font-sans); text-align: center; }
+.unclear-mark:hover { box-shadow: inset 0 0 0 1px currentColor; }
+.unclear-mark.stated { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.unclear-mark:disabled { cursor: default; }
+.desc-cell > .unclear-mark { margin-top: 4px; }
 .todo-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 6px; vertical-align: 1px; }
 /* A description and its marks before it */
 .desc-cell { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }

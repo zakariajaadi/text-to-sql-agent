@@ -17,6 +17,7 @@ class FKRelations(BaseModel):
 class ColumnSemantics(BaseModel):
     name:        str  = Field(description="Column name, spelled exactly as in the DDL")
     description: str  = Field(description="Business meaning of the column, in one short sentence")
+    unclear:     bool = Field(description="True if its meaning, or a unit that matters, cannot be told from its name and sample values")
     categorical: bool = Field(description="True if the column holds labels from a closed set a user would filter on (country, status, fare class)")
 
 

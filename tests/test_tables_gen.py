@@ -1,5 +1,6 @@
 """Semantics generator (offline/semantic_gen/tables.py): only some tables, described again with --fresh,
-the descriptions corrected by hand kept and the ones the LLM changed marked to read again."""
+the descriptions corrected by hand kept, the ones the LLM changed marked to read again and the ones it could
+not tell listed unclear."""
 
 import sqlite3
 from types import SimpleNamespace
@@ -23,8 +24,8 @@ class FakeLLM:
         table = inputs["ddl"].split("`")[1] if "`" in inputs["ddl"] else inputs["ddl"].split()[2].strip('"')
         self.asked.append(table)
         return TableSemantics(description=f"New {table}.", columns=[
-            ColumnSemantics(name="id", description="New id.", categorical=False),
-            ColumnSemantics(name="label", description="New label.", categorical=True),
+            ColumnSemantics(name="id", description="New id.", unclear=False, categorical=False),
+            ColumnSemantics(name="label", description="New label.", unclear=True, categorical=True),
         ])
 
 
@@ -101,6 +102,26 @@ def test_complete_describes_only_the_columns_without_a_description(llm):
     # the column was not new to the table: the reviewed categorical list stays as it is
     assert semantics["client"]["categorical_columns"] == []
     assert semantics["produit"]["columns"] == {"id": "Id."}   # not asked for
+
+
+def test_unclear_columns_are_listed_until_written_again(llm):
+    tables.generate_table_semantics("shop", tables=["client"])
+    assert lib.semantics.load_semantics("shop")["client"]["unclear_columns"] == ["label"]
+
+    # completed: the column written again is not unclear this time, the other one still is
+    semantics = lib.semantics.load_semantics("shop")
+    semantics["client"]["columns"]["id"] = ""
+    lib.semantics.tables_path("shop").write_text(dump_table_semantics(semantics))
+    tables.generate_table_semantics("shop", tables=["client"])
+    assert lib.semantics.load_semantics("shop")["client"]["unclear_columns"] == ["label"]
+
+    # described again with the unclear one corrected by hand: kept, no longer unclear
+    semantics = lib.semantics.load_semantics("shop")
+    semantics["client"].update(edited_columns=["label"], columns={"id": "New id.", "label": "Label in euros."})
+    lib.semantics.tables_path("shop").write_text(dump_table_semantics(semantics))
+    tables.generate_table_semantics("shop", fresh=True, tables=["client"])
+    entry = lib.semantics.load_semantics("shop")["client"]
+    assert entry["columns"]["label"] == "Label in euros." and "unclear_columns" not in entry
 
 
 def test_an_unknown_table_stops(llm):

@@ -177,6 +177,7 @@ invoice_delta:
     billingstate: State or province for billing.
     billingcountry: Country for billing.
     billingpostalcode: Postal code for billing.
-    total: 'UNCLEAR: total invoice amount, currency not stated.'
+    total: Total invoice amount, currency not stated.
     time: Timestamp of the delta record creation.
     date_technique: Technical date associated with the delta processing.
+  unclear_columns: [total]

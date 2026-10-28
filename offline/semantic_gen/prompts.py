@@ -25,10 +25,12 @@ Describe the table and each of its columns, for an analyst writing SQL queries.
    order"). Never write "one row per X" unless the facts show one row per X.
 2. Column description: one short sentence on its business meaning.
 3. State units and currencies only when the column name or sample values make them
-   explicit (e.g. amount_eur, duration_ms). Otherwise, if a unit matters, use "UNCLEAR:".
+   explicit (e.g. amount_eur, duration_ms). Otherwise, if a unit matters, say it is not stated.
 4. When sample values reveal codes or formats, explain them (e.g. "A = active, C = cancelled").
 5. Do not describe joins: they are documented separately.
-6. Never invent. If a column's meaning is unclear, start its description with "UNCLEAR:".
+6. Never invent. Unclear: true when the column's meaning, or a unit that matters, cannot be told
+   from its name and sample values; then describe what you can and say what is missing.
+   False otherwise.
 7. Describe every column of the DDL, spelled exactly as in the DDL.
 8. Be concise: no filler like "The ..." and never paraphrase an explicit column name.
    If the name says it all (e.g. firstname, city), use a few words at most.
@@ -41,7 +43,7 @@ Describe the table and each of its columns, for an analyst writing SQL queries.
    lives in the referenced table. False also for names of people or companies, contact
    details (phone, fax, email, address), free text, dates, timestamps and amounts.
 10. Write the descriptions in {language}, the language users ask their questions in. Keep the
-   column names, the codes and the "UNCLEAR:" marker exactly as they are.
+   column names and the codes exactly as they are.
 
 ## EXAMPLE OUTPUT (style to imitate)
 description: One row per customer order, with its shipping and billing details.
@@ -51,7 +53,7 @@ columns:
   city: City.                                                         (categorical: true)
   cust_ref: Customer who placed the order.                            (categorical: false)
   st_cd: "Order status: A = active, C = cancelled, R = refunded."     (categorical: true)
-  amt_ttc: UNCLEAR: amount including tax, currency not stated.        (categorical: false)
+  amt_ttc: Amount including tax, currency not stated.                 (unclear: true, categorical: false)
 
 ## ROW FACTS
 {facts}

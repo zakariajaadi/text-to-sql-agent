@@ -45,15 +45,17 @@ semantics_chain = (
 
 REWRITTEN_KEYS = ("rewritten_description", "rewritten_columns")
 EDITED_KEYS    = ("edited_description", "edited_columns")
+UNCLEAR_KEY    = "unclear_columns"
 
 
 def kept_on_fresh(entry: dict, replace_edited: bool = False) -> dict:
     """
     What a table block keeps when it is described again (--fresh): its manual keys (formats,
     exclude_columns, data_as_of, read mode...) and the descriptions corrected by hand in the studio
-    (edited_description, edited_columns), unless they are replaced too.
+    (edited_description, edited_columns), unless they are replaced too. The marks of the texts the LLM
+    wrote (rewritten_*, unclear_columns) go with them.
     """
-    kept = {key: value for key, value in manual_semantics(entry).items() if key not in REWRITTEN_KEYS}
+    kept = {key: value for key, value in manual_semantics(entry).items() if key not in (*REWRITTEN_KEYS, UNCLEAR_KEY)}
     if replace_edited:
         return {key: value for key, value in kept.items() if key not in EDITED_KEYS}
     if entry.get("edited_description") and entry.get("description"):
@@ -96,7 +98,8 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     fresh: drop the generated content first (descriptions, categorical columns) and generate
     it again, keeping the manual keys (formats, exclude_columns, data_as_of, read mode...) and the
     descriptions corrected by hand in the studio (all replaced with replace_edited). The texts the
-    LLM changes are marked rewritten, for a human to read again.
+    LLM changes are marked rewritten, for a human to read again. The columns it wrote without being able to
+    tell their meaning or unit are listed in `unclear_columns`, for a human to state.
     tables: only these tables (the others left as they are); ValueError on an unknown one.
     """
     db         = db_registry[db_name]
@@ -155,7 +158,7 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
         generated = dict(executor.map(generate, todo))
 
     # 3. Merge — fill only what is missing
-    added = 0
+    added = unclear = 0
     for table, result in generated.items():
         entry = existing.setdefault(table, {})
         entry.setdefault("description", result.description)
@@ -172,10 +175,19 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
             entry["categorical_columns"] += [c for c in new_columns if c in flagged]
 
         described = {c.name: c.description for c in result.columns}
-        for column in missing:
-            if column in described:
-                entry["columns"][column] = described[column]
-                added += 1
+        doubted   = {c.name for c in result.columns if c.unclear}
+        written   = [c for c in missing if c in described]
+        for column in written:
+            entry["columns"][column] = described[column]
+            added += 1
+
+        # Unclear columns, in DDL order: the ones written now flagged by the LLM, the others as they were
+        flagged = {*(c for c in entry.get(UNCLEAR_KEY) or [] if c not in written), *(c for c in written if c in doubted)}
+        unclear += len(doubted & set(written))
+        if flagged:
+            entry[UNCLEAR_KEY] = [c for c in db_columns.get(table, []) if c in flagged]
+        else:
+            entry.pop(UNCLEAR_KEY, None)
 
     # Described again: what the LLM changed is to read again, what was corrected by hand is kept
     for table in generated.keys() & before.keys():
@@ -199,3 +211,5 @@ def generate_table_semantics(db_name: str, fresh: bool = False, tables: list[str
     temporary.replace(path)
 
     logger.info(f"[{db_name}] {len(todo)} table(s) described, {added} column description(s) added — review them.")
+    if unclear:
+        logger.info(f"[{db_name}] {unclear} column description(s) unclear, to state by hand")
