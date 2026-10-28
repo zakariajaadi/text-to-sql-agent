@@ -3295,11 +3295,10 @@ function cardViz(key, idx) {
     return `<div class="bars short lens" data-lens="values">${bars}</div><div class="viz-keys"><span data-kind="listed"><i class="sw listed"></i>dans les fiches <b class="roll">${fmt.format(total("listed"))}</b></span>`
       + `<span data-kind="searched"><i class="sw searched"></i>cherchées <b class="roll">${fmt.format(total("searched"))}</b></span></div>`;
   }
-  // the metrics, the refused ones first
-  const list = [...c.metrics].sort((a, b) => b.refused - a.refused), room = list.length > 4 ? 3 : 4;
-  return `<ul class="mlist">${list.slice(0, room).map((m) => `<li data-metric="${esc(m.name)}"><span class="m-dot${m.refused ? " bad" : ""}"></span>`
-    + `<span class="nm">${esc(m.name)}</span><span class="tb">${esc(m.tables.join(", "))}</span></li>`).join("")}`
-    + `${list.length > room ? `<li class="more">+ ${plural(list.length - room, "autre")}</li>` : ""}</ul>`;
+  // the metrics, the refused ones first, all of them: more than the card holds scroll (wireMetricList)
+  const list = [...c.metrics].sort((a, b) => b.refused - a.refused);
+  return `<ul class="mlist">${list.map((m) => `<li data-metric="${esc(m.name)}"><span class="m-dot${m.refused ? " bad" : ""}"></span>`
+    + `<span class="nm">${esc(m.name)}</span><span class="tb">${esc(m.tables.join(", "))}</span></li>`).join("")}</ul>`;
 }
 
 // The table whose sample rows the card draws when no table is under the pointer: the largest one with a few columns
@@ -3628,6 +3627,7 @@ function applyOvFocus() {
     const m = idx.cards.metrics.find((x) => x.name === li.dataset.metric);
     li.classList.toggle("on", Boolean(f) && (f.metric ? f.metric === m.name : m.tables.some((t) => set.has(t))));
   });
+  if (f && !f.metric) revealMetric(root);
   root.querySelectorAll(".cell-q").forEach((c) => c.classList.toggle("on", f?.q === Number(c.dataset.q)));
   const one = set.size === 1 ? idx.cards.tables.find((t) => set.has(t.name)) : null, grid = root.querySelector("[data-samples]");
   const shown = one || sampleTable(idx);
@@ -3640,6 +3640,56 @@ function applyOvFocus() {
     question.classList.toggle("on", Boolean(r));
   }
   ovNotes(idx, f, one);
+}
+
+// ── The list of the metrics, longer than its card: still under the pointer in its middle, it scrolls when the pointer
+// nears its top or bottom edge, faster nearer the edge, and with the wheel; no bar, a fade on the side that has more ──
+const MLIST_EDGE = 18, MLIST_SPEED = 360, MLIST_FADE = 14;   // px from an edge where it scrolls; px/s on the edge; px
+function wireMetricList(root) {
+  const box = root.querySelector(".mlist");
+  if (!box) return;
+  let x = 0, y = 0, inside = false, raf = 0, last = 0, pos = 0;
+  const fades = () => {
+    box.classList.toggle("more-up", box.scrollTop > 1);
+    box.classList.toggle("more-down", box.scrollTop < box.scrollHeight - box.clientHeight - 1);
+  };
+  // the push of the pointer: −1 on the top edge, 1 on the bottom one, 0 in the middle
+  const push = () => {
+    const r = box.getBoundingClientRect(), up = y - r.top, down = r.bottom - y;
+    return up < MLIST_EDGE ? -(1 - up / MLIST_EDGE) : down < MLIST_EDGE ? 1 - down / MLIST_EDGE : 0;
+  };
+  const step = (t) => {
+    const p = push(), max = box.scrollHeight - box.clientHeight;
+    if (!inside || !p || (p < 0 ? box.scrollTop <= 0 : box.scrollTop >= max - 1)) { raf = 0; return; }   // max: rounded
+    if (Math.abs(box.scrollTop - pos) > 2) pos = box.scrollTop;   // the wheel moved it meanwhile
+    pos = Math.min(max, Math.max(0, pos + Math.sign(p) * p * p * MLIST_SPEED * Math.min(Math.max(t - last, 0), 50) / 1000));
+    last = t;
+    box.scrollTop = pos;
+    raf = requestAnimationFrame(step);
+  };
+  box.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;   // a finger scrolls it itself
+    x = e.clientX; y = e.clientY; inside = true;
+    if (!raf && push()) { pos = box.scrollTop; last = performance.now(); raf = requestAnimationFrame(step); }
+  });
+  box.addEventListener("pointerleave", () => { inside = false; });
+  // the list moving under a still pointer: the metric now under it followed
+  box.addEventListener("scroll", () => {
+    fades();
+    const under = inside && document.elementFromPoint(x, y);
+    if (under) ovPointer({ target: under });
+  });
+  fades();
+}
+
+// The first metric of the tables followed elsewhere (a bar, a join, a question of the eval) brought into the list,
+// just under its top fade; left where it is when it shows already
+function revealMetric(root) {
+  const box = root.querySelector(".mlist"), li = box?.querySelector("li.on");
+  if (!li) return;
+  const top = li.offsetTop, bottom = top + li.offsetHeight;
+  if (top >= box.scrollTop + MLIST_FADE && bottom <= box.scrollTop + box.clientHeight - MLIST_FADE) return;
+  box.scrollTo({ top: top - MLIST_FADE, behavior: stillPage() ? "auto" : "smooth" });
 }
 
 // The legend of the values: the counts of the base, or of what the pointer follows, the kind it has none of faded
@@ -3713,6 +3763,7 @@ function renderIndex(el, message) {
   </div>`;
   const overview = el.querySelector(".overview");
   drawEvalChart(idx, mode);
+  wireMetricList(overview);
   applyOvFocus();
   placeLens(mode === "draw");   // after the focus: its arcs drawn once, from the left on another database
   rollFigures(el);
