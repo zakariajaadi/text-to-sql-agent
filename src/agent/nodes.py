@@ -189,9 +189,16 @@ def resolve_database(state: AgentState) -> dict:
     # Per-turn fields, reset at every new question
     resets = {
         "generated_query":     "",
+        "query_plan":          "",
         "validation_feedback": "",
+        "validation_error":    "",
+        "validation_check":    "",
         "matched_values":      {},
         "values_not_found":    False,
+        "result_row_count":    0,
+        "result_truncated":    False,
+        "result_columns":      [],
+        "result_rows":         [],
     }
 
     db_name = state.get("selected_db")
@@ -776,18 +783,25 @@ def format_answer(state: AgentState) -> dict:
     # Fetch query (empty if out of scope)
     query = state.get("generated_query") or ""
     
-    # Fetch query result ("No results" if no query was executed)
-    result = next(
-        (m.content for m in reversed(messages) if isinstance(m, ToolMessage)),
-        "No results."
-    ) if query else "No results."
+    # Result of the query run this turn (get_last_cycle): a previous turn's ToolMessage must never
+    # stand in for a query that did not run (retries exhausted, route_after_validation)
+    executed = next(
+        (m.content for m in reversed(get_last_cycle(messages)) if isinstance(m, ToolMessage)),
+        None,
+    ) if query else None
 
     # Give the formatter the row count, and tell it when sql_validator left rows unread (safety cap)
     results_label = "Results"
-    if query and state.get("result_truncated"):
-        results_label = f"Results (truncated: first {state['result_row_count']} rows only, the query returned more)"
-    elif query and "result_row_count" in state:
-        results_label = f"Results ({state['result_row_count']} rows)"
+    if query and executed is None:
+        result = f"Error: the query could not be executed. {state.get('validation_error', '')}".strip()
+    elif executed is None:
+        result = "No results."
+    else:
+        result = executed
+        if state.get("result_truncated"):
+            results_label = f"Results (truncated: first {state['result_row_count']} rows only, the query returned more)"
+        elif "result_row_count" in state:
+            results_label = f"Results ({state['result_row_count']} rows)"
 
     # Format answer
     response = fast_model.invoke([
