@@ -545,9 +545,13 @@ def sql_coder(state: AgentState) -> dict:
         schema=schema,
     )
 
-    # Build user message: plan + question + feedback if retry
+    # Build user message: plan + question, plus the validator's feedback on retry. The plan comes
+    # back on retry too — the strategy must survive the fix — but the error wins over it: the plan
+    # is sometimes what the failed query followed
     if feedback:
-        user_content = f"{feedback}\n\nOriginal question: {question}"
+        plan_section = (f"## EXECUTION PLAN (still applies, except where the error below says otherwise)\n"
+                        f"{plan}\n\n") if plan else ""
+        user_content = f"{plan_section}{feedback}\n\nOriginal question: {question}"
     elif plan:
         user_content = f"## EXECUTION PLAN\n{plan}\n\n## QUESTION\n{question}"
     else:
