@@ -13,6 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from loguru import logger
 from omegaconf import OmegaConf
+from sqlalchemy.pool import NullPool
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
@@ -117,9 +118,11 @@ class DatabaseConfig:
         if self.query_options:
             args["execution_options"] = {"cursor_configuration": dict(self.query_options)}
         if self.dialect == "impala":
-            # A connection left idle in the pool gets closed on the cluster side, and impyla can't reopen
-            # it over Kerberos (thrift_sasl: "Already open!"): one older than 5 minutes is replaced before use
-            args["pool_recycle"] = 300
+            # No pool: a pooled connection left idle gets closed on the cluster side (impyla can't
+            # reopen it over Kerberos — thrift_sasl: "Already open!"), and through Docker Desktop an
+            # idle connection killed remotely is suspected of wedging vpnkit for the whole container.
+            # Each query opens and closes its own connection; the Kerberos handshake costs ~0.2s
+            args["poolclass"] = NullPool
         return args
 
 @dataclass
