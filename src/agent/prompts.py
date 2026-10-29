@@ -175,7 +175,9 @@ needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregation
 
 # ── Section: clarification ─────────────────────────────────────────────────────
 # Used by: planner node, only when the database allows clarification (config, never the eval)
-# Inserted at {clarification_section} in PLANNER_PROMPT (empty string otherwise)
+# Inserted at {clarification_section} in PLANNER_PROMPT (empty string otherwise), built by
+# render_clarification (nodes.py): {criteria} is CLARIFICATION_CRITERIA with the database's
+# business metric catalog, empty when the database defines no metric
 
 CLARIFICATION_SECTION = """
 ## CLARIFICATION
@@ -188,7 +190,7 @@ Clarify when the choice changes the figures and the schema offers each reading:
 - a term that could mean two entities or two filters of the schema
 What the rules already settle (periods from "Data as of", read modes, listed values, the one
 obvious reading) is an Assumption for the SQL writer, never a clarification. At most 3 options.
-
+{criteria}
 ### Example
 Question: "Which are the best travel agencies?"
 Clarify: The best agencies by what? | total sales | number of bookings
@@ -196,6 +198,24 @@ Clarify: The best agencies by what? | total sales | number of bookings
 ### Example (one obvious reading: no clarification, the plan as usual)
 Question: "Which airports had the most delayed flights?"
 - Tables: [...]
+"""
+
+# The business metric catalog, as clarification criteria: a "best/top" option may offer a
+# metric even though its tables are not in the schema — the user's answer is merged into the
+# question, and the next turn's retrieval loads them (the metric's synonyms match its words).
+
+CLARIFICATION_CRITERIA = """
+### Business criteria
+The database also measures these business metrics. An option of a "best / top with no
+criterion" clarification may offer one that applies to the entity the question ranks, named
+by the quantity it measures in the language of the question (never its code name), even
+though its tables are not in the schema below: the follow-up turn loads them automatically.
+{catalog}
+
+### Example (a business criterion as an option)
+Question: "Which are the top passengers?"
+Business criteria held: - miles_flown: Total miles flown on the airline's flights.
+Clarify: The top passengers by what? | number of flights | miles flown
 """
 
 # ── Shared section: business metrics ──────────────────────────────────────────

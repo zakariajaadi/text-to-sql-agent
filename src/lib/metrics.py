@@ -131,6 +131,12 @@ def render_metric_catalog(metrics: dict[str, Metric]) -> str:
     ) or "None"
 
 
+def render_metric_criteria(metrics: dict[str, Metric]) -> str:
+    """Names and descriptions only, the criteria a clarification may offer (CLARIFICATION_CRITERIA):
+    no expressions or synonyms — the options name quantities, never compute them."""
+    return "\n".join(f"- {m.name}: {m.description}" for m in metrics.values())
+
+
 def render_metric_definitions(metrics: list[Metric]) -> str:
     """One line per selected metric, name = expression (default date), for METRICS_SECTION (agent/prompts.py)."""
     return "\n".join(

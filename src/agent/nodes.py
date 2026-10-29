@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent.guardrails import is_safe_query
 from agent.prompts import (
+    CLARIFICATION_CRITERIA,
     CLARIFICATION_SECTION,
     CONDENSE_QUESTION_PROMPT,
     DIALECT_RULES,
@@ -43,6 +44,7 @@ from lib.db_errors import is_unreachable
 from lib.metrics import (
     Metric,
     render_metric_catalog,
+    render_metric_criteria,
     render_metric_definitions,
 )
 from lib.semantics import add_matching_values, excluded_columns, load_semantics
@@ -485,6 +487,16 @@ def prune_columns(state: AgentState) -> dict:
 
     return {"retrieved_schema": "\n\n".join(pruned_schemas.values())}
 
+def render_clarification(db_metrics: dict[str, Metric]) -> str:
+    """
+    The planner's CLARIFICATION section: with the database's business metric catalog as
+    extra criteria when it defines metrics — a "best/top" option may offer one even though
+    its tables are not selected, the follow-up turn retrieves them.
+    """
+    criteria = CLARIFICATION_CRITERIA.format(catalog=render_metric_criteria(db_metrics)) if db_metrics else ""
+    return CLARIFICATION_SECTION.format(criteria=criteria)
+
+
 def planner(state: AgentState) -> dict:
     """
     LLM node — produces a structured execution plan for sql_coder.
@@ -504,7 +516,7 @@ def planner(state: AgentState) -> dict:
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
-            clarification_section=CLARIFICATION_SECTION if state.get("clarify") else "",
+            clarification_section=render_clarification(metrics_store[db_name]) if state.get("clarify") else "",
             metrics_section=render_metrics_section(get_selected_metrics(state)),
             values_section=render_values_section(state),
             schema=schema,

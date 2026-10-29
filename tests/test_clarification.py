@@ -12,8 +12,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent import nodes
-from agent.prompts import CLARIFICATION_SECTION
 from lib.messages import clarify_question
+from lib.metrics import Metric
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -58,7 +58,12 @@ def prompts(monkeypatch):
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala")))
     monkeypatch.setattr(nodes, "fast_model", SimpleNamespace(invoke=invoke))
     monkeypatch.setattr(nodes, "schema_store", {"bank": {}})
+    monkeypatch.setattr(nodes, "metrics_store", {"bank": {}})
     return sent
+
+
+SAVINGS = Metric(name="total_savings", description="Total savings held.", expr="SUM(savings.amount)",
+                 synonyms=[], time_dimension="", tables=["savings"], columns=[("savings", "amount")])
 
 
 STATE = {"selected_db": "bank", "messages": [HumanMessage("Encours des clients actifs ?")],
@@ -68,8 +73,20 @@ STATE = {"selected_db": "bank", "messages": [HumanMessage("Encours des clients a
 def test_the_clarification_section_enters_the_planner_prompt_only_when_asked(prompts):
     nodes.planner({**STATE, "clarify": True})
     nodes.planner(STATE)   # the eval never sets clarify: the section is absent
-    assert "## CLARIFICATION" in prompts[0] and CLARIFICATION_SECTION.strip() in prompts[0]
+    assert "## CLARIFICATION" in prompts[0] and "Clarify:" in prompts[0]
+    # no metric in the store: no criteria catalog either
+    assert "### Business criteria" not in prompts[0]
     assert "## CLARIFICATION" not in prompts[1] and "Clarify:" not in prompts[1]
+
+
+def test_the_metric_catalog_enters_the_clarification_as_criteria(prompts, monkeypatch):
+    monkeypatch.setattr(nodes, "metrics_store", {"bank": {"total_savings": SAVINGS}})
+    nodes.planner({**STATE, "clarify": True})
+    nodes.planner(STATE)   # without clarify, the metrics stay out of the planner prompt
+    assert "### Business criteria" in prompts[0]
+    assert "- total_savings: Total savings held." in prompts[0]
+    assert "SUM(savings.amount)" not in prompts[0]   # names and descriptions only, never expressions
+    assert "total_savings" not in prompts[1]
 
 
 def test_resolve_database_resets_the_clarification(monkeypatch):
