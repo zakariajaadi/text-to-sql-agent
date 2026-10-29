@@ -207,15 +207,22 @@ Question: "Which airports had the most delayed flights?"
 CLARIFICATION_CRITERIA = """
 ### Business criteria
 The database also measures these business metrics. An option of a "best / top with no
-criterion" clarification may offer one that applies to the entity the question ranks, named
-by the quantity it measures in the language of the question (never its code name), even
+criterion" clarification may offer one that applies to the entity the question ranks, even
 though its tables are not in the schema below: the follow-up turn loads them automatically.
+An option names the quantity measured in a few words, in the language of the question, never
+a code name or a description copied whole. Offer only quantities whose sense matches the
+question's superlative: a metric measuring a problem (unpaid amounts, incidents, losses) is
+a criterion for "worst" or "most risky", never for "best".
 {catalog}
 
-### Example (a business criterion as an option)
+### Example (business criteria as options)
 Question: "Which are the top passengers?"
-Business criteria held: - miles_flown: Total miles flown on the airline's flights.
+Business criteria held:
+- miles_flown: Total number of miles flown on the airline's flights over the last 12 months.
+- baggage_claims: Total compensation paid to the passenger for lost or damaged baggage.
 Clarify: The top passengers by what? | number of flights | miles flown
+→ "miles flown" says the quantity in two words, not the whole description; baggage_claims
+  measures a problem — a criterion for "worst passengers", never offered for "top".
 """
 
 # ── Shared section: business metrics ──────────────────────────────────────────
