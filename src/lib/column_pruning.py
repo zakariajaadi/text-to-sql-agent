@@ -9,7 +9,7 @@ render_table (lib/semantics.py):
 
     -- Table: customer_cdc
     -- Description: One row per change event captured for a customer record...
-    -- Joins: customer_cdc.customerid = customer.customerid
+    -- Joins: customer_cdc.customerid = customer.customerid (many customer_cdc per customer)
     -- Read mode: LIVE (key: customerid, version: time)
 
     CREATE TABLE `customer_cdc` (

@@ -201,6 +201,10 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 
 ## RULES
 - Take join conditions from the "-- Joins:" lines in the table headers. Never invent a join.
+- A join noted "(many A per B)" repeats each row of B once per matching row of A: through it,
+  a measure of B (an amount, a total, a quantity) is multiplied. Never SUM or AVG a column of
+  B through such a join: plan a two-level strategy where B's measure is read, or A aggregated,
+  in a subquery before the join. Counting B's entities stays right as COUNT(DISTINCT their id).
 - Join a table only to read or filter one of its columns. An identifier a table already holds
   is counted or grouped in that table: never join the table it refers to just to count it (the
   join adds nothing, and drops the rows whose identifier that table lacks).
@@ -309,6 +313,10 @@ You ONLY write SQL — you never execute it.
       SUM(b.seat_price * b.passenger_count) AS chiffre_affaires_total
 13. Filter only on what the question or the plan asks for: never add a filter of your own, on the
     product or offer a table is limited to, or to clean the data (non-null, non-empty, non-zero values).
+14. A join noted "(many A per B)" repeats each row of B once per matching row of A: never SUM or
+    AVG a column of B through that join — its values are multiplied. Aggregate in two levels (a
+    subquery reading B's measure, or aggregating A, before the join), as the plan states. Counting
+    B's entities stays COUNT(DISTINCT their id), as rule 12 says.
 
 ## {dialect} RULES
 {dialect_rules}

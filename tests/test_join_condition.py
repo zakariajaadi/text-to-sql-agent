@@ -47,7 +47,8 @@ def test_the_joins_line_holds_the_cast_and_pruning_keeps_the_key():
                        [("review.customerid", "customer.customerid")],
                        column_types=TYPES, dialect="impala")
 
-    assert "-- Joins: CAST(review.customerid AS BIGINT) = customer.customerid" in doc
+    # The cardinality note (from = N side): a measure of customer is never summed through this join
+    assert "-- Joins: CAST(review.customerid AS BIGINT) = customer.customerid (many review per customer)" in doc
     assert get_structural_columns("review", doc, query_tables={"review", "customer"}) == {"customerid"}
     # Read back from the other side too, the cast at the end of a decimal type
     line = "-- Joins: invoice.customerid = CAST(claim.customerid AS DECIMAL(10, 2))"

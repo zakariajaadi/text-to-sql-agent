@@ -361,7 +361,7 @@ def test_the_text_of_a_document_masks_the_data():
     text = document_text("invoice", trace, "hive")
     # what the agent reads, rendered by its own function
     assert text.splitlines()[:4] == ["-- Table: invoice", "-- Description: One row per purchase.", "-- Data as of: 2024-07-10",
-                                     "-- Joins: invoice.customerid = customer.customerid"]
+                                     "-- Joins: invoice.customerid = customer.customerid (many invoice per customer)"]
     assert "\t`total` STRING,  -- Amount. [stored as text: decimal number]" in text
     # the values listed in the document and the sample rows masked; the values searched only are not in it
     assert "\t`country` STRING  -- Values: ‹12 valeurs›" in text and "Values" not in text.split("`city`")[1].split("\n")[0]

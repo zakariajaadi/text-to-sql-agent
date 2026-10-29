@@ -59,6 +59,13 @@ def test_no_join_just_to_count_an_identifier(prompt):
     assert "Join a table only to read or filter one of its columns" in text
 
 
+@pytest.mark.parametrize("prompt", [PLANNER_PROMPT, SQL_CODER_PROMPT])
+def test_a_measure_is_never_summed_through_a_fan_out_join(prompt):
+    # The "(many A per B)" note of the "-- Joins:" lines (lib/semantics.py render_table)
+    text = " ".join(prompt.split())
+    assert '"(many A per B)"' in text and "never SUM or AVG a column of B" in text.replace("Never SUM", "never SUM")
+
+
 def test_the_refusal_lines_are_the_ones_the_nodes_read():
     from lib.messages import not_available_reason
     from lib.sql_tools import is_refusal

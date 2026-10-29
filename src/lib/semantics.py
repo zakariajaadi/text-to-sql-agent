@@ -111,7 +111,7 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
         -- Table: invoice
         -- Description: One row per customer purchase.
         -- Data as of: 2024-07-10
-        -- Joins: invoice.customerid = customer.customerid
+        -- Joins: invoice.customerid = customer.customerid (many invoice per customer)
         -- Read mode: LAST (partition: dt)
 
         CREATE TABLE `invoice` (
@@ -140,9 +140,12 @@ def render_table(table_name: str, table_ddl: str, table_semantics: dict,
     if excluded:
         table_ddl = prune_ddl(table_ddl, set(get_column_names(table_ddl)) - excluded)
 
-    # Join conditions involving this table, from relationships.yaml
+    # Join conditions involving this table, from relationships.yaml. The cardinality note tells
+    # planner and sql_coder which side a join multiplies (from = N side, to = 1 side): a measure
+    # of the 1 side is never summed through such a join (fan-out)
     joins = [
         join_condition(source, target, column_types or {}, dialect)
+        + f" (many {source.split('.')[0]} per {target.split('.')[0]})"
         for source, target in db_fk_relations
         if table_name in (source.split(".")[0], target.split(".")[0])
     ]
