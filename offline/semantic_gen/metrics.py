@@ -95,6 +95,7 @@ def generate_metrics(db_name: str):
         "language":  language,
         "roles":     _render_roles(roles, sorted(related), fact_tables),
         "existing":  "\n".join(f"- {name}: {entry.get('expr')}" for name, entry in entries.items()) or "None",
+        "dimension_words": ", ".join(_dimension_words(entries)) or "None",
         "rejected":  ", ".join(ignored) or "None",
         "schemas":   render_schemas(db, db_name, tables=[t for t in roles if t in related]),
     }).metrics
@@ -109,9 +110,11 @@ def generate_metrics(db_name: str):
             "synonyms":       proposal.synonyms,
             "expr":           proposal.expr,
             "time_dimension": proposal.time_dimension.strip(),
+            "dimensions":     list(dict.fromkeys(d.strip() for d in proposal.dimensions if d.strip())),
         }
-        if not entry["time_dimension"]:
-            del entry["time_dimension"]
+        for key in ("time_dimension", "dimensions"):
+            if not entry[key]:
+                del entry[key]
 
         if reason := skip_reason(name, proposal.expr, {**entries, **added}, ignored, dialect):
             logger.info(f"[{db_name}] Skipped metric '{name}': {reason}")
@@ -132,6 +135,12 @@ def generate_metrics(db_name: str):
 # ------------------------------------------------------------
 # helpers
 # ------------------------------------------------------------
+
+def _dimension_words(entries: dict[str, dict]) -> list[str]:
+    """The dimension vocabulary already in use, sorted: the prompt tells the LLM to reuse these
+    words, so the same entity keeps the same name across runs (ranked_entity matches exactly)."""
+    return sorted({d for entry in entries.values() for d in (entry.get("dimensions") or [])})
+
 
 def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantics: dict) -> dict[str, dict]:
     """

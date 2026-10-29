@@ -121,18 +121,25 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    rule inside (a CASE on a status, a ratio), e.g. COUNT(DISTINCT CASE WHEN ... THEN table.id END).
 6. time_dimension: the business date of the event the metric measures (order date, invoice date),
    from the fact table or from a table it joins to through the "-- Joins:" lines. Empty if none.
-7. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.
-8. Names in snake_case, unique, built from the words of this database's tables and columns
+7. dimensions: the entities the metric can be broken down by — only those backed by an
+   identifier of its fact table, or of a table it joins to through the "-- Joins:" lines.
+   Singular business names in {language}, the SAME word for the same entity in every metric:
+   reuse the words of DIMENSIONS IN USE when the entity is already named there. A clarification
+   offers the metric only for a declared entity, so leave out any entity you are not sure of;
+   an empty list means no restriction.
+8. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.
+9. Names in snake_case, unique, built from the words of this database's tables and columns
    (count of invoice rows → invoice_count, not order_count), without prefixes such as
    total_ or sales_ (revenue, not total_revenue or sales_revenue).
    Never propose a metric listed in EXISTING METRICS or REJECTED METRICS, nor another name
    for one of their expressions.
-9. Synonyms: 3 to 8 words users may use for the metric, in {languages}.
-10. Write the descriptions in {language}, the language users ask their questions in.
+10. Synonyms: 3 to 8 words users may use for the metric, in {languages}.
+11. Write the descriptions in {language}, the language users ask their questions in.
 
 ## EXAMPLE (an air-travel database: the style and the level to imitate)
 - revenue: SUM(booking.seat_price * booking.passenger_count)
   time_dimension: booking.booking_date
+  dimensions: [passenger, airline]
   description: Ticket revenue, taxes included, refunds not deducted.
 - cancelled_booking_share: COUNT(DISTINCT CASE WHEN booking.status = 'Cancelled'
   THEN booking.booking_id END) / NULLIF(COUNT(DISTINCT booking.booking_id), 0)
@@ -144,6 +151,9 @@ Not proposed: booking_count — COUNT(DISTINCT booking.booking_id) alone has no 
 
 ## EXISTING METRICS
 {existing}
+
+## DIMENSIONS IN USE
+{dimension_words}
 
 ## REJECTED METRICS
 {rejected}

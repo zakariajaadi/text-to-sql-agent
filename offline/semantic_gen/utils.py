@@ -200,6 +200,9 @@ METRICS_HEADER = """\
 #   synonyms       : other words for it in the questions, any language
 #   expr           : aggregate SQL expression, every column written table.column
 #   time_dimension : default date for periods and trends (optional)
+#   dimensions     : entities the metric can be broken down by, one vocabulary across metrics
+#                    (optional); a clarification offers the metric only for one of them, and a
+#                    metric without dimensions is offered for any entity
 #   origin         : (generator) "ai" on a metric it proposed; none on one written before the studio tracked it
 #   edited         : (studio) the fields corrected by hand since, out of description, synonyms, expr, time_dimension
 # To reject a generated metric, delete it and add its name to `ignore` (otherwise it comes back).

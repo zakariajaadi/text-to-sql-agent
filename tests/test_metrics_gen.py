@@ -35,6 +35,12 @@ def test_skip_reason(name, expr, skipped):
     assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped
 
 
+def test_dimension_words_are_the_vocabulary_in_use():
+    from offline.semantic_gen.metrics import _dimension_words
+    entries = {"a": {"dimensions": ["client", "agence"]}, "b": {"dimensions": ["client"]}, "c": {}}
+    assert _dimension_words(entries) == ["agence", "client"]
+
+
 def test_render_roles_lists_the_joined_tables_too():
     """A date or an identifier of a joined table is usable (prompt rules 6 and 7): its roles are rendered."""
     from offline.semantic_gen.metrics import _render_roles
