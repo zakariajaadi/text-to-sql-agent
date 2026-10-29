@@ -105,6 +105,9 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
 ## RULES
 1. expr is ONE aggregate SQL expression (SUM, COUNT, AVG, MIN, MAX, or a ratio of aggregates),
    never a full query. Write every column as table.column, spelled exactly as in the schemas.
+   A metric limited to a subset of rows (a status, a family) filters inside the aggregate —
+   SUM(CASE WHEN ... THEN measure END) — expr never carries a WHERE. In a ratio, wrap the
+   denominator in NULLIF(..., 0).
 2. Build amounts from the most detailed fact table (e.g. order lines, not order headers), so the
    metric can be broken down by product, category or any related entity.
 3. Apply the adjustments the schema documents (discounts, refunds, signs...) and say in the
@@ -126,6 +129,15 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    for one of their expressions.
 9. Synonyms: 3 to 8 words users may use for the metric, in {languages}.
 10. Write the descriptions in {language}, the language users ask their questions in.
+
+## EXAMPLE (an air-travel database: the style and the level to imitate)
+- revenue: SUM(booking.seat_price * booking.passenger_count)
+  time_dimension: booking.booking_date
+  description: Ticket revenue, taxes included, refunds not deducted.
+- cancelled_booking_share: COUNT(DISTINCT CASE WHEN booking.status = 'Cancelled'
+  THEN booking.booking_id END) / NULLIF(COUNT(DISTINCT booking.booking_id), 0)
+  description: Share of the bookings that were cancelled.
+Not proposed: booking_count — COUNT(DISTINCT booking.booking_id) alone has no business rule.
 
 ## COLUMN ROLES
 {roles}

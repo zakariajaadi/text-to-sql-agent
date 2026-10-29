@@ -2,3 +2,5 @@
 {"at": "2026-10-07T23:29", "kind": "git", "commit": "319ee32", "questions": 25, "scored": 23, "exact": 21}
 {"at": "2026-10-22T19:43", "kind": "git", "commit": "7eed10e", "questions": 25, "scored": 22, "exact": 21}
 {"at": "2026-10-29T00:44", "kind": "partial", "commit": "5a27b91-dirty", "questions": 28, "scored": 24, "exact": 23}
+{"at": "2026-10-29T01:59", "kind": "partial", "commit": "845e056-dirty", "questions": 28, "scored": 25, "exact": 24}
+{"at": "2026-10-29T02:00", "kind": "partial", "commit": "845e056-dirty", "questions": 28, "scored": 25, "exact": 24}

@@ -109,6 +109,10 @@ Given a user question and a list of candidate table schemas:
    Then set unavailable to "restricted" when a table or column description says that information
    exists but was withheld (excluded, confidential), to "absent" otherwise. A table with no rows
    is still in scope: a count over it is 0, and an empty table is never "absent".
+   A refusal here is final: the user gets no query at all. When in doubt — the question is vague
+   but its answer is computable from the columns — stay in scope: the planner reads the full
+   schemas after you and can still answer "not available". A notion no column holds by name is
+   still in scope when columns allow computing it.
 7. In metrics, list the business metrics below that the question asks for, by name or synonym,
    in any language. Their tables are added automatically. Leave it empty if none applies.
    A metric applies only when the question asks for the quantity it measures. Naming the
@@ -119,6 +123,15 @@ Given a user question and a list of candidate table schemas:
    (another language, an abbreviation spelled out), add that spelling too:
    "clients à Londres" → ["Londres", "London"]. Never metrics, dates, numbers or table names.
    Leave it empty if the question filters on no value.
+
+## EXAMPLES (scope decisions, on an air-travel database)
+Question: "What is the punctuality of each airline?"
+→ is_in_scope=True: no column is named punctuality, but the flight tables hold scheduled and
+  actual times — the answer is computable. Select those tables; interpreting the term is the
+  planner's job, not a reason to refuse.
+Question: "What do passengers think of the meals?"
+→ is_in_scope=False (absent): no column of any candidate holds opinions, reviews or comments.
+  A passenger table alone does not make the question answerable.
 
 ## BUSINESS METRICS
 {metrics}

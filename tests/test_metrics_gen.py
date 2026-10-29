@@ -35,6 +35,29 @@ def test_skip_reason(name, expr, skipped):
     assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped
 
 
+def test_render_roles_lists_the_joined_tables_too():
+    """A date or an identifier of a joined table is usable (prompt rules 6 and 7): its roles are rendered."""
+    from offline.semantic_gen.metrics import _render_roles
+
+    roles = {"booking":  {"measures": ["seat_price"], "identifiers": ["booking_id"], "dates": []},
+             "calendar": {"measures": [], "identifiers": ["day_id"], "dates": ["flight_date"]}}
+    text = _render_roles(roles, ["calendar", "booking"], fact_tables={"booking"})
+    assert text.splitlines() == [
+        "- booking (fact table): measures seat_price; identifiers booking_id; dates none",
+        "- calendar: measures none; identifiers day_id; dates flight_date",
+    ]
+
+
+def test_the_metrics_prompt_shows_the_safe_forms():
+    """Filtered amounts via CASE, NULLIF on ratio denominators, and a worked example (few-shot)."""
+    from offline.semantic_gen.prompts import METRICS_PROMPT
+
+    text = " ".join(METRICS_PROMPT.split())
+    assert "SUM(CASE WHEN ... THEN measure END)" in text and "expr never carries a WHERE" in text
+    assert "NULLIF(..., 0)" in text
+    assert "## EXAMPLE" in text and "NULLIF(COUNT(DISTINCT booking.booking_id), 0)" in text
+
+
 def test_a_numeric_code_is_never_a_measure(tmp_path):
     """A code stored as a number (code_agence, numero_dossier) is never offered to the LLM as a measure."""
     import sqlalchemy

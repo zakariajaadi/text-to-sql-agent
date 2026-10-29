@@ -31,6 +31,15 @@ def test_only_iso_date_patterns_are_cast(dialect):
     assert "When the pattern is yyyy-MM-dd or yyyy-MM-dd HH:mm:ss, use CAST" in " ".join(DIALECT_RULES[dialect].split())
 
 
+def test_a_doubtful_scope_stays_in_scope():
+    # A refusal at rerank is final (no second gate before the user): the doubt profits the question,
+    # and the rule is demonstrated (flash-lite fires on examples, not instructions)
+    text = " ".join(RERANK_TABLES_PROMPT.split())
+    assert "A refusal here is final" in text and "stay in scope" in text
+    assert "still in scope when columns allow computing it" in text
+    assert "## EXAMPLES (scope decisions" in text and "is_in_scope=False (absent)" in text
+
+
 @pytest.mark.parametrize("prompt", [RERANK_TABLES_PROMPT, PLANNER_PROMPT, SQL_CODER_PROMPT])
 def test_information_in_no_column_is_not_answered_with_another_one(prompt):
     # The reranker says out of scope; the planner and sql_coder write "Not available" (agent/nodes.py)

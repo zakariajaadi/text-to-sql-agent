@@ -93,7 +93,7 @@ def generate_metrics(db_name: str):
         "dialect":   dialect,
         "languages": "English" if language == "English" else f"English and {language}",
         "language":  language,
-        "roles":     _render_roles(roles, measure_tables, fact_tables),
+        "roles":     _render_roles(roles, sorted(related), fact_tables),
         "existing":  "\n".join(f"- {name}: {entry.get('expr')}" for name, entry in entries.items()) or "None",
         "rejected":  ", ".join(ignored) or "None",
         "schemas":   render_schemas(db, db_name, tables=[t for t in roles if t in related]),
@@ -174,18 +174,20 @@ def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantic
     return roles
 
 
-def _render_roles(roles: dict[str, dict], measure_tables: list[str], fact_tables: set[str]) -> str:
-    """Format the roles of measure tables into a readable string for the LLM.
-       One line per table, fact tables first
+def _render_roles(roles: dict[str, dict], tables: list[str], fact_tables: set[str]) -> str:
+    """Format the roles of the given tables (the measure tables and the tables they join to:
+       their dates and identifiers are usable too, rule 6/7 of the prompt) into a readable
+       string for the LLM. One line per table: fact tables first, then the other measure
+       tables, then the joined ones.
 
     Output example:
         - orders (fact table): measures amount, quantity; identifiers order_id, customer_id; dates order_date
         - customers: measures none; identifiers customer_id; dates registration_date
     """
-    ordered = sorted(measure_tables, key=lambda t: t not in fact_tables)
+    ordered = sorted(tables, key=lambda t: (t not in fact_tables, not roles[t]["measures"], t))
     return "\n".join(
         f"- {table}{' (fact table)' if table in fact_tables else ''}: "
-        f"measures {', '.join(roles[table]['measures'])}; "
+        f"measures {', '.join(roles[table]['measures']) or 'none'}; "
         f"identifiers {', '.join(roles[table]['identifiers']) or 'none'}; "
         f"dates {', '.join(roles[table]['dates']) or 'none'}"
         for table in ordered

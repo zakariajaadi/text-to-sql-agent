@@ -9,6 +9,21 @@
           "What percentage of total revenue does each category represent?",
           "For each customer, how many orders did they place in 1997, including customers with none?"
         ]
+      },
+      {
+        "at": "2026-10-29T01:59",
+        "commit": "845e056-dirty",
+        "questions": [
+          "Which products are underperforming?"
+        ]
+      },
+      {
+        "at": "2026-10-29T02:00",
+        "commit": "845e056-dirty",
+        "questions": [
+          "What is the weather in New York today?",
+          "Who won the World Cup in 2022?"
+        ]
       }
     ]
   },
@@ -16,29 +31,29 @@
     "total_questions": 28,
     "evaluated": 28,
     "technical_errors": 0,
-    "avg_latency_s": 6.15,
-    "avg_table_selection": 4.79,
-    "avg_column_selection": 4.43,
-    "avg_join_correctness": 4.86,
-    "avg_filter_logic": 4.75,
-    "avg_aggregation": 4.54,
-    "avg_overall": 4.25,
+    "avg_latency_s": 6.19,
+    "avg_table_selection": 4.93,
+    "avg_column_selection": 4.57,
+    "avg_join_correctness": 5.0,
+    "avg_filter_logic": 4.89,
+    "avg_aggregation": 4.68,
+    "avg_overall": 4.39,
     "avg_table_recall": 0.99,
-    "exec_exact": 0.958,
-    "execution_evaluated": 24,
+    "exec_exact": 0.96,
+    "execution_evaluated": 25,
     "score_distribution": {
-      "perfect (5)": 14,
+      "perfect (5)": 15,
       "good (4)": 9,
       "partial (3)": 4,
       "poor (2)": 0,
-      "wrong (1)": 1
+      "wrong (1)": 0
     },
     "avg_overall_simple": 4.62,
     "exec_exact_simple": 1.0,
     "avg_overall_medium": 4.43,
     "exec_exact_medium": 1.0,
-    "avg_overall_hard": 3.92,
-    "exec_exact_hard": 0.909
+    "avg_overall_hard": 4.23,
+    "exec_exact_hard": 0.917
   },
   "results": [
     {
@@ -902,40 +917,40 @@
       "question": "Which products are underperforming?",
       "difficulty": "hard",
       "category": "ambiguous",
-      "generated_sql": null,
+      "generated_sql": "SELECT\n  `p`.`productname`,\n  SUM(`od`.`quantity`) AS `total_quantity_sold`\nFROM `order_details` AS `od`\nJOIN `products` AS `p`\n  ON `od`.`productid` = `p`.`productid`\nGROUP BY\n  `p`.`productid`,\n  `p`.`productname`\nORDER BY\n  `total_quantity_sold` ASC NULLS LAST",
       "selected_tables": [
         "products",
         "order_details"
       ],
-      "latency_s": 4.46,
+      "latency_s": 7.12,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
-      "exec_exact": null,
+      "exec_exact": 1.0,
       "judge": {
         "table_selection": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "The query correctly selects the `products` and `order_details` tables, which is identical to the ground truth."
         },
         "column_selection": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "The query selects the correct columns, `productname` and the sum of `quantity`, which matches the intent of the first ground truth query."
         },
         "join_correctness": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "The join between `products` and `order_details` is correctly performed on `productid`."
         },
         "filter_logic": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "No filters are needed for this query, which is consistent with the ground truth."
         },
         "aggregation": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "The query correctly groups by product and orders by the total quantity sold in ascending order, which is a valid interpretation of 'underperforming'."
         },
         "overall": {
-          "score": 1,
-          "reasoning": "No SQL generated for in-scope question."
+          "score": 5,
+          "reasoning": "The generated query is functionally equivalent to the first accepted query, correctly identifying underperforming products by the total quantity sold."
         }
       }
     },
@@ -986,7 +1001,7 @@
       "category": "out_of_scope",
       "generated_sql": null,
       "selected_tables": [],
-      "latency_s": 2.84,
+      "latency_s": 1.99,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
@@ -1024,7 +1039,7 @@
       "category": "out_of_scope",
       "generated_sql": null,
       "selected_tables": [],
-      "latency_s": 2.9,
+      "latency_s": 2.26,
       "table_recall": 1.0,
       "table_precision": 1.0,
       "table_hallucination": 0.0,
