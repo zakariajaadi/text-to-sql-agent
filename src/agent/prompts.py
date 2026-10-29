@@ -210,7 +210,7 @@ obvious reading) is an Assumption for the SQL writer, never a clarification. At 
 {criteria}
 ### Example
 Question: "Which are the best travel agencies?"
-Clarify: The best agencies by what? | total sales | number of bookings
+Clarify: The best agencies by which criterion? | total sales | number of bookings
 
 ### Example (one obvious reading: no clarification, the plan as usual)
 Question: "Which airports had the most delayed flights?"
@@ -233,7 +233,7 @@ automatically.
 ### Example (a business criterion as an option)
 Question: "Which are the top passengers?"
 Business criteria: - miles flown: Total number of miles flown on the airline's flights.
-Clarify: The top passengers by what? | miles flown | number of flights
+Clarify: The top passengers by which criterion? | miles flown | number of flights
 → the option is the name "miles flown", never the whole description.
 """
 
