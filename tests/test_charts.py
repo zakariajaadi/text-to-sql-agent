@@ -114,6 +114,14 @@ def test_ids_label_the_bars_when_nothing_else_does():
     assert view(chart(["CustomerId", "total"], [[1, 1.5], [2, 2.5]]))[0] == ["2", "1"]
 
 
+def test_a_numero_column_is_an_id_not_a_measure():
+    # French/bank keys (numero_personne_host, num_cont) are identifiers: without this, two
+    # numeric columns leave nothing to label the bars and the result gets no chart at all
+    c = chart(["numero_personne_host", "total_epargne"], [[6455344, 1.5], [5095107, 2.5]])
+    assert c is not None and [m["name"] for m in c["measures"]] == ["total_epargne"]
+    assert view(c)[0] == ["5095107", "6455344"]
+
+
 def test_unrelated_measures_are_switched_not_overlaid():
     c = chart(["mois", "ca", "nb_commandes"], [[m, 1.5, 3] for m in (1, 2)])
     assert [m["name"] for m in c["measures"]] == ["ca", "nb_commandes"]
