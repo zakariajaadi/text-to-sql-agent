@@ -6,6 +6,7 @@ from langchain_core.runnables.graph_mermaid import draw_mermaid_png
 from langgraph.graph import END, START, StateGraph
 
 from agent.nodes import (
+    ask_clarification,
     condense_question,
     format_answer,
     match_values,
@@ -16,6 +17,7 @@ from agent.nodes import (
     resolve_database,
     retrieve_schema,
     route_after_coder,
+    route_after_planner,
     route_after_validation,
     route_by_scope,
     sql_coder,
@@ -40,6 +42,7 @@ def build_graph():
     builder.add_node(sql_validator)
     builder.add_node(format_answer)
     builder.add_node(report_unreachable)
+    builder.add_node(ask_clarification)
 
     # Edges
     builder.add_edge(START,                "condense_question")
@@ -52,7 +55,10 @@ def build_graph():
     })
     builder.add_edge("match_values",  "prune_columns")
     builder.add_edge("prune_columns", "planner")
-    builder.add_edge("planner", "sql_coder")
+    builder.add_conditional_edges("planner", route_after_planner, {
+        "plan":    "sql_coder",
+        "clarify": "ask_clarification",   # two plausible readings: one question to the user, no query
+    })
     builder.add_conditional_edges("sql_coder", route_after_coder, {
         "query":         "sql_validator",
         "not_available": "format_answer",   # the information is in no column: no query
@@ -64,6 +70,7 @@ def build_graph():
     })
     builder.add_edge("format_answer",      END)
     builder.add_edge("report_unreachable", END)
+    builder.add_edge("ask_clarification",  END)
 
     # Set Checkpointer if memory is enabled
     checkpointer = None

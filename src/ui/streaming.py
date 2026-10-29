@@ -33,7 +33,7 @@ from loguru import logger
 
 from config import cfg
 from lib.column_pruning import get_column_names
-from lib.messages import get_question, not_available_reason
+from lib.messages import clarify_question, get_question, not_available_reason
 from lib.query_lineage import build_query_lineage
 from lib.semantics import load_profile, load_semantics
 from lib.sql_tools import contains_expression, get_query_tables
@@ -99,8 +99,9 @@ class TurnRenderer:
         self.rejected = 0      # queries rejected by the database
         self.result   = None   # query result of the result card
 
-        self.answer_msg      = None
-        self.follow_ups_task = None
+        self.answer_msg            = None
+        self.follow_ups_task       = None
+        self.clarification_options = []   # options of a clarifying question, shown as the follow-up buttons
 
     # ── Graph events ──────────────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ class TurnRenderer:
 
     async def _on_node_start(self, node: str) -> None:
         # The answer starts: the agent's work is over, collapse its step
-        if node in ("format_answer", "report_unreachable"):
+        if node in ("format_answer", "report_unreachable", "ask_clarification"):
             await self.finish()
         elif node in NODE_STAGES and node not in LATE_STAGES:
             title = NODE_STAGES[node].format(engine=self.engine)
@@ -296,6 +297,9 @@ class TurnRenderer:
         plan = output.get("query_plan", "")
         if reason := not_available_reason(plan.strip().split("\n", 1)[0]):
             return f"Plan : {UNAVAILABLE_LABELS[reason]}", UNAVAILABLE_DETAILS[reason]
+        if clarified := clarify_question(plan):
+            return ("Deux lectures possibles : question posée",
+                    f"**Question :** {clarified[0]}\n\n**Options :** {', '.join(clarified[1]) or '—'}")
 
         candidates = input.get("selected_schemas", {})
         loaded     = [t for t in output.get("selected_schemas", {}) if t not in candidates]
@@ -387,6 +391,11 @@ class TurnRenderer:
         """Send the fixed answer of an unreachable database (no LLM, nothing streamed)."""
         await self._end_format_answer(input, output)
 
+    async def _end_ask_clarification(self, input: dict, output: dict) -> None:
+        """Send the clarifying question (no LLM, nothing streamed); its options become the clickable buttons."""
+        self.clarification_options = output.get("clarification_options") or []
+        await self._end_format_answer(input, output)
+
     async def _end_format_answer(self, input: dict, output: dict) -> None:
         """Send the answer when it was not streamed (semantic cache hit)."""
         messages = output.get("messages") or []
@@ -450,7 +459,13 @@ class TurnRenderer:
         """
         Send the FollowUps element (clickable next questions) under the answer already sent.
         Sent on its own once the suggestions are ready, so it never delays the answer and card.
+        A clarifying question sends its options instead: one click answers it.
         """
+        if self.clarification_options:
+            element = cl.CustomElement(name="FollowUps", props={"questions": self.clarification_options}, display="inline")
+            self.answer_msg.elements.append(element)
+            await element.send(for_id=self.answer_msg.id)
+            return
         if not self.follow_ups_task:
             return
         try:

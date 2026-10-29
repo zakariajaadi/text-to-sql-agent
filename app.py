@@ -77,6 +77,8 @@ async def on_message(message: cl.Message):
             {
                 "messages":    [HumanMessage(content=message.content)],
                 "selected_db": cl.user_session.get("chat_profile"),
+                # The planner may ask the user one question (ask_clarification); the eval never sets it
+                "clarify":     cfg.get_db(cl.user_session.get("chat_profile")).clarification,
             },
             config=config,
             version="v2",

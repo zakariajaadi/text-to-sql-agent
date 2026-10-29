@@ -15,6 +15,9 @@ class AgentState(MessagesState):
      filter_values: list[str]            # values the question filters on, as written and as likely spelled in the database (output of rerank_tables)
      matched_values: dict[str, dict[str, list[str]]]   # table → column → values of the value index close to filter_values (output of match_values)
      values_not_found: bool              # filter_values searched, none close to any value of the data (output of match_values)
+     clarify: bool                       # the planner may ask the user one question (set by the caller: app.py from the db config; the eval never sets it)
+     clarification_question: str         # question asked to the user instead of a plan (output of ask_clarification)
+     clarification_options: list[str]    # its options, shown as clickable buttons by the Chainlit UI (output of ask_clarification)
      query_plan: str                     # execution plan from planner node
      generated_query: str                # SQL query (output of sql_coder)
      validation_feedback: str            # error message, empty on success (output of sql_validator)

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent.guardrails import is_safe_query
 from agent.prompts import (
+    CLARIFICATION_SECTION,
     CONDENSE_QUESTION_PROMPT,
     DIALECT_RULES,
     FORMAT_ANSWER_PROMPT,
@@ -26,6 +27,7 @@ from agent.state import AgentState
 from agent.tools import get_run_query_tool, run_capped_query
 from config import cfg
 from lib import (
+    clarify_question,
     expand_fk,
     extract_plan_tables,
     extract_sql,
@@ -211,8 +213,10 @@ def resolve_database(state: AgentState) -> dict:
     """
     # Per-turn fields, reset at every new question
     resets = {
-        "generated_query":     "",
-        "query_plan":          "",
+        "generated_query":        "",
+        "query_plan":             "",
+        "clarification_question": "",
+        "clarification_options":  [],
         "validation_feedback": "",
         "validation_error":    "",
         "validation_check":    "",
@@ -500,6 +504,7 @@ def planner(state: AgentState) -> dict:
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
+            clarification_section=CLARIFICATION_SECTION if state.get("clarify") else "",
             metrics_section=render_metrics_section(get_selected_metrics(state)),
             values_section=render_values_section(state),
             schema=schema,
@@ -763,6 +768,28 @@ def _unknown_values_error(unknown: list) -> str:
     ]
     return ("Unknown values: the query filters on values these columns don't hold, "
             "so it would return no row.\n" + "\n".join(lines))
+
+
+def route_after_planner(state: AgentState) -> Literal["clarify", "plan"]:
+    """To ask_clarification when the planner asks the user instead of planning, to sql_coder otherwise."""
+    return "clarify" if clarify_question(state.get("query_plan", "")) else "plan"
+
+
+def ask_clarification(state: AgentState) -> dict:
+    """
+    Deterministic node — the planner found two plausible readings (route_after_planner): the turn
+    ends on one short question with its options, shown as clickable buttons, instead of a query.
+    The user's answer is the next turn, where condense_question merges the exchange back into a
+    standalone question: no graph suspension, no interrupt.
+    """
+    question, options = clarify_question(state["query_plan"])
+    logger.info(f"ask_clarification: {question} | options: {options}")
+    return {
+        "messages":               [AIMessage(content=question)],
+        "generated_query":        "",
+        "clarification_question": question,
+        "clarification_options":  options,
+    }
 
 
 def route_after_coder(state: AgentState) -> Literal["query", "not_available"]:

@@ -78,6 +78,25 @@ def extract_sql(text: str) -> str:
     return query.rstrip().rstrip(";").rstrip()
 
 
+# "Clarify: question | option | option" line of the planner (agent/prompts.py), "--" or bold allowed
+_CLARIFY = re.compile(r"^[\W_]*clarify\s*:\s*(.+)$", re.IGNORECASE)
+
+
+def clarify_question(text: str) -> tuple[str, list[str]] | None:
+    """
+    The question the planner asks the user instead of planning, with its options:
+    the first "Clarify: [question] | [option] | [option]" line of the plan.
+    None when no line asks one (the usual case: the plan stands).
+    """
+    for line in text.splitlines():
+        if match := _CLARIFY.match(line.strip()):
+            parts    = [part.strip(" *\t") for part in match.group(1).split("|")]
+            question = parts[0]
+            if question:
+                return question, [part for part in parts[1:] if part]
+    return None
+
+
 # "Not available (restricted): ..." line of the planner or sql_coder (agent/prompts.py), "--" or bold allowed
 _NOT_AVAILABLE = re.compile(r"^[\W_]*not available\b\W*(restricted|absent)?", re.IGNORECASE)
 

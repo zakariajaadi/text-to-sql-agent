@@ -156,6 +156,31 @@ needed to answer it: in SELECT, WHERE, GROUP BY, HAVING, ORDER BY or aggregation
 {schemas}
 """
 
+# ── Section: clarification ─────────────────────────────────────────────────────
+# Used by: planner node, only when the database allows clarification (config, never the eval)
+# Inserted at {clarification_section} in PLANNER_PROMPT (empty string otherwise)
+
+CLARIFICATION_SECTION = """
+## CLARIFICATION
+When two readings of the question against this schema are both plausible and give different
+results, write no plan: output only one line, in the language of the question, naming each
+reading in business words, never a table or column name:
+Clarify: [one short question] | [option A] | [option B]
+Clarify when the choice changes the figures and the schema offers each reading:
+- a ranking, a "best" or a "top" with no criterion, while the schema offers several measures
+- a term that could mean two entities or two filters of the schema
+What the rules already settle (periods from "Data as of", read modes, listed values, the one
+obvious reading) is an Assumption for the SQL writer, never a clarification. At most 3 options.
+
+### Example
+Question: "Which are the best travel agencies?"
+Clarify: The best agencies by what? | total sales | number of bookings
+
+### Example (one obvious reading: no clarification, the plan as usual)
+Question: "Which airports had the most delayed flights?"
+- Tables: [...]
+"""
+
 # ── Shared section: business metrics ──────────────────────────────────────────
 # Used by: planner and sql_coder nodes, only when rerank_tables selected metrics
 # Inserted at {metrics_section} in PLANNER_PROMPT and SQL_CODER_PROMPT (empty string otherwise)
@@ -251,7 +276,7 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   ("the busiest airport" → 1). A plural question ("which airports are the busiest") is a
   full ranking: Limit None.
 
-{metrics_section}{values_section}
+{clarification_section}{metrics_section}{values_section}
 ## DATABASE SCHEMA
 {schema}
 """

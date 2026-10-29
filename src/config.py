@@ -63,6 +63,7 @@ class DatabaseConfig:
     sample_rows: int = 3   # rows shown under each DDL (indexed, sent to the LLM); 0 when the data must not leave
     user_language: str = "English"   # language users ask in: generated descriptions, metric synonyms, eval judge reasonings
     exclude_personal_data: bool = False  # make semantics excludes the columns the profile flags as personal data
+    clarification: bool = True  # the planner may ask the user one question when two readings diverge (app only: the eval never asks)
     uri: str = ""
     connect_args: dict = field(default_factory=dict, init=False)  # driver options (authentication), from the environment
     query_options: dict = field(default_factory=dict, init=False) # options set on every query (limits), from the environment
