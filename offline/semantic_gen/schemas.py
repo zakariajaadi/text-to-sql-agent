@@ -33,7 +33,7 @@ class MetricProposal(BaseModel):
     synonyms:       list[str] = Field(description="Other words users may use for it, in English and in the other languages users may ask in")
     expr:           str       = Field(description="Aggregate SQL expression, every column written table.column")
     time_dimension: str       = Field(description="Default date column for periods and trends, as table.column, or empty if none applies")
-    dimensions:     list[str] = Field(default_factory=list, description="Entities the metric can be broken down by: singular business names backed by an identifier of the fact table or of a table it joins to, reusing the DIMENSIONS IN USE words. Empty when unsure.")
+    dimensions:     list[str] = Field(default_factory=list, description="ALL the entities the metric can be broken down by: singular business names backed by an identifier of the fact table or of a table it joins to, reusing the DIMENSIONS IN USE words. All or nothing — empty rather than partial.")
 
 
 # Output of the metrics step (metrics.py): the proposed metrics

@@ -121,12 +121,13 @@ averages and ratios. At most 8, the most useful first. Fewer is fine.
    rule inside (a CASE on a status, a ratio), e.g. COUNT(DISTINCT CASE WHEN ... THEN table.id END).
 6. time_dimension: the business date of the event the metric measures (order date, invoice date),
    from the fact table or from a table it joins to through the "-- Joins:" lines. Empty if none.
-7. dimensions: the entities the metric can be broken down by — only those backed by an
+7. dimensions: ALL the entities the metric can be broken down by — every one backed by an
    identifier of its fact table, or of a table it joins to through the "-- Joins:" lines.
    Singular business names in {language}, the SAME word for the same entity in every metric:
-   reuse the words of DIMENSIONS IN USE when the entity is already named there. A clarification
-   offers the metric only for a declared entity, so leave out any entity you are not sure of;
-   an empty list means no restriction.
+   reuse the words of DIMENSIONS IN USE when the entity is already named there. The list is a
+   strict whitelist — a clarification offers the metric only for a declared entity, so a
+   forgotten entity hides the metric from that entity's rankings. All or nothing: when you
+   cannot establish the complete list, leave it EMPTY (no restriction) rather than partial.
 8. Only use measures, identifiers and dates listed in COLUMN ROLES. Never invent a column.
 9. Names in snake_case, unique, built from the words of this database's tables and columns
    (count of invoice rows → invoice_count, not order_count), without prefixes such as
