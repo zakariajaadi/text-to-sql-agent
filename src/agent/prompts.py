@@ -129,6 +129,10 @@ Question: "What is the punctuality of each airline?"
 → is_in_scope=True: no column is named punctuality, but the flight tables hold scheduled and
   actual times — the answer is computable. Select those tables; interpreting the term is the
   planner's job, not a reason to refuse.
+Question: "What are the best airlines?"
+→ is_in_scope=True: "best" is subjective and no metric or column defines it, but the candidate
+  tables hold measures the airlines could be ranked on. Picking the criterion — or asking the
+  user for it — is the planner's job; a vague term is never a reason to refuse.
 Question: "What do passengers think of the meals?"
 → is_in_scope=False (absent): no column of any candidate holds opinions, reviews or comments.
   A passenger table alone does not make the question answerable.
