@@ -35,6 +35,23 @@ def test_skip_reason(name, expr, skipped):
     assert (skip_reason(name, expr, KNOWN, IGNORED, "sqlite") is not None) is skipped
 
 
+def test_a_numeric_code_is_never_a_measure(tmp_path):
+    """A code stored as a number (code_agence, numero_dossier) is never offered to the LLM as a measure."""
+    import sqlalchemy
+    from langchain_community.utilities import SQLDatabase
+
+    from offline.semantic_gen.metrics import _column_roles
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{tmp_path / 'bank.db'}")
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text(
+            "CREATE TABLE pret (pret_id INTEGER, montant INTEGER, code_agence INTEGER, numero_dossier INTEGER)"))
+    roles = _column_roles(SQLDatabase(engine), [], {})
+    assert roles["pret"]["measures"] == ["montant"]
+    assert roles["pret"]["identifiers"] == ["pret_id"]
+    assert set(roles["pret"]["dimensions"]) == {"code_agence", "numero_dossier"}
+
+
 def test_dump_metrics_writes_what_the_agent_reads_then_the_origin():
     """origin (the generator) and edited (the studio) come after the fields the agent reads, whatever their order."""
     text = dump_metrics({"revenue": {"edited": ["expr"], "origin": "ai", "expr": "SUM(t.x)", "description": "Sold"}}, [])

@@ -18,6 +18,7 @@ from sqlalchemy import inspect as sa_inspect
 from config import cfg
 from lib.metrics import metrics_path, read_metrics_file, validate_metric
 from lib.semantics import excluded_columns, load_fk_relations, load_semantics
+from offline.semantic_gen.profiling import CODE_NAME
 from offline.semantic_gen.prompts import METRICS_PROMPT
 from offline.semantic_gen.schemas import MetricProposals
 from offline.semantic_gen.utils import metric_from_clause, render_schemas, skip_reason, write_metrics_file
@@ -140,7 +141,8 @@ def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantic
     First matching role wins:
         identifiers — a relationship end, or a numeric column named *id
         dates       — a DATE / TIMESTAMP column
-        measures    — any other numeric column, unless declared categorical
+        measures    — any other numeric column, unless declared categorical or named like a
+                      code (CODE_NAME): a code stored as a number is never summed
         dimensions  — the rest (labels, codes, categorical columns)
 
     Types are matched by name (NUMERIC_TYPES, TEMPORAL_TYPES): Hive types don't subclass SQLAlchemy's.
@@ -164,7 +166,7 @@ def _column_roles(db: SQLDatabase, fk_relations: list[tuple[str, str]], semantic
                 role["identifiers"].append(name)
             elif any(t in type_name for t in TEMPORAL_TYPES):
                 role["dates"].append(name)
-            elif numeric and name not in categorical:
+            elif numeric and name not in categorical and not CODE_NAME.search(name.lower()):
                 role["measures"].append(name)
             else:
                 role["dimensions"].append(name)

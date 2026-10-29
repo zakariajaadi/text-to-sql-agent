@@ -103,17 +103,18 @@ def test_apply_profile_to_a_table_that_has_none_yet():
     semantics = {"dossier": {"description": "Dossiers", "keep_as_text": ["extension"]},
                  "revu":    {"formats": {}, "exclude_columns": ["autre"]}}
     changes = apply_profile(semantics, DETECTED, personal=False)
-    # the exceptions made in the studio are kept, personal data only when the database says so
+    # the exceptions made in the studio are kept; an empty column is only proposed, never applied
+    # (a rarely filled column can be the point of a question), personal data only when the database says so
     assert semantics["dossier"] == {"description": "Dossiers", "keep_as_text": ["extension"],
-                                    "formats": {"date_deblocage": "date dd/MM/yyyy"}, "exclude_columns": ["commentaire"]}
+                                    "formats": {"date_deblocage": "date dd/MM/yyyy"}}
     # a reviewed table is left as it is
     assert semantics["revu"] == {"formats": {}, "exclude_columns": ["autre"]}
-    assert changes == ["dossier: formats date_deblocage; excluded commentaire"]
+    assert changes == ["dossier: formats date_deblocage"]
 
     semantics = {}
     apply_profile(semantics, DETECTED, personal=True, tables=["dossier"])
     assert semantics == {"dossier": {"formats": {"date_deblocage": "date dd/MM/yyyy", "extension": "decimal"},
-                                     "exclude_columns": ["commentaire", "nom"]}}
+                                     "exclude_columns": ["nom"]}}
 
 
 def test_describe_shapes_counts_null_empty_and_blank_as_not_filled():
@@ -249,8 +250,9 @@ def test_profile_some_tables_keeps_the_others(bank):
     # the other columns: their filled share, a never filled one proposed for exclusion
     assert profile["client"]["filled"] == {"age": 0.5, "date_cloture": 0.0}
     assert profile["client"]["exclude"] == {"date_cloture": "empty"}
-    # and applied to tables.yaml at once: the data decides, no review
-    assert lib.semantics.load_semantics("bank") == {"client": {"exclude_columns": ["date_cloture"]}}
+    # but never applied to tables.yaml without review: a rarely filled column (a closing date,
+    # an incident flag) can be the point of a question — the studio shows the proposal pending
+    assert lib.semantics.load_semantics("bank") == {}
 
 
 def test_profile_missing_tables_only(bank):

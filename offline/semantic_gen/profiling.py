@@ -17,8 +17,9 @@ Read by the generators so the semantic layer states facts instead of guesses:
       read from the metastore without a scan. The studio tells from them how the agent must read
       the table (read_mode, offline/studio/reading.py).
 
-Formats and empty columns are data-driven: each table measured gets them in tables.yaml at once,
-when it has none yet (apply_profile), the studio making the exceptions. Each run replaces the
+Formats (and, when the database says so, the personal data exclusions) are data-driven: each table
+measured gets them in tables.yaml at once, when it has none yet (apply_profile), the studio making
+the exceptions. Empty columns are only proposed, for the studio to review. Each run replaces the
 entries of the tables it measures (every table, or the ones asked for) and keeps the others.
 A profile made by an older profiler is completed instead of measured again (complete_profile):
 only what it lacks, tables.yaml left as it is.
@@ -233,12 +234,14 @@ def complete_table(db: SQLDatabase, table: str, entry: dict, quote, lacking: dic
 def apply_profile(semantics: dict, profile: dict, personal: bool, tables=None) -> list[str]:
     """
     Write what the profile detects into the tables.yaml blocks of `semantics` (changed in place), for
-    the `tables` given (default: every profiled one): no review needed, the data decides.
+    the `tables` given (default: every profiled one).
       - formats: the dates and numbers stored as text, for a table that has no `formats` key yet;
         a column in `keep_as_text` (an exception made in the studio) is left as text
-      - exclude_columns: the empty columns, and the personal data when the database says so
-        (exclude_personal_data), for a table that has no `exclude_columns` key yet; a column in
-        `keep_columns` stays visible
+      - exclude_columns: the personal data, when the database says so (exclude_personal_data), for
+        a table that has no `exclude_columns` key yet; a column in `keep_columns` stays visible.
+        An empty column is only proposed (the studio shows it pending), never excluded without
+        review: a rarely filled column can be the point of a question (an incident flag, a
+        closing date), and hiding it makes the agent answer "not available"
     A reviewed table (the key exists) is left as it is: offline/studio shows what is detected and not
     applied. Returns one line per table changed, for the log.
     """
@@ -253,7 +256,7 @@ def apply_profile(semantics: dict, profile: dict, personal: bool, tables=None) -
             entry["formats"] = formats
             done.append(f"formats {', '.join(formats)}")
         exclude = [c for c, reason in (facts.get("exclude") or {}).items()
-                   if (reason == "empty" or personal) and c not in kept]
+                   if reason == "personal data" and personal and c not in kept]
         if exclude and "exclude_columns" not in entry:
             entry["exclude_columns"] = exclude
             done.append(f"excluded {', '.join(exclude)}")
