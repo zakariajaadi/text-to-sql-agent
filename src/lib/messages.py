@@ -5,10 +5,43 @@ Used by: agent/nodes.py, ui/streaming.py, ui/follow_ups.py
 """
 
 import re
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from lib.cache import extract_text_content
+
+def extract_text_content(val: Any) -> str:
+    """
+    Recursively extracts plain text from various LangChain/LLM output formats.
+    Handles:
+      - Lists of messages (takes the last one).
+      - LangChain Message objects (AIMessage, ToolMessage).
+      - Gemini-style content blocks (list of dicts with 'text').
+      - Standard dictionaries or raw strings.
+    """
+    if not val:
+        return ""
+
+    # 1. If it's a list (like state['messages']), recurse on the last element
+    if isinstance(val, list):
+        return extract_text_content(val[-1])
+
+    # 2. Extract content from Message objects (if present)
+    content = getattr(val, "content", val)
+
+    # 3. Handle Gemini-style content blocks: [{'text': '...'}, {'text': '...'}]
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content
+            if isinstance(block, dict)
+        ).strip()
+
+    # 4. Handle dictionary returns (e.g., {'text': '...'})
+    if isinstance(content, dict):
+        return content.get("text", str(content))
+
+    # 5. Fallback to string representation
+    return str(content)
 
 
 def get_qa_pairs(messages: list) -> list[tuple[str, str]]:

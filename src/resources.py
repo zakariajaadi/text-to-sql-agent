@@ -1,6 +1,6 @@
 """
 Shared runtime resources, built once at import from the settings of config.py:
-LLMs, embedding model, vector store, semantic cache, database connections, FK graphs, schema store
+LLMs, embedding model, vector store, database connections, FK graphs, schema store
 (and its retriever) and metrics.
 Importing this module needs the API keys, the databases and the Chroma index.
 """
@@ -8,7 +8,6 @@ Importing this module needs the API keys, the databases and the Chroma index.
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_community.utilities import SQLDatabase
-from langchain_redis import RedisSemanticCache
 from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
@@ -104,20 +103,6 @@ logger.debug(f"Initialized Embedding Model: {cfg.retrieval.embedding_model}")
 
 # Shared Chroma store of the indexed table documents — one store for all databases
 vector_store = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
-
-# Semantic cache — caches LLM responses for semantically similar questions
-llm_cache: RedisSemanticCache | None = (
-    RedisSemanticCache(
-        embeddings=embedding_model,
-        redis_url=cfg.cache.redis_url,
-        distance_threshold=cfg.cache.distance_threshold,
-        ttl=cfg.cache.ttl,
-    )
-    if cfg.cache.enabled
-    else None
-)
-
-logger.debug(f"Semantic cache {'enabled — Redis: ' + cfg.cache.redis_url if llm_cache else 'disabled'}")
 
 # Database registry
 db_registry: dict[str, SQLDatabase] = {

@@ -1,5 +1,5 @@
 # docker-compose.ubi.yaml — the app on a machine of a private network (image built from dockerfile.ubi),
-# querying a Kerberos-secured cluster: no local Hive, no Redis (cache disabled).
+# querying a Kerberos-secured cluster: no local Hive.
 #
 #   docker compose -f docker-compose.ubi.yaml build
 #   docker compose -f docker-compose.ubi.yaml up app                     # app on http://localhost:8000

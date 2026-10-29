@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 sys.modules.setdefault("resources", types.SimpleNamespace(
     db_registry={},
     vector_store=None,
-    llm_cache=None,
     model=MagicMock(),
     fast_model=MagicMock(),
     get_schema_retriever=MagicMock(),

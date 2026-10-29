@@ -79,13 +79,13 @@ studio-docker:  ## Build and run the studio in Docker (with Hive), on http://loc
 app:  ## Run the Chainlit app locally, on http://localhost:8000
 	uv run chainlit run app.py
 
-app-docker:  ## Build and run the app in Docker (with Redis and Hive), on http://localhost:8000
+app-docker:  ## Build and run the app in Docker (with Hive), on http://localhost:8000
 	docker compose up -d --build app
 
 app-logs:  ## Follow the app container logs
 	docker compose logs -f app
 
-app-stop:  ## Stop the app container (Hive and Redis keep running)
+app-stop:  ## Stop the app container (Hive keeps running)
 	docker compose stop app
 
 ##@ Quality

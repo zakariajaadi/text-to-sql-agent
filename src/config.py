@@ -158,13 +158,6 @@ class MemoryConfig:
     enabled: bool
 
 @dataclass
-class CacheConfig:
-    enabled: bool
-    redis_url: str
-    distance_threshold: float
-    ttl: int
-
-@dataclass
 class AppConfig:
     llm: LLMConfig
     llm_fast: LLMConfig
@@ -174,7 +167,6 @@ class AppConfig:
     column_pruning: ColumnPruningConfig
     langsmith: LangSmithConfig
     memory: MemoryConfig
-    cache: CacheConfig
 
     
     def get_db(self, name: str) -> DatabaseConfig:
@@ -209,8 +201,6 @@ def load_config() -> AppConfig:
         column_pruning=ColumnPruningConfig(**cfg.column_pruning),
         langsmith=LangSmithConfig(**cfg.langsmith),
         memory=MemoryConfig(**cfg.memory),
-        cache=CacheConfig(**cfg.cache),
-
     )
 
 

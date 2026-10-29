@@ -26,7 +26,6 @@ from agent.state import AgentState
 from agent.tools import get_run_query_tool, run_capped_query
 from config import cfg
 from lib import (
-    cached_node,
     expand_fk,
     extract_plan_tables,
     extract_sql,
@@ -529,10 +528,6 @@ def planner(state: AgentState) -> dict:
         "retrieved_schema": "\n\n".join([schema, *added.values()]),
     }
 
-@cached_node(
-    key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
-    return_key="generated_query"
-)
 def sql_coder(state: AgentState) -> dict:
     """
     LLM node — generates SQL without executing.
@@ -790,11 +785,6 @@ def route_after_validation(state: AgentState) -> Literal["error", "success", "un
     return "success"
 
 
-@cached_node(
-    key_fn=lambda state: f"{state['selected_db']}:{get_question(state)}",
-    return_key="messages",
-    cache_only_first_attempt=False
-)
 def format_answer(state: AgentState) -> dict:
     """
     LLM-driven node — single exit point for all user-facing responses.

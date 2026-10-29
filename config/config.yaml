@@ -52,9 +52,3 @@ memory:
 
 langsmith:
   tracing: true
-
-cache:
-  enabled: false
-  redis_url: "redis://redis:6379"
-  distance_threshold: 0.10
-  ttl: 86400 # 24h 
