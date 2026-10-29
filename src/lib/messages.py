@@ -6,7 +6,26 @@ Used by: agent/nodes.py, ui/streaming.py, ui/follow_ups.py
 
 import re
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
+
+from lib.cache import extract_text_content
+
+
+def get_qa_pairs(messages: list) -> list[tuple[str, str]]:
+    """
+    (question, answer) of each turn: the content of every HumanMessage, paired with the last final
+    AIMessage of its turn — an answer written for the user, never the tool-call messages of
+    sql_validator. "" for a turn without one: the current question, or a stopped turn.
+    Used by condense_question to resolve references to the answers.
+    """
+    pairs: list[list[str]] = []
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            pairs.append([extract_text_content(message), ""])
+        elif pairs and isinstance(message, AIMessage) and not message.tool_calls:
+            if answer := extract_text_content(message):
+                pairs[-1][1] = answer
+    return [(question, answer) for question, answer in pairs]
 
 
 def get_last_cycle(messages: list) -> list:

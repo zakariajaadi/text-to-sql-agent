@@ -10,6 +10,7 @@ from lib.messages import (
     extract_plan_tables,
     extract_sql,
     get_last_cycle,
+    get_qa_pairs,
     get_question,
     not_available_reason,
 )

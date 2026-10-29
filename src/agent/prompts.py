@@ -41,16 +41,21 @@ DIALECT_RULES = {
 
 # ── Node: condense_question ───────────────────────────────────────────────────
 # Used by: condense_question node (LLM invoke, no tools)
-# Input: conversation history + follow-up question
+# Input: prior exchanges (questions and answers), the rows of the last results when a query ran,
+#        and the follow-up question
 # Output: standalone rewritten question
 
 CONDENSE_QUESTION_PROMPT = """
-Given prior questions and a follow-up question, make the follow-up self-contained,
-in its original language.
+Given prior exchanges (questions, and the answers the user read), sometimes the rows of the
+last results (shown to the user as a table), and a follow-up question, make the follow-up
+self-contained, in its original language.
 
 ## RULES
-1. Only resolve references to prior questions: pronouns ("they", "it"), ellipses
-   ("and for 2023?", "same for France"), or explicit follow-ups ("break it down by...").
+1. Only resolve references to the prior exchanges: pronouns ("they", "it"), ellipses
+   ("and for 2023?", "same for France"), explicit follow-ups ("break it down by..."), and
+   references to an answer or to the rows of the last results ("the second one", "this figure",
+   "details on the last one") — name what they point at, written exactly as in the answer
+   or the results.
 2. NEVER add filters, groupings, dimensions or scope that the follow-up does not refer to.
 3. A follow-up that makes sense on its own is a NEW question: return it unchanged,
    even if it is related to the prior topic.
@@ -58,17 +63,25 @@ in its original language.
 5. Return ONLY the question, nothing else.
 
 ## EXAMPLES
-Prior: Which airports had the most delayed flights last month?
+Q: Which airports had the most delayed flights last month?
 Follow-up: What is the average ticket price per airline?
 Output: What is the average ticket price per airline?
 
-Prior: Which airports had the most delayed flights last month?
+Q: Which airports had the most delayed flights last month?
 Follow-up: And in December?
 Output: Which airports had the most delayed flights in December?
 
-Prior: Which pilots flew the most hours this year?
+Q: Which pilots flew the most hours this year?
 Follow-up: How many of them are based in Paris?
 Output: How many of the pilots who flew the most hours this year are based in Paris?
+
+Q: Top 5 airlines by number of flights?
+Rows of the last results (shown to the user):
+airline | flights
+Nile Air | 1250
+Air Europa | 980
+Follow-up: On which routes does the second one fly?
+Output: On which routes does Air Europa fly?
 """
 
 # ── Node: rerank_tables ───────────────────────────────────────────────────────

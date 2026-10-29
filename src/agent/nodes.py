@@ -32,6 +32,7 @@ from lib import (
     extract_sql,
     extract_text_content,
     get_last_cycle,
+    get_qa_pairs,
     get_question,
     normalize_sql,
     not_available_reason,
@@ -142,38 +143,61 @@ def render_values_section(state: AgentState) -> str:
 
 # ── Nodes & Conditional Edges ─────────────────────────────────────────────────
 
+# What the condenser reads of the conversation: the last question→answer pairs, and the first rows
+# of the last result (what "the second one" points at), long values cut — labels matter, free text doesn't
+CONDENSED_EXCHANGES    = 5
+CONDENSED_RESULT_ROWS  = 20
+CONDENSED_VALUE_LENGTH = 80
+
+
 def condense_question(state: AgentState) -> dict:
     """
-    LLM node — rewrites the current question using conversation history
-    to resolve pronouns and implicit references.
+    LLM node — rewrites the current question using conversation history to resolve pronouns and
+    implicit references: to the prior questions, to their answers ("why this figure?") and to the
+    rows of the last result card ("details on the second one") — the node runs before
+    resolve_database, so the state still holds the previous turn's result_rows.
     No-op when history has no prior turns (skips the LLM call).
     """
-    # Fetch all human messages
-    human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
-    
-    # if first question, no condensation
-    if len(human_msgs) <= 1:
-        return {"standalone_question": human_msgs[-1] if human_msgs else ""}
-    
-    # Last question 
-    question = human_msgs[-1]
+    exchanges = get_qa_pairs(state["messages"])
 
-    # Previous questions
-    prior_questions = human_msgs[:-1][-5:]  # last 5 prior questions
-    
-    # Condesation
+    # First question: no condensation
+    if len(exchanges) <= 1:
+        return {"standalone_question": exchanges[-1][0] if exchanges else ""}
+
+    question = exchanges[-1][0]
+
+    lines = []
+    for prior_question, answer in exchanges[:-1][-CONDENSED_EXCHANGES:]:
+        lines.append(f"Q: {prior_question}")
+        if answer:
+            lines.append(f"A: {answer}")
+    content = "Prior exchanges:\n" + "\n".join(lines)
+
+    if rows := state.get("result_rows"):
+        content += ("\n\nRows of the last results (shown to the user):\n"
+                    + _render_result_rows(state.get("result_columns") or [], rows))
+
     response = fast_model.invoke([
         SystemMessage(content=CONDENSE_QUESTION_PROMPT),
-        HumanMessage(content=(
-            "Prior questions:\n"
-            + "\n".join(f"- {q}" for q in prior_questions)
-            + f"\n\nFollow-up question: {question}"
-        )),
+        HumanMessage(content=f"{content}\n\nFollow-up question: {question}"),
     ])
     condensed = extract_text_content(response)
 
     logger.debug(f"condense_question: '{question}' → '{condensed}'")
     return {"standalone_question": condensed}
+
+
+def _render_result_rows(columns: list[str], rows: list[list]) -> str:
+    """The first rows of the last result, pipe-separated under their column names."""
+    def cut(value) -> str:
+        text = "" if value is None else str(value)
+        return text if len(text) <= CONDENSED_VALUE_LENGTH else text[:CONDENSED_VALUE_LENGTH] + "…"
+
+    lines  = [" | ".join(columns)] if columns else []
+    lines += [" | ".join(cut(value) for value in row) for row in rows[:CONDENSED_RESULT_ROWS]]
+    if len(rows) > CONDENSED_RESULT_ROWS:
+        lines.append(f"(+{len(rows) - CONDENSED_RESULT_ROWS} more rows)")
+    return "\n".join(lines)
 
 def resolve_database(state: AgentState) -> dict:
     """
