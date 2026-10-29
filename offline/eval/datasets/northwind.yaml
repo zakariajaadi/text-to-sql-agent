@@ -87,6 +87,22 @@
       FROM Categories c JOIN Products p ON c.CategoryID = p.CategoryID
       GROUP BY c.CategoryID, c.CategoryName ORDER BY ProductCount DESC
 
+- question: "Which categories have more than 10 products?"
+  difficulty: medium
+  category: having_filter
+  expected_tables: [Categories, Products]
+  accepted_queries:
+    - >
+      SELECT c.CategoryName, COUNT(p.ProductID) AS ProductCount
+      FROM Categories c JOIN Products p ON c.CategoryID = p.CategoryID
+      GROUP BY c.CategoryID, c.CategoryName HAVING COUNT(p.ProductID) > 10
+      ORDER BY ProductCount DESC
+    - >
+      SELECT c.CategoryName
+      FROM Categories c JOIN Products p ON c.CategoryID = p.CategoryID
+      GROUP BY c.CategoryID, c.CategoryName HAVING COUNT(p.ProductID) > 10
+  notes: "A filter on an aggregate: it belongs in HAVING, not in WHERE."
+
 - question: "Which customers have placed the most orders?"
   difficulty: medium
   category: join_aggregation
@@ -250,6 +266,46 @@
     - >
       SELECT CompanyName FROM Customers
       WHERE CustomerID NOT IN (SELECT CustomerID FROM Orders)
+
+- question: "What percentage of total revenue does each category represent?"
+  difficulty: hard
+  category: ratio
+  expected_tables: [Categories, Products, order_details]
+  compare: judge
+  accepted_queries:
+    - >
+      SELECT c.CategoryName,
+             ROUND(100 * SUM(od.UnitPrice * od.Quantity * (1 - od.Discount)) /
+                   SUM(SUM(od.UnitPrice * od.Quantity * (1 - od.Discount))) OVER (), 2) AS RevenueShare
+      FROM Categories c
+      JOIN Products p ON c.CategoryID = p.CategoryID
+      JOIN order_details od ON p.ProductID = od.ProductID
+      GROUP BY c.CategoryID, c.CategoryName ORDER BY RevenueShare DESC
+  notes: >
+    A share of a total: the denominator is the revenue of every category (a window
+    SUM or a subquery), never the group's own. Judge-scored: percent or fraction,
+    rounded or not, are equally right.
+
+- question: "For each customer, how many orders did they place in 1997, including customers with none?"
+  difficulty: hard
+  category: left_join_filter
+  expected_tables: [Customers, Orders]
+  accepted_queries:
+    - >
+      SELECT c.CompanyName, COUNT(o.OrderID) AS Orders1997
+      FROM Customers c
+      LEFT JOIN Orders o ON o.CustomerID = c.CustomerID AND year(o.OrderDate) = 1997
+      GROUP BY c.CustomerID, c.CompanyName ORDER BY Orders1997 DESC
+    - >
+      SELECT c.CompanyName, COALESCE(o.Orders1997, 0) AS Orders1997
+      FROM Customers c
+      LEFT JOIN (SELECT CustomerID, COUNT(OrderID) AS Orders1997
+                 FROM Orders WHERE year(OrderDate) = 1997 GROUP BY CustomerID) o
+        ON o.CustomerID = c.CustomerID
+      ORDER BY Orders1997 DESC
+  notes: >
+    The year filter belongs in the ON clause or a subquery: in the WHERE it turns
+    the LEFT JOIN into an INNER JOIN and drops the customers without a 1997 order.
 
 - question: "What are the top 3 employees by total revenue generated?"
   difficulty: hard

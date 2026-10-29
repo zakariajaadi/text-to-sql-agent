@@ -157,6 +157,17 @@
     - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate BETWEEN '2009-01-01' AND '2009-12-31'"
     - "SELECT COUNT(*) FROM Invoice WHERE InvoiceDate LIKE '2009%'"
 
+- question: "How many customers live outside California?"
+  difficulty: medium
+  category: null_handling
+  expected_tables: [Customer]
+  accepted_queries:
+    - "SELECT COUNT(*) FROM Customer WHERE State IS NULL OR State <> 'CA'"
+    - "SELECT COUNT(*) FROM Customer WHERE COALESCE(State, '') <> 'CA'"
+  notes: >
+    State is NULL for most customers outside North America: a bare State <> 'CA'
+    silently drops them and counts only the customers that have a state.
+
 # ── Hard (3+ tables, subqueries, ambiguity) ───────────────────────────────────
 
 - question: "What is the total revenue per genre?"
@@ -248,6 +259,45 @@
     - >
       SELECT FirstName, LastName FROM Customer
       WHERE CustomerId NOT IN (SELECT CustomerId FROM Invoice)
+
+- question: "Which employees have nobody reporting to them?"
+  difficulty: hard
+  category: anti_join
+  expected_tables: [Employee]
+  accepted_queries:
+    - >
+      SELECT e.FirstName, e.LastName FROM Employee e
+      LEFT JOIN Employee r ON r.ReportsTo = e.EmployeeId
+      WHERE r.EmployeeId IS NULL
+    - >
+      SELECT FirstName, LastName FROM Employee
+      WHERE EmployeeId NOT IN (SELECT ReportsTo FROM Employee WHERE ReportsTo IS NOT NULL)
+  notes: >
+    ReportsTo holds a NULL (the general manager): a NOT IN over it without
+    IS NOT NULL returns no row at all.
+
+- question: "For each billing country, what is the total amount invoiced and the number of tracks bought?"
+  difficulty: hard
+  category: fan_out
+  expected_tables: [Invoice, InvoiceLine]
+  accepted_queries:
+    - >
+      SELECT i.BillingCountry, SUM(il.UnitPrice * il.Quantity) AS TotalInvoiced,
+             SUM(il.Quantity) AS TracksBought
+      FROM Invoice i JOIN InvoiceLine il ON il.InvoiceId = i.InvoiceId
+      GROUP BY i.BillingCountry ORDER BY TotalInvoiced DESC
+    - >
+      SELECT inv.BillingCountry, inv.TotalInvoiced, l.TracksBought
+      FROM (SELECT BillingCountry, SUM(Total) AS TotalInvoiced
+            FROM Invoice GROUP BY BillingCountry) inv
+      JOIN (SELECT i.BillingCountry, SUM(il.Quantity) AS TracksBought
+            FROM Invoice i JOIN InvoiceLine il ON il.InvoiceId = i.InvoiceId
+            GROUP BY i.BillingCountry) l ON l.BillingCountry = inv.BillingCountry
+      ORDER BY inv.TotalInvoiced DESC
+  notes: >
+    Two grains in one question: SUM(Invoice.Total) through the join to InvoiceLine
+    is multiplied by the number of lines (fan-out). In Chinook the line amounts sum
+    to the invoice total, so both accepted forms agree.
 
 # ── Ambiguous (tests assumption handling) ─────────────────────────────────────
 

@@ -1,29 +1,43 @@
 {
+  "meta": {
+    "partial_reruns": [
+      {
+        "at": "2026-10-29T00:42",
+        "commit": "5a27b91-dirty",
+        "questions": [
+          "How many customers live outside California?",
+          "Which employees have nobody reporting to them?",
+          "For each billing country, what is the total amount invoiced and the number of tracks bought?"
+        ]
+      }
+    ]
+  },
   "summary": {
-    "total_questions": 23,
-    "evaluated": 23,
-    "avg_latency_s": 5.88,
+    "total_questions": 26,
+    "evaluated": 26,
+    "technical_errors": 0,
+    "avg_latency_s": 5.85,
     "avg_table_selection": 4.96,
-    "avg_column_selection": 4.74,
-    "avg_join_correctness": 4.91,
-    "avg_filter_logic": 5.0,
-    "avg_aggregation": 4.7,
-    "avg_overall": 4.52,
+    "avg_column_selection": 4.69,
+    "avg_join_correctness": 4.92,
+    "avg_filter_logic": 4.88,
+    "avg_aggregation": 4.69,
+    "avg_overall": 4.38,
     "avg_table_recall": 1.0,
-    "exec_exact": 1.0,
-    "execution_evaluated": 21,
+    "exec_exact": 0.958,
+    "execution_evaluated": 24,
     "score_distribution": {
       "perfect (5)": 15,
-      "good (4)": 5,
+      "good (4)": 7,
       "partial (3)": 3,
-      "poor (2)": 0,
+      "poor (2)": 1,
       "wrong (1)": 0
     },
     "avg_overall_simple": 4.88,
     "exec_exact_simple": 1.0,
-    "avg_overall_medium": 4.43,
-    "exec_exact_medium": 1.0,
-    "avg_overall_hard": 4.25,
+    "avg_overall_medium": 4.12,
+    "exec_exact_medium": 0.875,
+    "avg_overall_hard": 4.2,
     "exec_exact_hard": 1.0
   },
   "results": [
@@ -961,6 +975,127 @@
         "overall": {
           "score": 5,
           "reasoning": "Correctly refused out-of-scope question."
+        }
+      }
+    },
+    {
+      "question": "How many customers live outside California?",
+      "difficulty": "medium",
+      "category": "null_handling",
+      "generated_sql": "SELECT\n  COUNT(DISTINCT `t`.`customerid`) AS `customer_count`\nFROM `customer` AS `t`\nWHERE\n  `t`.`state` <> 'CA'",
+      "selected_tables": [
+        "customer"
+      ],
+      "latency_s": 4.9,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 0.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects from the `customer` table, which is the only table required to answer the question."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses the `customerid` for counting and the `state` column for filtering, which are the necessary columns."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "No joins are necessary to answer this question, and the query correctly avoids using any."
+        },
+        "filter_logic": {
+          "score": 2,
+          "reasoning": "The query's filter `state <> 'CA'` incorrectly excludes rows where the state is NULL, leading to an inaccurate count as customers with a NULL state are also outside California."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly uses the COUNT function to get the number of customers; using DISTINCT on a primary key is redundant but does not produce an incorrect result."
+        },
+        "overall": {
+          "score": 2,
+          "reasoning": "The query will produce an incorrect result because it fails to handle NULL values in the `state` column, excluding customers who should be included in the count of those living outside California."
+        }
+      }
+    },
+    {
+      "question": "Which employees have nobody reporting to them?",
+      "difficulty": "hard",
+      "category": "anti_join",
+      "generated_sql": "SELECT\n  `e`.`employeeid` AS `employee_id`,\n  `e`.`lastname` AS `last_name`,\n  `e`.`firstname` AS `first_name`,\n  `e`.`title` AS `title`,\n  `e`.`reportsto` AS `reports_to`,\n  `e`.`birthdate` AS `birth_date`,\n  `e`.`hiredate` AS `hire_date`,\n  `e`.`address` AS `address`,\n  `e`.`city` AS `city`,\n  `e`.`state` AS `state`,\n  `e`.`country` AS `country`,\n  `e`.`postalcode` AS `postal_code`,\n  `e`.`phone` AS `phone`,\n  `e`.`fax` AS `fax`,\n  `e`.`email` AS `email`\nFROM `employee` AS `e`\nWHERE\n  NOT `e`.`employeeid` IN (\n    SELECT\n      `mgr`.`reportsto`\n    FROM `employee` AS `mgr`\n    WHERE\n      NOT `mgr`.`reportsto` IS NULL\n  )",
+      "selected_tables": [
+        "employee"
+      ],
+      "latency_s": 6.26,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly uses only the 'employee' table, which is the same as the ground truth queries."
+        },
+        "column_selection": {
+          "score": 3,
+          "reasoning": "The query selects all columns from the employee table, whereas the question only implicitly asks for employee names, making the output unnecessarily verbose."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The query uses a subquery instead of a join, which is a valid and correct alternative approach also used by one of the ground truth queries."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The filtering logic using a `NOT IN` clause with a subquery to find employees not present in the 'reportsto' column is perfectly correct."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "No aggregation is needed for this question, and the query correctly does not use any."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is logically correct and provides the right answer, but it selects many unnecessary columns, which is a minor cosmetic issue."
+        }
+      }
+    },
+    {
+      "question": "For each billing country, what is the total amount invoiced and the number of tracks bought?",
+      "difficulty": "hard",
+      "category": "fan_out",
+      "generated_sql": "SELECT\n  `i`.`billingcountry` AS `billing_country`,\n  SUM(`il`.`unitprice` * `il`.`quantity`) AS `total_amount_invoiced`,\n  SUM(`il`.`quantity`) AS `number_of_tracks_bought`\nFROM `invoice` AS `i`\nJOIN `invoiceline` AS `il`\n  ON `i`.`invoiceid` = `il`.`invoiceid`\nGROUP BY\n  `i`.`billingcountry`",
+      "selected_tables": [
+        "invoice",
+        "invoiceline"
+      ],
+      "latency_s": 5.58,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `invoice` and `invoiceline` tables, which are the same as in the ground truth queries."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query selects the correct columns for billing country, total amount, and number of tracks, with calculations matching the ground truth."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between the `invoice` and `invoiceline` tables is correctly performed on the `invoiceid` column."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filtering is required by the question, and the query correctly omits any WHERE clause."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by billing country and uses the correct aggregation functions, but it is missing the ORDER BY clause present in the ground truth queries."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and returns the right data, but it lacks the ORDER BY clause from the ground truth, which is a minor cosmetic difference."
         }
       }
     }

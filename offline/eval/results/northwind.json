@@ -1,30 +1,44 @@
 {
+  "meta": {
+    "partial_reruns": [
+      {
+        "at": "2026-10-29T00:44",
+        "commit": "5a27b91-dirty",
+        "questions": [
+          "Which categories have more than 10 products?",
+          "What percentage of total revenue does each category represent?",
+          "For each customer, how many orders did they place in 1997, including customers with none?"
+        ]
+      }
+    ]
+  },
   "summary": {
-    "total_questions": 25,
-    "evaluated": 25,
-    "avg_latency_s": 6.09,
-    "avg_table_selection": 4.76,
-    "avg_column_selection": 4.4,
-    "avg_join_correctness": 4.84,
-    "avg_filter_logic": 4.72,
-    "avg_aggregation": 4.56,
-    "avg_overall": 4.24,
+    "total_questions": 28,
+    "evaluated": 28,
+    "technical_errors": 0,
+    "avg_latency_s": 6.15,
+    "avg_table_selection": 4.79,
+    "avg_column_selection": 4.43,
+    "avg_join_correctness": 4.86,
+    "avg_filter_logic": 4.75,
+    "avg_aggregation": 4.54,
+    "avg_overall": 4.25,
     "avg_table_recall": 0.99,
-    "exec_exact": 0.955,
-    "execution_evaluated": 22,
+    "exec_exact": 0.958,
+    "execution_evaluated": 24,
     "score_distribution": {
-      "perfect (5)": 13,
-      "good (4)": 7,
+      "perfect (5)": 14,
+      "good (4)": 9,
       "partial (3)": 4,
       "poor (2)": 0,
       "wrong (1)": 1
     },
     "avg_overall_simple": 4.62,
     "exec_exact_simple": 1.0,
-    "avg_overall_medium": 4.33,
+    "avg_overall_medium": 4.43,
     "exec_exact_medium": 1.0,
-    "avg_overall_hard": 3.91,
-    "exec_exact_hard": 0.9
+    "avg_overall_hard": 3.92,
+    "exec_exact_hard": 0.909
   },
   "results": [
     {
@@ -1039,6 +1053,131 @@
         "overall": {
           "score": 5,
           "reasoning": "Correctly refused out-of-scope question."
+        }
+      }
+    },
+    {
+      "question": "Which categories have more than 10 products?",
+      "difficulty": "medium",
+      "category": "having_filter",
+      "generated_sql": "SELECT\n  `c`.`categoryname`,\n  COUNT(DISTINCT `p`.`productid`) AS `product_count`\nFROM `categories` AS `c`\nJOIN `products` AS `p`\n  ON `c`.`categoryid` = `p`.`categoryid`\nGROUP BY\n  `c`.`categoryname`\nHAVING\n  COUNT(DISTINCT `p`.`productid`) > 10",
+      "selected_tables": [
+        "categories",
+        "products"
+      ],
+      "latency_s": 5.85,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `categories` and `products` tables, which are the same as the ground truth."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the category name and the count of products, which is a valid way to answer the question."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The join between `categories` and `products` on `categoryid` is correct."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The `HAVING` clause correctly filters for categories with a product count greater than 10."
+        },
+        "aggregation": {
+          "score": 5,
+          "reasoning": "The query correctly groups by category name and uses `COUNT` to get the number of products per category."
+        },
+        "overall": {
+          "score": 5,
+          "reasoning": "The generated query is functionally identical to the ground truth queries and correctly answers the user's question."
+        }
+      }
+    },
+    {
+      "question": "What percentage of total revenue does each category represent?",
+      "difficulty": "hard",
+      "category": "ratio",
+      "generated_sql": "WITH `category_revenue_cte` AS (\n  SELECT\n    `c`.`categoryname`,\n    SUM(`od`.`unitprice` * `od`.`quantity` * (\n      1 - `od`.`discount`\n    )) AS `category_revenue`\n  FROM `order_details` AS `od`\n  JOIN `products` AS `p`\n    ON `od`.`productid` = `p`.`productid`\n  JOIN `categories` AS `c`\n    ON `p`.`categoryid` = `c`.`categoryid`\n  GROUP BY\n    `c`.`categoryname`\n), `grand_total_revenue_cte` AS (\n  SELECT\n    SUM(`od`.`unitprice` * `od`.`quantity` * (\n      1 - `od`.`discount`\n    )) AS `grand_total_revenue`\n  FROM `order_details` AS `od`\n  JOIN `products` AS `p`\n    ON `od`.`productid` = `p`.`productid`\n)\nSELECT\n  `crc`.`categoryname` AS `category_name`,\n  (\n    `crc`.`category_revenue` / `gtrc`.`grand_total_revenue`\n  ) * 100 AS `percentage_of_total_revenue`\nFROM `category_revenue_cte` AS `crc`\nCROSS JOIN `grand_total_revenue_cte` AS `gtrc`",
+      "selected_tables": [
+        "categories",
+        "products",
+        "order_details"
+      ],
+      "latency_s": 8.58,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": null,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects and joins the `categories`, `products`, and `order_details` tables, which are the same as in the ground-truth query."
+        },
+        "column_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the category name and calculates the revenue for each line item using `unitprice * quantity * (1 - discount)`, which is the correct logic."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "All joins between the base tables are correct, and the use of CTEs with a final CROSS JOIN is a valid alternative approach to using a window function to get the total revenue."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "No filters are required by the question, and the query correctly omits any WHERE or HAVING clauses."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by category name to calculate category-level revenue, but it omits the ORDER BY clause present in the ground-truth query, which makes the result less user-friendly."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is logically correct and produces the correct results using a valid alternative approach (CTEs instead of a window function), but it has a minor cosmetic issue by not ordering the final results by percentage."
+        }
+      },
+      "compare": "judge"
+    },
+    {
+      "question": "For each customer, how many orders did they place in 1997, including customers with none?",
+      "difficulty": "hard",
+      "category": "left_join_filter",
+      "generated_sql": "SELECT\n  `c`.`companyname` AS `customer_name`,\n  COUNT(`o`.`orderid`) AS `number_of_orders`\nFROM `customers` AS `c`\nLEFT JOIN `orders` AS `o`\n  ON `c`.`customerid` = `o`.`customerid` AND YEAR(`o`.`orderdate`) = 1997\nGROUP BY\n  `c`.`customerid`,\n  `c`.`companyname`",
+      "selected_tables": [
+        "customers",
+        "orders"
+      ],
+      "latency_s": 5.38,
+      "table_recall": 1.0,
+      "table_precision": 1.0,
+      "table_hallucination": 0.0,
+      "exec_exact": 1.0,
+      "judge": {
+        "table_selection": {
+          "score": 5,
+          "reasoning": "The query correctly selects the `customers` and `orders` tables, which are the only ones needed to answer the question."
+        },
+        "column_selection": {
+          "score": 4,
+          "reasoning": "The query selects the correct columns for the customer's name and the count of orders, but uses different aliases than the ground truth queries."
+        },
+        "join_correctness": {
+          "score": 5,
+          "reasoning": "The query correctly uses a LEFT JOIN from `customers` to `orders` on the `customerid` column, which correctly includes customers with no orders."
+        },
+        "filter_logic": {
+          "score": 5,
+          "reasoning": "The filter for the year 1997 is correctly applied to the `orderdate` column within the ON clause of the LEFT JOIN, which is a valid and efficient approach."
+        },
+        "aggregation": {
+          "score": 4,
+          "reasoning": "The query correctly groups by customer and uses COUNT to get the number of orders, but it is missing the ORDER BY clause that is present in both ground truth queries."
+        },
+        "overall": {
+          "score": 4,
+          "reasoning": "The query is functionally correct and produces the right data, but it differs from the ground truth in its column aliases and lack of an ORDER BY clause, which are minor issues."
         }
       }
     }
