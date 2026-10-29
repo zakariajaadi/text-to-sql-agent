@@ -71,7 +71,7 @@ def prompts(monkeypatch):
 
 
 SAVINGS = Metric(name="total_savings", description="Total savings held.", expr="SUM(savings.amount)",
-                 synonyms=[], time_dimension="", tables=["savings"], columns=[("savings", "amount")])
+                 synonyms=["épargne totale"], time_dimension="", tables=["savings"], columns=[("savings", "amount")])
 
 
 STATE = {"selected_db": "bank", "messages": [HumanMessage("Encours des clients actifs ?")],
@@ -93,10 +93,11 @@ def test_the_chosen_criteria_enter_the_clarification(prompts, monkeypatch):
     nodes.planner({**STATE, "clarify": True})                        # the rerank chose none
     nodes.planner({**STATE, "clarify_criteria": ["total_savings"]})  # the eval never sets clarify
     assert "### Business criteria" in prompts[0]
-    assert "- total_savings: Total savings held." in prompts[0]
-    assert "SUM(savings.amount)" not in prompts[0]   # names and descriptions only, never expressions
+    assert "- épargne totale: Total savings held." in prompts[0]   # first synonym, business words
+    assert "total_savings" not in prompts[0]         # the code name would be copied into the options
+    assert "SUM(savings.amount)" not in prompts[0]   # labels and descriptions only, never expressions
     assert "### Business criteria" not in prompts[1]
-    assert "total_savings" not in prompts[2]
+    assert "épargne totale" not in prompts[2]
 
 
 def test_the_rerank_chooses_the_criteria_from_the_catalog(monkeypatch):

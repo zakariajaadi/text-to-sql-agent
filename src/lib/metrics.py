@@ -132,9 +132,16 @@ def render_metric_catalog(metrics: dict[str, Metric]) -> str:
 
 
 def render_metric_criteria(metrics: list[Metric]) -> str:
-    """Names and descriptions only, the criteria a clarification may offer (CLARIFICATION_CRITERIA):
-    no expressions or synonyms — the options name quantities, never compute them."""
-    return "\n".join(f"- {m.name}: {m.description}" for m in metrics)
+    """
+    The criteria a clarification may offer (CLARIFICATION_CRITERIA), one "- label: description"
+    line each. The label is the first synonym — short business words the model copies into the
+    options, matched back by the synonyms on the follow-up turn — never the code name (the
+    model copies whatever it sees) and never the expression: options name quantities, not SQL.
+    """
+    return "\n".join(
+        f"- {m.synonyms[0] if m.synonyms else m.name.replace('_', ' ')}: {m.description}"
+        for m in metrics
+    )
 
 
 def render_metric_definitions(metrics: list[Metric]) -> str:

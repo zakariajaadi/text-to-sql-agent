@@ -224,17 +224,17 @@ Question: "Which airports had the most delayed flights?"
 
 CLARIFICATION_CRITERIA = """
 ### Business criteria
-These business metrics could define the question's superlative. Offer each one as an option,
-named by its quantity in a few words, in the language of the question — never its code name
-nor its description copied whole. Their tables are not in the schema below: the follow-up
-turn loads them automatically.
+These business quantities could define the question's superlative. Offer each one as an
+option, by its name before the colon, in the language of the question — never its description
+copied whole. Their tables are not in the schema below: the follow-up turn loads them
+automatically.
 {catalog}
 
 ### Example (a business criterion as an option)
 Question: "Which are the top passengers?"
-Business criteria: - miles_flown: Total number of miles flown on the airline's flights.
+Business criteria: - miles flown: Total number of miles flown on the airline's flights.
 Clarify: The top passengers by what? | miles flown | number of flights
-→ "miles flown" says the quantity in two words, not the whole description.
+→ the option is the name "miles flown", never the whole description.
 """
 
 # ── Shared section: business metrics ──────────────────────────────────────────
