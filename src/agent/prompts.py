@@ -196,7 +196,8 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
 - Aggregation strategy: [describe levels — e.g. "first SUM per order, then AVG per country"]
 - Filters: [WHERE conditions if any]
 - Also close: [other listed values matching a filtered term, not filtered on — or None]
-- Ordering: [ORDER BY if needed — required for rankings and when a limit is set]
+- Ordering: [ORDER BY — required for rankings and when a limit is set; a grouped aggregate
+  is ordered by its measure, descending, unless the question asks another order]
 - Limit: [N only when the question asks for N rows or a single answer — otherwise None]
 
 ## RULES
@@ -236,6 +237,9 @@ Do NOT write SQL. Only describe the steps the SQL writer must follow.
   single product or offer, every row already belongs to it: never filter that table on the name
   of that product or offer, even when the question names it. Never add a filter of your own to
   clean the data (non-null, non-empty, non-zero, valid-looking values) either.
+- A negative filter ("not X", "outside X", "other than X") must keep the rows whose column has
+  no value: plan it as col IS NULL OR col <> 'X' (likewise col NOT IN ('A', 'B')). A bare
+  col <> 'X' silently drops the rows where the column is NULL.
 - If the information the question asks for is in no column of the schema, write only one line
   instead of a plan, naming the information in business words, never a table or column name:
   "Not available (restricted): [the information]" when a table or column description says it
@@ -294,6 +298,8 @@ You ONLY write SQL — you never execute it.
    - Otherwise, or when the "Matching values:" list ends with "(+N more)", use
      LOWER(column) LIKE LOWER('%value%').
 6. Always include ORDER BY for rankings, "top N" questions, and whenever LIMIT is applied.
+   A grouped aggregate is always ordered too: by its measure, descending, unless the question
+   asks for another order.
 7. Use explicit JOIN syntax (JOIN ... ON), never implicit joins in WHERE. Join a table only to
    read or filter one of its columns: never join the table an identifier refers to just to
    count that identifier (the join drops the rows whose identifier that table lacks).
@@ -317,6 +323,9 @@ You ONLY write SQL — you never execute it.
     AVG a column of B through that join — its values are multiplied. Aggregate in two levels (a
     subquery reading B's measure, or aggregating A, before the join), as the plan states. Counting
     B's entities stays COUNT(DISTINCT their id), as rule 12 says.
+15. A negative filter ("not X", "outside X", "other than X") must keep the rows whose column has
+    no value: write col IS NULL OR col <> 'X' (likewise col NOT IN ('A', 'B')). A bare
+    col <> 'X' silently drops the rows where the column is NULL.
 
 ## {dialect} RULES
 {dialect_rules}
