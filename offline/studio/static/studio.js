@@ -1458,13 +1458,29 @@ async function computeLayout(key) {
   return { db: ui.db, key, nodes, routes, width, height: y, pilled };
 }
 
-// ELK not loaded: the layout of the server, every table a box, every line drawn from side to side
-const serverLayout = (key) => ({ db: ui.db, key, nodes: ui.rel.layout.nodes, routes: {}, width: ui.rel.layout.width,
-  height: ui.rel.layout.height, pilled: new Set() });
+// The layout of the server (grandalf): every table a box, every line drawn from side to side. Curves chosen, or ELK
+// not loaded
+const serverLayout = (key, curved = false) => ({ db: ui.db, key, nodes: ui.rel.layout.nodes, routes: {}, width: ui.rel.layout.width,
+  height: ui.rel.layout.height, pilled: new Set(), curved });
 
-// The layout to draw: the one of these relations, or while it is computed the last one of this database (its tables
-// then glide to their new places); none yet: the map waits for it, drawn again once it is there
+// The lines of the map, chosen for each database and kept in the browser: curves (the layout of the server, its lines
+// curving from side to side: a table joined by many reads better so, as personne on awb_silver) or right angles (ELK,
+// the references in pills: better where the tables joined by many are references); curves unless chosen otherwise
+const MAP_LINES = "studio-map-lines";
+const mapLinesChosen = (() => { try { return JSON.parse(localStorage.getItem(MAP_LINES) || "{}"); } catch { return {}; } })();
+const mapLines = () => (mapLinesChosen[ui.db] === "right" ? "right" : "curves");
+function chooseMapLines(lines) {
+  if (lines === mapLines()) return;
+  mapLinesChosen[ui.db] = lines;
+  try { localStorage.setItem(MAP_LINES, JSON.stringify(mapLinesChosen)); } catch {}   // kept for this page at least
+  renderDetail();
+}
+
+// The layout to draw. Curves: the server's, at once. Right angles: the one of these relations, or while it is computed
+// the last one of this database (its tables then glide to their new places); none yet: the map waits for it, drawn
+// again once it is there
 function mapLayout() {
+  if (mapLines() === "curves") return serverLayout(null, true);
   const key = layoutKey();
   if (MAP.layout?.key !== key && MAP.computing !== key) {
     MAP.computing = key;
@@ -1479,9 +1495,10 @@ function mapLayout() {
 }
 
 // The map as it shows: the boxes of the layout, and the table chosen with its neighbours in the middle of the view (its
-// tables on its left, the ones it joins on its right, the others gone). The whole map and a path: the lines ELK drew,
-// a line to a reference in pills only on the path. A table chosen: each of its relations from the side of one table to
-// the side of the other, the relations of a side spread along it by the height of their other end
+// tables on its left, the ones it joins on its right, the others gone). Right angles, the whole map and a path: the
+// lines ELK drew, a line to a reference in pills only on the path. Otherwise each relation from the side of one table
+// to the side of the other, curved or at right angles, the relations of a side spread along it by the height of their
+// other end
 function mapGeometry(L) {
   const laid = L.nodes, layer = pathLayers(), cur = layer.size ? null : ui.current;
   const nodes = Object.fromEntries(Object.entries(laid).map(([t, n]) => [t, { ...n, dx: n.x, dy: n.y, gone: false }]));
@@ -1512,9 +1529,10 @@ function mapGeometry(L) {
     const h = shown[key.split("|")[0]].h, step = ends.length > 1 ? Math.min(7, (h - 12) / (ends.length - 1)) : 0;
     ends.sort((a, b) => a.y - b.y).forEach((p, j) => { offset[p.i][p.end] = (j - (ends.length - 1) / 2) * step; });
   }
+  const draw = L.curved ? curvePath : edgePath;
   const edges = rels.map((r, i) => (!drawn(r) ? null : route(r) ? { r, i, ...routePath(route(r)) }
-    : { r, i, ...edgePath(shown[r.source], shown[r.target], r.source === r.target, offset[i].s, offset[i].t) }));
-  return { nodes, shown, edges, box, cur, layer, width: L.width, height: L.height };
+    : { r, i, ...draw(shown[r.source], shown[r.target], r.source === r.target, offset[i].s, offset[i].t) }));
+  return { nodes, shown, edges, box, cur, layer, width: L.width, height: L.height, curved: L.curved };
 }
 
 // The table chosen in the middle of the view: it stays where it is, the tables that join it in columns on its left, the
@@ -1535,6 +1553,23 @@ function centredPlaces(nodes, cur) {
   place(into, -1);
   place(from.filter((t) => !into.includes(t)), 1);
   return places;
+}
+
+// The curve of a relation, horizontal at its two ends, from the side of a table to the side of the other: left to right
+// between two columns, right to left when the table pointed to is on the left, out on the right and back within one
+// column, a loop for a table pointing to itself. ds, dt: the place of each end along its side; dirs: where the line
+// goes out of each end (1 right, -1 left)
+function curvePath(s, t, self, ds = 0, dt = 0) {
+  if (self) {
+    const x = s.x + s.w, y = s.y + s.h / 2;
+    return { d: `M${x} ${y + 5} C${x + 34} ${y + 22} ${x + 34} ${y - 22} ${x + 2} ${y - 5}`, start: [x, y + 5], end: [x + 2, y - 5], dirs: [1, 1] };
+  }
+  const sy = s.y + s.h / 2 + ds, ty = t.y + t.h / 2 + dt;
+  const curve = (x1, x2, bend, dirs) => ({ d: `M${x1} ${sy} C${x1 + bend} ${sy} ${x2 - bend} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs });
+  if (t.x > s.x + s.w + 8) return curve(s.x + s.w, t.x, Math.max(30, (t.x - s.x - s.w) * 0.45), [1, -1]);
+  if (t.x + t.w < s.x - 8) return curve(s.x, t.x + t.w, -Math.max(30, (s.x - t.x - t.w) * 0.45), [-1, 1]);
+  const x1 = s.x + s.w, x2 = t.x + t.w, out = Math.max(x1, x2) + 40;
+  return { d: `M${x1} ${sy} C${out} ${sy} ${out} ${ty} ${x2} ${ty}`, start: [x1, sy], end: [x2, ty], dirs: [1, 1] };
 }
 
 // The line of a relation at right angles, as ELK draws the whole map, from the side of a table to the side of the
@@ -1784,7 +1819,7 @@ function setupMap(g) {
   const wrap = $("map-wrap"), svg = $("map"), { width, height } = g;
   const cw = wrap.clientWidth || 800;
   svg.style.height = ui.mapBig ? "" : `${Math.max(260, Math.min(600, Math.round(height * Math.min(cw / width, 1.25))))}px`;
-  const ch = svg.clientHeight, key = g.cur || (g.layer.size ? `${ui.path.a}>${ui.path.b}` : null);
+  const ch = svg.clientHeight, key = `${g.curved ? "curves" : "right"}|${g.cur || (g.layer.size ? `${ui.path.a}>${ui.path.b}` : "")}`;
   MAP.geo = g;
 
   // the tables that moved since the map was drawn: from where they were to where they go, their relations after them
@@ -2226,6 +2261,9 @@ function renderRelations(el, message) {
       <span class="muted-text">Chemin</span><select id="path-a" aria-label="Table de départ">${options(ui.path.a, "départ…")}</select>
       <span class="arrow">→</span><select id="path-b" aria-label="Table d'arrivée">${options(ui.path.b, "arrivée…")}</select>
       <span class="path-result">${pathText()}</span>
+      <div class="seg map-lines" role="group" aria-label="Lignes de la carte">${[["curves", "Courbes", "Chaque jointure en courbe d'une table à l'autre"],
+        ["right", "Angles droits", "Les tables disposées en couches, les jointures à angle droit autour d'elles, les référentiels joints par plusieurs tables en pastilles"]]
+        .map(([v, label, tip]) => `<button type="button" data-lines="${v}" aria-pressed="${mapLines() === v}" title="${tip}">${label}</button>`).join("")}</div>
     </div>
     ${rel.unchecked ? `<div class="rule-note"><span>${rel.unchecked > 1 ? `${fmt.format(rel.unchecked)} jointures jamais mesurées` : "Une jointure jamais mesurée"} sur les données : `
       + `rien ne prouve encore que leurs valeurs se retrouvent d'une table à l'autre.</span>${measure}Vérifier sur les données</button></div>` : ""}
@@ -2265,6 +2303,7 @@ function renderRelations(el, message) {
   $("path-b").onchange = (e) => { ui.path.b = e.target.value || null; ui.path.result = null; findPath(); };
   $("check-relations").onclick = () => runJob("relations/run", { check: true });
   if ($("relations-all")) $("relations-all").onclick = showAllTables;
+  el.querySelectorAll("[data-lines]").forEach((b) => { b.onclick = () => chooseMapLines(b.dataset.lines); });
   wireJoins(el);
   el.querySelectorAll("[data-restore]").forEach((b) => b.addEventListener("click", () => moveRelation(b.dataset.restore, true)));
   // the progress moves from where it was drawn last; after an answer, the next line of the queue takes the focus
