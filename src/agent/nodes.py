@@ -788,6 +788,11 @@ def route_after_planner(state: AgentState) -> Literal["clarify", "plan"]:
     return "clarify" if clarify_question(state.get("query_plan", "")) else "plan"
 
 
+# CLARIFICATION_SECTION asks for at most 3 options, but the model does not always comply:
+# the cap is enforced here, keeping the first ones — the model leads with the most plausible
+MAX_CLARIFICATION_OPTIONS = 3
+
+
 def ask_clarification(state: AgentState) -> dict:
     """
     Deterministic node — the planner found two plausible readings (route_after_planner): the turn
@@ -796,6 +801,9 @@ def ask_clarification(state: AgentState) -> dict:
     standalone question: no graph suspension, no interrupt.
     """
     question, options = clarify_question(state["query_plan"])
+    if len(options) > MAX_CLARIFICATION_OPTIONS:
+        logger.debug(f"ask_clarification: {len(options)} options, capped to {MAX_CLARIFICATION_OPTIONS}")
+        options = options[:MAX_CLARIFICATION_OPTIONS]
     logger.info(f"ask_clarification: {question} | options: {options}")
     return {
         "messages":               [AIMessage(content=question)],

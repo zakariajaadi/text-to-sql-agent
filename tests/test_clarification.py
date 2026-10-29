@@ -46,6 +46,12 @@ def test_ask_clarification_ends_the_turn_on_the_question():
     assert output["generated_query"] == ""
 
 
+def test_ask_clarification_caps_the_options():
+    # The prompt asks for at most 3 options; a model that writes 6 is capped to the first 3
+    output = nodes.ask_clarification({"query_plan": "Clarify: Par quoi ? | a | b | c | d | e | f"})
+    assert output["clarification_options"] == ["a", "b", "c"]
+
+
 @pytest.fixture
 def prompts(monkeypatch):
     """planner on a fake database, the system prompts sent to the model collected."""
