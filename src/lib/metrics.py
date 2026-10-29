@@ -11,6 +11,8 @@ A metric is an aggregate SQL expression defined once, with a description and syn
       synonyms: [sales, turnover]
       expr: SUM(order_details.unitprice * order_details.quantity * (1 - order_details.discount))
       time_dimension: orders.orderdate     # optional: default date for "per month", "in 2022"...
+      dimensions: [customer, employee]     # optional: entities the metric can be broken down by —
+                                           # a clarification offers it only for one of them (rerank_tables)
 
 The LLMs pick metrics by name and copy their expression: they never redefine them.
 Columns are written table.column, so the tables of a metric are read from its expression.
@@ -37,6 +39,7 @@ class Metric:
     expr:           str
     synonyms:       list[str] = field(default_factory=list)
     time_dimension: str = ""            # table.column, empty when the metric has no default date
+    dimensions:     list[str] = field(default_factory=list)   # entities the metric can be broken down by; empty = undeclared, no restriction
     tables:         list[str] = field(default_factory=list)   # read from expr and time_dimension
     columns:        list[tuple[str, str]] = field(default_factory=list)   # (table, column) of expr and time_dimension
 
@@ -98,6 +101,10 @@ def validate_metric(name: str, entry: dict, dialect: str, columns: dict[str, lis
     if any(not table for table, _ in used):
         fail("write every column of expr as table.column")
 
+    dimensions = entry.get("dimensions") or []
+    if not isinstance(dimensions, list) or any(not isinstance(d, str) or not d.strip() for d in dimensions):
+        fail("dimensions must be a list of entity names")
+
     time_dimension = entry.get("time_dimension") or ""
     if time_dimension:
         table, _, column = time_dimension.partition(".")
@@ -118,15 +125,18 @@ def validate_metric(name: str, entry: dict, dialect: str, columns: dict[str, lis
         expr           = entry["expr"],
         synonyms       = list(entry.get("synonyms") or []),
         time_dimension = time_dimension,
+        dimensions     = [d.strip() for d in dimensions],
         tables         = list(dict.fromkeys(table for table, _ in used)),
         columns        = list(dict.fromkeys(used)),
     )
 
 
 def render_metric_catalog(metrics: dict[str, Metric]) -> str:
-    """Names, descriptions and synonyms of all the metrics, for rerank_tables to pick from."""
+    """Names, descriptions, synonyms and dimensions of all the metrics, for rerank_tables to pick from."""
     return "\n".join(
-        f"- {m.name}: {m.description}" + (f" Synonyms: {', '.join(m.synonyms)}." if m.synonyms else "")
+        f"- {m.name}: {m.description}"
+        + (f" Synonyms: {', '.join(m.synonyms)}." if m.synonyms else "")
+        + (f" Dimensions: {', '.join(m.dimensions)}." if m.dimensions else "")
         for m in metrics.values()
     ) or "None"
 

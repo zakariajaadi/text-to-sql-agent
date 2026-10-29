@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from agent import nodes
 from agent.schemas import RankedTablesAndScope
 from lib.messages import clarify_question
-from lib.metrics import Metric
+from lib.metrics import Metric, validate_metric
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -72,6 +72,12 @@ def prompts(monkeypatch):
 
 SAVINGS = Metric(name="total_savings", description="Total savings held.", expr="SUM(savings.amount)",
                  synonyms=["épargne totale"], time_dimension="", tables=["savings"], columns=[("savings", "amount")])
+FLOWS   = Metric(name="incoming_flows", description="Total credited amounts.", expr="SUM(flows.credit)",
+                 synonyms=["flux entrants"], dimensions=["client", "agence"],
+                 tables=["flows"], columns=[("flows", "credit")])
+REVENUE = Metric(name="company_revenue", description="Declared revenue of the registry's companies.",
+                 expr="SUM(bilan.ca)", synonyms=["CA entreprises"], dimensions=["entreprise"],
+                 tables=["bilan"], columns=[("bilan", "ca")])
 
 
 STATE = {"selected_db": "bank", "messages": [HumanMessage("Encours des clients actifs ?")],
@@ -100,28 +106,63 @@ def test_the_chosen_criteria_enter_the_clarification(prompts, monkeypatch):
     assert "épargne totale" not in prompts[2]
 
 
-def test_the_rerank_chooses_the_criteria_from_the_catalog(monkeypatch):
-    """Asked only when clarify is on; validated against the catalog keys, tables not loaded."""
+@pytest.fixture
+def rerank_env(monkeypatch):
+    """rerank_tables on a fake bank database with a three-metric catalog; returns the mocked LLM."""
     llm = MagicMock()
-    llm.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
-        tables=["person"], is_in_scope=True, reason="",
-        criteria=["total_savings", "invented", "total_savings"])
     monkeypatch.setattr(nodes, "fast_model", llm)
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala"),
                                                       retrieval=SimpleNamespace(fk_neighbors=False)))
     monkeypatch.setattr(nodes, "schema_store", {"bank": {"person": "ddl", "savings": "ddl"}})
-    monkeypatch.setattr(nodes, "metrics_store", {"bank": {"total_savings": SAVINGS}})
-    state = {"selected_db": "bank", "messages": [HumanMessage("meilleurs ?")],
-             "candidate_schemas": {"person": "ddl"}}
+    monkeypatch.setattr(nodes, "metrics_store",
+                        {"bank": {"total_savings": SAVINGS, "incoming_flows": FLOWS, "company_revenue": REVENUE}})
+    return llm
 
-    with_clarify = nodes.rerank_tables({**state, "clarify": True})
-    without      = nodes.rerank_tables(state)
+
+RERANK_STATE = {"selected_db": "bank", "messages": [HumanMessage("meilleurs ?")],
+                "candidate_schemas": {"person": "ddl"}}
+
+
+def test_the_rerank_chooses_the_criteria_from_the_catalog(rerank_env):
+    """Asked only when clarify is on; validated against the catalog keys, tables not loaded."""
+    rerank_env.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
+        tables=["person"], is_in_scope=True, reason="",
+        criteria=["total_savings", "invented", "total_savings"])
+
+    with_clarify = nodes.rerank_tables({**RERANK_STATE, "clarify": True})
+    without      = nodes.rerank_tables(RERANK_STATE)
     assert with_clarify["clarify_criteria"] == ["total_savings"]       # catalog keys only, deduplicated
     assert "savings" not in with_clarify["selected_schemas"]           # a criterion loads no table
     assert without["clarify_criteria"] == []
-    sent = [call.args[0][0].content for call in llm.with_structured_output.return_value.invoke.call_args_list]
+    sent = [call.args[0][0].content for call in rerank_env.with_structured_output.return_value.invoke.call_args_list]
     assert "9. In criteria" in sent[0]
     assert "9. In criteria" not in sent[1]   # the eval's rerank prompt is unchanged
+    assert "Dimensions: client, agence." in sent[1]   # the catalog lists declared dimensions
+
+
+def test_a_criterion_is_offered_only_for_a_declared_dimension(rerank_env):
+    """A metric declaring dimensions needs the ranked entity among them; an undeclared one is unrestricted."""
+    rerank_env.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
+        tables=["person"], is_in_scope=True, reason="",
+        criteria=["incoming_flows", "company_revenue", "total_savings"], ranked_entity="Agence")
+    output = nodes.rerank_tables({**RERANK_STATE, "clarify": True})
+    assert output["clarify_criteria"] == ["incoming_flows", "total_savings"]   # revenue is per entreprise only
+
+
+def test_a_declared_criterion_needs_a_ranked_entity(rerank_env):
+    """No entity recognized: restricted metrics are dropped, unrestricted ones stay."""
+    rerank_env.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
+        tables=["person"], is_in_scope=True, reason="",
+        criteria=["incoming_flows", "total_savings"], ranked_entity="")
+    output = nodes.rerank_tables({**RERANK_STATE, "clarify": True})
+    assert output["clarify_criteria"] == ["total_savings"]
+
+
+def test_validate_metric_reads_the_dimensions():
+    entry = {"description": "d", "expr": "SUM(t.c)", "dimensions": ["client", " agence "]}
+    assert validate_metric("m", entry, "impala", {}).dimensions == ["client", "agence"]
+    with pytest.raises(ValueError, match="dimensions"):
+        validate_metric("m", {"description": "d", "expr": "SUM(t.c)", "dimensions": "client"}, "impala", {})
 
 
 def test_resolve_database_resets_the_clarification(monkeypatch):

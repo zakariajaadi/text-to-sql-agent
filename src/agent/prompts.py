@@ -155,10 +155,16 @@ RERANK_CRITERIA_REQUEST = """
    to 3 business metrics below whose quantity could define that superlative — they become the
    options of a question asked to the user, their tables are NOT to be selected. Only metrics
    whose sense matches: one measuring a problem (unpaid amounts, incidents, losses) can define
-   "worst" or "most risky", never "best". Leave it empty when the question names its criterion.
-   Example: "Which are the top passengers?" with a catalog holding miles_flown (miles flown on
-   the airline's flights) and baggage_claims (compensation paid for lost baggage)
-   → criteria=["miles_flown"]: flying more makes a top passenger, lost baggage does not.
+   "worst" or "most risky", never "best". A metric listing Dimensions can only be offered for
+   an entity it lists: set ranked_entity to the entity the question ranks, copied exactly from
+   those Dimensions (empty when none names it). Leave criteria empty when the question names
+   its criterion.
+   Example: "Which are the top travel agencies?" with a catalog holding
+   sales_total (total sales. Dimensions: customer, agency),
+   baggage_claims (compensation paid for lost baggage. Dimensions: customer, agency) and
+   company_revenue (declared revenue of the registry's companies. Dimensions: company)
+   → criteria=["sales_total"], ranked_entity="agency": selling more makes a top agency;
+     baggage_claims measures a problem, and company_revenue cannot be broken down by agency.
 """
 
 # ── Node: prune_columns ───────────────────────────────────────────────────────

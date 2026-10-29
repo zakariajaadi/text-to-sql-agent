@@ -312,13 +312,25 @@ def rerank_tables(state: AgentState) -> dict:
     filter_values    = list(dict.fromkeys(v.strip() for v in response.filter_values if v.strip()))
 
     # Criteria a clarification may offer (clarify only): exact keys of metrics.yaml, their
-    # tables NOT loaded — the follow-up turn retrieves them once the user picks one
-    clarify_criteria = ([c for c in dict.fromkeys(response.criteria) if c in db_metrics][:MAX_CLARIFICATION_OPTIONS]
-                        if state.get("clarify") else [])
+    # tables NOT loaded — the follow-up turn retrieves them once the user picks one. A metric
+    # declaring dimensions is offered only for an entity it declares: no option may promise
+    # a breakdown the semantic layer does not state (an undeclared metric stays unrestricted).
+    clarify_criteria = []
+    if state.get("clarify"):
+        entity = response.ranked_entity.strip().lower()
+        for name in dict.fromkeys(response.criteria):
+            metric = db_metrics.get(name)
+            if metric is None:
+                continue
+            if metric.dimensions and entity not in (d.lower() for d in metric.dimensions):
+                logger.debug(f"[rerank_tables] criterion {name} dropped: not per '{entity or '?'}'")
+                continue
+            clarify_criteria.append(name)
+        clarify_criteria = clarify_criteria[:MAX_CLARIFICATION_OPTIONS]
 
     logger.debug(f"rerank_tables: {response.tables} | metrics={selected_metrics} | "
-                 f"criteria={clarify_criteria} | filter_values={filter_values} | "
-                 f"in_scope={response.is_in_scope} — {response.reason}")
+                 f"criteria={clarify_criteria} (entity={response.ranked_entity or '?'}) | "
+                 f"filter_values={filter_values} | in_scope={response.is_in_scope} — {response.reason}")
 
     # ── 2. Load LLM-selected and metric tables missing from candidates ────────
     # LLM may select tables known via schema descriptions but not returned by Chroma

@@ -208,7 +208,7 @@ METRICS_HEADER = """\
 """
 
 # Key order of a metric block in the YAML: what the agent reads, then where it comes from
-METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension", "origin", "edited"]
+METRICS_KEY_ORDER = ["description", "synonyms", "expr", "time_dimension", "dimensions", "origin", "edited"]
 
 # Never proposed, whatever the name: two rows with the same amount are two amounts
 DISTINCT_AMOUNT = re.compile(r"\b(SUM|AVG)\s*\(\s*DISTINCT\b", re.IGNORECASE)
