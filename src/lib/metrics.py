@@ -131,10 +131,10 @@ def render_metric_catalog(metrics: dict[str, Metric]) -> str:
     ) or "None"
 
 
-def render_metric_criteria(metrics: dict[str, Metric]) -> str:
+def render_metric_criteria(metrics: list[Metric]) -> str:
     """Names and descriptions only, the criteria a clarification may offer (CLARIFICATION_CRITERIA):
     no expressions or synonyms — the options name quantities, never compute them."""
-    return "\n".join(f"- {m.name}: {m.description}" for m in metrics.values())
+    return "\n".join(f"- {m.name}: {m.description}" for m in metrics)
 
 
 def render_metric_definitions(metrics: list[Metric]) -> str:

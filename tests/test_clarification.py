@@ -7,11 +7,13 @@ caller sets `clarify` (app.py, from the database config).
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent import nodes
+from agent.schemas import RankedTablesAndScope
 from lib.messages import clarify_question
 from lib.metrics import Metric
 
@@ -85,14 +87,40 @@ def test_the_clarification_section_enters_the_planner_prompt_only_when_asked(pro
     assert "## CLARIFICATION" not in prompts[1] and "Clarify:" not in prompts[1]
 
 
-def test_the_metric_catalog_enters_the_clarification_as_criteria(prompts, monkeypatch):
+def test_the_chosen_criteria_enter_the_clarification(prompts, monkeypatch):
     monkeypatch.setattr(nodes, "metrics_store", {"bank": {"total_savings": SAVINGS}})
-    nodes.planner({**STATE, "clarify": True})
-    nodes.planner(STATE)   # without clarify, the metrics stay out of the planner prompt
+    nodes.planner({**STATE, "clarify": True, "clarify_criteria": ["total_savings"]})
+    nodes.planner({**STATE, "clarify": True})                        # the rerank chose none
+    nodes.planner({**STATE, "clarify_criteria": ["total_savings"]})  # the eval never sets clarify
     assert "### Business criteria" in prompts[0]
     assert "- total_savings: Total savings held." in prompts[0]
     assert "SUM(savings.amount)" not in prompts[0]   # names and descriptions only, never expressions
-    assert "total_savings" not in prompts[1]
+    assert "### Business criteria" not in prompts[1]
+    assert "total_savings" not in prompts[2]
+
+
+def test_the_rerank_chooses_the_criteria_from_the_catalog(monkeypatch):
+    """Asked only when clarify is on; validated against the catalog keys, tables not loaded."""
+    llm = MagicMock()
+    llm.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
+        tables=["person"], is_in_scope=True, reason="",
+        criteria=["total_savings", "invented", "total_savings"])
+    monkeypatch.setattr(nodes, "fast_model", llm)
+    monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala"),
+                                                      retrieval=SimpleNamespace(fk_neighbors=False)))
+    monkeypatch.setattr(nodes, "schema_store", {"bank": {"person": "ddl", "savings": "ddl"}})
+    monkeypatch.setattr(nodes, "metrics_store", {"bank": {"total_savings": SAVINGS}})
+    state = {"selected_db": "bank", "messages": [HumanMessage("meilleurs ?")],
+             "candidate_schemas": {"person": "ddl"}}
+
+    with_clarify = nodes.rerank_tables({**state, "clarify": True})
+    without      = nodes.rerank_tables(state)
+    assert with_clarify["clarify_criteria"] == ["total_savings"]       # catalog keys only, deduplicated
+    assert "savings" not in with_clarify["selected_schemas"]           # a criterion loads no table
+    assert without["clarify_criteria"] == []
+    sent = [call.args[0][0].content for call in llm.with_structured_output.return_value.invoke.call_args_list]
+    assert "9. In criteria" in sent[0]
+    assert "9. In criteria" not in sent[1]   # the eval's rerank prompt is unchanged
 
 
 def test_resolve_database_resets_the_clarification(monkeypatch):

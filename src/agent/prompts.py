@@ -123,7 +123,7 @@ Given a user question and a list of candidate table schemas:
    (another language, an abbreviation spelled out), add that spelling too:
    "clients à Londres" → ["Londres", "London"]. Never metrics, dates, numbers or table names.
    Leave it empty if the question filters on no value.
-
+{criteria_request}
 ## EXAMPLES (scope decisions, on an air-travel database)
 Question: "What is the punctuality of each airline?"
 → is_in_scope=True: no column is named punctuality, but the flight tables hold scheduled and
@@ -142,6 +142,23 @@ Question: "What do passengers think of the meals?"
 
 ## CANDIDATE SCHEMAS:
 {schemas}
+"""
+
+# ── Section: clarification criteria request ──────────────────────────────────
+# Inserted at {criteria_request} in RERANK_TABLES_PROMPT, only when the database allows
+# clarification (state `clarify`, from the db config; never the eval). The chosen metrics
+# become the options of the planner's clarification (CLARIFICATION_CRITERIA): choosing
+# happens here, in structured output, where the model selects reliably — never in prose.
+
+RERANK_CRITERIA_REQUEST = """
+9. In criteria, when the question ranks with no criterion ("best", "top", "worst"...), list up
+   to 3 business metrics below whose quantity could define that superlative — they become the
+   options of a question asked to the user, their tables are NOT to be selected. Only metrics
+   whose sense matches: one measuring a problem (unpaid amounts, incidents, losses) can define
+   "worst" or "most risky", never "best". Leave it empty when the question names its criterion.
+   Example: "Which are the top passengers?" with a catalog holding miles_flown (miles flown on
+   the airline's flights) and baggage_claims (compensation paid for lost baggage)
+   → criteria=["miles_flown"]: flying more makes a top passenger, lost baggage does not.
 """
 
 # ── Node: prune_columns ───────────────────────────────────────────────────────
@@ -200,29 +217,24 @@ Question: "Which airports had the most delayed flights?"
 - Tables: [...]
 """
 
-# The business metric catalog, as clarification criteria: a "best/top" option may offer a
-# metric even though its tables are not in the schema — the user's answer is merged into the
-# question, and the next turn's retrieval loads them (the metric's synonyms match its words).
+# The criteria the rerank chose from the metric catalog (RERANK_CRITERIA_REQUEST): already
+# vetted, the planner only words them as options. Their tables are not in the schema — the
+# user's answer is merged into the question, and the next turn's retrieval loads them (the
+# metric's synonyms match its words).
 
 CLARIFICATION_CRITERIA = """
 ### Business criteria
-The database also measures these business metrics. An option of a "best / top with no
-criterion" clarification may offer one that applies to the entity the question ranks, even
-though its tables are not in the schema below: the follow-up turn loads them automatically.
-An option names the quantity measured in a few words, in the language of the question, never
-a code name or a description copied whole. Offer only quantities whose sense matches the
-question's superlative: a metric measuring a problem (unpaid amounts, incidents, losses) is
-a criterion for "worst" or "most risky", never for "best".
+These business metrics could define the question's superlative. Offer each one as an option,
+named by its quantity in a few words, in the language of the question — never its code name
+nor its description copied whole. Their tables are not in the schema below: the follow-up
+turn loads them automatically.
 {catalog}
 
-### Example (business criteria as options)
+### Example (a business criterion as an option)
 Question: "Which are the top passengers?"
-Business criteria held:
-- miles_flown: Total number of miles flown on the airline's flights over the last 12 months.
-- baggage_claims: Total compensation paid to the passenger for lost or damaged baggage.
-Clarify: The top passengers by what? | number of flights | miles flown
-→ "miles flown" says the quantity in two words, not the whole description; baggage_claims
-  measures a problem — a criterion for "worst passengers", never offered for "top".
+Business criteria: - miles_flown: Total number of miles flown on the airline's flights.
+Clarify: The top passengers by what? | miles flown | number of flights
+→ "miles flown" says the quantity in two words, not the whole description.
 """
 
 # ── Shared section: business metrics ──────────────────────────────────────────

@@ -6,6 +6,7 @@ class RankedTablesAndScope(BaseModel):
     tables: list[str] = Field(description="List of selected table names needed to answer the question.")
     metrics: list[str] = Field(default_factory=list, description="Names of the business metrics the question asks for, exactly as listed. Empty if none.")
     filter_values: list[str] = Field(default_factory=list, description="Values the question filters on (a city, a product, a category, a status...), as written in the question, plus their likely spelling in the database when it differs. Empty if none.")
+    criteria: list[str] = Field(default_factory=list, description="Only when the question ranks with no criterion ('best', 'top', 'worst'...): up to 3 business metrics, exactly as listed, whose quantity could define it. Empty otherwise.")
     is_in_scope: bool = Field(description="True if the question can be answered from the selected tables, False otherwise.")
     unavailable: str = Field(default="", description="Only when is_in_scope is False: 'restricted' if a table or column description says the information asked for exists but was withheld (excluded, confidential), 'absent' otherwise. Empty when in scope.")
     reason: str = Field(description="Brief explanation of table selection and scope decision.")

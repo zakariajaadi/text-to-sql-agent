@@ -12,6 +12,7 @@ class AgentState(MessagesState):
      retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns, extended by planner)
      llm_selected_tables: list[str]      # tables selected by reranker LLM, before FK expansion, used by eval for precision/recall
      selected_metrics: list[str]         # business metrics the question asks for, from semantic_layer/<db>/metrics.yaml (output of rerank_tables)
+     clarify_criteria: list[str]         # metrics that could define the question's criterionless superlative, offered as clarification options; their tables are not loaded (output of rerank_tables, clarify only)
      filter_values: list[str]            # values the question filters on, as written and as likely spelled in the database (output of rerank_tables)
      matched_values: dict[str, dict[str, list[str]]]   # table → column → values of the value index close to filter_values (output of match_values)
      values_not_found: bool              # filter_values searched, none close to any value of the data (output of match_values)

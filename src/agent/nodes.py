@@ -18,6 +18,7 @@ from agent.prompts import (
     METRICS_SECTION,
     PLANNER_PROMPT,
     PRUNE_COLUMNS_PROMPT,
+    RERANK_CRITERIA_REQUEST,
     RERANK_TABLES_PROMPT,
     SQL_CODER_PROMPT,
     SQL_VALIDATOR_FEEDBACK,
@@ -300,6 +301,7 @@ def rerank_tables(state: AgentState) -> dict:
             dialect=db_cfg.dialect,
             metrics=render_metric_catalog(db_metrics),
             schemas=schemas_text,
+            criteria_request=RERANK_CRITERIA_REQUEST if state.get("clarify") else "",
         )),
         HumanMessage(content=question),
     ])
@@ -309,8 +311,14 @@ def rerank_tables(state: AgentState) -> dict:
     metric_tables    = [t for m in selected_metrics for t in db_metrics[m].tables]
     filter_values    = list(dict.fromkeys(v.strip() for v in response.filter_values if v.strip()))
 
+    # Criteria a clarification may offer (clarify only): exact keys of metrics.yaml, their
+    # tables NOT loaded — the follow-up turn retrieves them once the user picks one
+    clarify_criteria = ([c for c in dict.fromkeys(response.criteria) if c in db_metrics][:MAX_CLARIFICATION_OPTIONS]
+                        if state.get("clarify") else [])
+
     logger.debug(f"rerank_tables: {response.tables} | metrics={selected_metrics} | "
-                 f"filter_values={filter_values} | in_scope={response.is_in_scope} — {response.reason}")
+                 f"criteria={clarify_criteria} | filter_values={filter_values} | "
+                 f"in_scope={response.is_in_scope} — {response.reason}")
 
     # ── 2. Load LLM-selected and metric tables missing from candidates ────────
     # LLM may select tables known via schema descriptions but not returned by Chroma
@@ -340,6 +348,7 @@ def rerank_tables(state: AgentState) -> dict:
         return {
             "selected_schemas":    candidates,
             "selected_metrics":    selected_metrics,
+            "clarify_criteria":    clarify_criteria,
             "filter_values":       filter_values,
             "is_in_scope":         response.is_in_scope,
             "unavailable_reason":  reason,
@@ -368,6 +377,7 @@ def rerank_tables(state: AgentState) -> dict:
     return {
         "selected_schemas":    selected_schemas,
         "selected_metrics":    selected_metrics,
+        "clarify_criteria":    clarify_criteria,
         "filter_values":       filter_values,
         "is_in_scope":         response.is_in_scope,
         "unavailable_reason":  reason,
@@ -487,14 +497,14 @@ def prune_columns(state: AgentState) -> dict:
 
     return {"retrieved_schema": "\n\n".join(pruned_schemas.values())}
 
-def render_clarification(db_metrics: dict[str, Metric]) -> str:
+def render_clarification(criteria: list[Metric]) -> str:
     """
-    The planner's CLARIFICATION section: with the database's business metric catalog as
-    extra criteria when it defines metrics — a "best/top" option may offer one even though
-    its tables are not selected, the follow-up turn retrieves them.
+    The planner's CLARIFICATION section: with the criteria the rerank chose from the metric
+    catalog (clarify_criteria), when it chose any — a "best/top" option may offer one even
+    though its tables are not selected, the follow-up turn retrieves them.
     """
-    criteria = CLARIFICATION_CRITERIA.format(catalog=render_metric_criteria(db_metrics)) if db_metrics else ""
-    return CLARIFICATION_SECTION.format(criteria=criteria)
+    section = CLARIFICATION_CRITERIA.format(catalog=render_metric_criteria(criteria)) if criteria else ""
+    return CLARIFICATION_SECTION.format(criteria=section)
 
 
 def planner(state: AgentState) -> dict:
@@ -516,7 +526,10 @@ def planner(state: AgentState) -> dict:
     response = fast_model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
-            clarification_section=render_clarification(metrics_store[db_name]) if state.get("clarify") else "",
+            clarification_section=render_clarification(
+                [metrics_store[db_name][c] for c in state.get("clarify_criteria", [])
+                 if c in metrics_store[db_name]],
+            ) if state.get("clarify") else "",
             metrics_section=render_metrics_section(get_selected_metrics(state)),
             values_section=render_values_section(state),
             schema=schema,
