@@ -15,6 +15,7 @@ from loguru import logger
 
 from agent.graph import build_graph
 from config import cfg
+from lib.query_cancel import discard_cancel, request_cancel
 from ui.streaming import TurnRenderer
 
 ls_client = Client()
@@ -65,6 +66,9 @@ async def on_message(message: cl.Message):
     """
     agent = cl.user_session.get("agent")
     turn  = TurnRenderer(db_name=cl.user_session.get("chat_profile"))
+    # The turn's cancel key: the Stop button sets its event, and the query the turn is
+    # running gets cancelled on the cluster (lib/query_cancel.py)
+    cancel_key = str(uuid.uuid4())
 
     config = {"recursion_limit": 15}
     if cfg.memory.enabled:
@@ -79,6 +83,7 @@ async def on_message(message: cl.Message):
                 "selected_db": cl.user_session.get("chat_profile"),
                 # The planner may ask the user one question (ask_clarification); the eval never sets it
                 "clarify":     cfg.get_db(cl.user_session.get("chat_profile")).clarification,
+                "cancel_key":  cancel_key,
             },
             config=config,
             version="v2",
@@ -91,7 +96,9 @@ async def on_message(message: cl.Message):
         await cl.Message(content="⚠️ Nombre maximal de tentatives atteint. La requête est trop complexe ou n'a pas abouti.").send()
 
     except asyncio.CancelledError:
-        # Stop button: close the steps still running, then let the cancellation through
+        # Stop button: cancel the turn's running query on the cluster, close the steps, then
+        # let the cancellation through
+        request_cancel(cancel_key)
         await turn.finish("stopped")
         raise
 
@@ -99,6 +106,10 @@ async def on_message(message: cl.Message):
         logger.error(f"Unexpected error: {repr(e)}")
         await turn.finish("failed")
         await cl.Message(content="Désolé, une erreur technique est survenue.").send()
+
+    finally:
+        # The thread polling the query holds the event itself: forgetting the key loses nothing
+        discard_cancel(cancel_key)
 
     await turn.finalize_answer()
 

@@ -688,9 +688,10 @@ def sql_validator(state: AgentState) -> dict:
                 "validation_check":    "values",
             }
 
-    # 5. Execute SQL query, reading at most max_rows rows
+    # 5. Execute SQL query, reading at most max_rows rows; the turn's cancel_key lets the
+    #    user's Stop cancel it on the cluster (lib/query_cancel.py)
     try:
-        result = _run_with_reconnect(db_name, query, db_cfg.max_rows)
+        result = _run_with_reconnect(db_name, query, db_cfg.max_rows, state.get("cancel_key"))
     except Exception as e:
         if is_unreachable(e):
             logger.warning(f"sql_validator: {db_name} unreachable — {type(e).__name__}: {str(e)[:200]}")
@@ -732,20 +733,20 @@ def sql_validator(state: AgentState) -> dict:
     }
 
 
-def _run_with_reconnect(db_name: str, query: str, max_rows: int):
+def _run_with_reconnect(db_name: str, query: str, max_rows: int, cancel_key: str | None = None):
     """
     run_capped_query, run again once on fresh connections when the database was unreachable:
     a connection of the pool may have died (cluster restart, network change) while a new one works.
     """
     try:
-        return run_capped_query(db_name, query, max_rows)
+        return run_capped_query(db_name, query, max_rows, cancel_key)
     except Exception as e:
         if not is_unreachable(e):
             raise
         logger.info(f"sql_validator: {db_name} unreachable, retrying on fresh connections in {RECONNECT_DELAY_S}s")
         db_registry[db_name]._engine.dispose()   # drop the pooled connections
         time.sleep(RECONNECT_DELAY_S)
-        return run_capped_query(db_name, query, max_rows)
+        return run_capped_query(db_name, query, max_rows, cancel_key)
 
 
 def report_unreachable(state: AgentState) -> dict:

@@ -14,6 +14,7 @@ from sqlalchemy import inspect as sa_inspect
 from config import LLMConfig, cfg
 from lib.database import build_database
 from lib.metrics import Metric, load_metrics
+from lib.query_cancel import install_engine
 from lib.semantics import load_fk_relations
 from lib.vector_store import VectorStoreManager
 
@@ -109,6 +110,11 @@ db_registry: dict[str, SQLDatabase] = {
     db_cfg.name: build_database(db_cfg)
     for db_cfg in cfg.databases
 }
+
+# The Stop button of the app cancels the turn's running query on the cluster (lib/query_cancel.py).
+# Inert for a query run without a cancel event: the eval and the generators are untouched
+for _db in db_registry.values():
+    install_engine(_db._engine)
 
 logger.debug(f"Initialized databases: {list(db_registry.keys())}.")
 

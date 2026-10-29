@@ -16,6 +16,7 @@ class AgentState(MessagesState):
      matched_values: dict[str, dict[str, list[str]]]   # table → column → values of the value index close to filter_values (output of match_values)
      values_not_found: bool              # filter_values searched, none close to any value of the data (output of match_values)
      clarify: bool                       # the planner may ask the user one question (set by the caller: app.py from the db config; the eval never sets it)
+     cancel_key: str                     # key of the turn's cancel event (set by app.py): the user's Stop cancels the running query on the cluster (lib/query_cancel.py)
      clarification_question: str         # question asked to the user instead of a plan (output of ask_clarification)
      clarification_options: list[str]    # its options, shown as clickable buttons by the Chainlit UI (output of ask_clarification)
      query_plan: str                     # execution plan from planner node

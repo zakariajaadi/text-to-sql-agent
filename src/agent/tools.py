@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from sqlalchemy import text
 
+from lib.query_cancel import cancel_event
 from resources import db_registry, model
 
 # Factory  — constructs the 3 tools per database
@@ -56,16 +57,20 @@ class QueryResult(NamedTuple):
     truncated: bool         # the query returned more than max_rows rows
 
 
-def run_capped_query(db_name: str, query: str, max_rows: int) -> QueryResult:
+def run_capped_query(db_name: str, query: str, max_rows: int, cancel_key: str | None = None) -> QueryResult:
     """
     Execute a query and read at most max_rows rows: the safety cap lives here, never
     in the SQL, so a LIMIT in the query only ever comes from the question itself.
 
+    cancel_key: the turn's key (app.py): the query is then polled and cancelled on the
+    cluster when the user clicks Stop (lib/query_cancel.py), ending on QueryCancelled.
     content follows the sql_db_query tool format (str of tuples, "" when empty, long
     values truncated). Raises SQLAlchemyError when the query fails.
     """
     db = db_registry[db_name]
     with db._engine.connect() as conn:
+        if cancel_key:
+            conn = conn.execution_options(cancel_event=cancel_event(cancel_key))
         cursor  = conn.execute(text(query))
         columns = list(cursor.keys())
         rows    = cursor.fetchmany(max_rows + 1)
