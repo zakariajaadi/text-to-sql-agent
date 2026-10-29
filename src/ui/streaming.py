@@ -462,7 +462,8 @@ class TurnRenderer:
         A clarifying question sends its options instead: one click answers it.
         """
         if self.clarification_options:
-            element = cl.CustomElement(name="FollowUps", props={"questions": self.clarification_options}, display="inline")
+            element = cl.CustomElement(name="FollowUps", display="inline",
+                                       props={"questions": self.clarification_options, "clarify": True})
             self.answer_msg.elements.append(element)
             await element.send(for_id=self.answer_msg.id)
             return

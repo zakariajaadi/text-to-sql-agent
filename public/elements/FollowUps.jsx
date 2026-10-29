@@ -1,5 +1,7 @@
 // Clickable follow-up questions shown under an answer: one click asks the question.
-// Props are built by src/ui/streaming.py (send_follow_ups): { questions: string[] }
+// Props are built by src/ui/streaming.py (send_follow_ups): { questions: string[], clarify?: boolean }
+// clarify: the chips answer a clarifying question (possible criteria, not suggested questions);
+// they are not a closed list, so a muted line invites typing another answer in the input.
 import { useEffect, useState } from "react"
 import { CornerDownRight, Sparkles } from "lucide-react"
 
@@ -54,13 +56,19 @@ export default function FollowUps() {
   return (
     <div style={{ marginTop: 4 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, marginBottom: 8 }}>
-        <Sparkles size={13} color={C.primary} /> Questions suggérées
+        <Sparkles size={13} color={C.primary} /> {props.clarify ? "Critères possibles" : "Questions suggérées"}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {props.questions.map((q, i) => (
           <Chip key={i} question={q} index={i} visible={visible} disabled={asked} onAsk={onAsk} />
         ))}
       </div>
+      {props.clarify && !asked && (
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 8, opacity: visible ? 1 : 0,
+                      transition: "opacity 300ms ease 300ms" }}>
+          ou précisez votre critère dans le champ ci-dessous
+        </div>
+      )}
     </div>
   )
 }
