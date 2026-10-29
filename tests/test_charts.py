@@ -116,10 +116,15 @@ def test_ids_label_the_bars_when_nothing_else_does():
 
 def test_a_numero_column_is_an_id_not_a_measure():
     # French/bank keys (numero_personne_host, num_cont) are identifiers: without this, two
-    # numeric columns leave nothing to label the bars and the result gets no chart at all
-    c = chart(["numero_personne_host", "total_epargne"], [[6455344, 1.5], [5095107, 2.5]])
+    # numeric columns leave nothing to label the bars and the result gets no chart at all.
+    # A DECIMAL id reaches the chart as whole floats (tools._to_json_safe): labels stay clean.
+    c = chart(["numero_personne_host", "total_epargne"], [[6455344.0, 1.5], [5095107.0, 2.5]])
     assert c is not None and [m["name"] for m in c["measures"]] == ["total_epargne"]
     assert view(c)[0] == ["5095107", "6455344"]
+
+
+def test_a_numero_column_with_fractions_stays_a_measure():
+    assert chart(["numero_bizarre", "total"], [[1.5, 1.0], [2.5, 2.0]]) is None
 
 
 def test_unrelated_measures_are_switched_not_overlaid():

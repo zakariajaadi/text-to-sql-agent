@@ -129,7 +129,11 @@ def _classify(name: str, values: list) -> Field:
     if _PERIOD_NAME.search(name) and (is_int or all(isinstance(v, str) for v in present)):
         return field("temporal", "period")
     if is_numeric:
-        return field("id" if is_int and _ID_NAME.search(name) else "measure")
+        # An id stored as DECIMAL reaches the chart as whole floats (6455344.0, tools._to_json_safe):
+        # values go back to ints so the bar labels read "6455344", never "6455344.0"
+        if _ID_NAME.search(name) and all(float(v).is_integer() for v in present):
+            return Field(name, "id", None, [int(v) if v is not None else None for v in values])
+        return field("measure")
     return field("label")
 
 
