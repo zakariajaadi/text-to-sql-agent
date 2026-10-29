@@ -5,6 +5,8 @@ LLMs, embedding model, vector store, database connections, FK graphs, schema sto
 Importing this module needs the API keys, the databases and the Chroma index.
 """
 
+import threading
+
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_community.utilities import SQLDatabase
@@ -12,7 +14,7 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
 from config import LLMConfig, cfg
-from lib.database import build_database
+from lib.database import build_database, build_database_failing_over
 from lib.metrics import Metric, load_metrics
 from lib.query_cancel import install_engine
 from lib.semantics import load_fk_relations
@@ -105,11 +107,34 @@ logger.debug(f"Initialized Embedding Model: {cfg.retrieval.embedding_model}")
 # Shared Chroma store of the indexed table documents — one store for all databases
 vector_store = VectorStoreManager(embedding_model, cfg.retrieval.persist_directory)
 
-# Database registry
+# Database registry — a database with several coordinators starts on the first one that answers
 db_registry: dict[str, SQLDatabase] = {
-    db_cfg.name: build_database(db_cfg)
+    db_cfg.name: build_database_failing_over(db_cfg)
     for db_cfg in cfg.databases
 }
+
+_failover_lock = threading.Lock()
+
+
+def switch_coordinator(db_name: str) -> str | None:
+    """
+    Rebuild db_registry[db_name] on its next coordinator, for _run_with_reconnect (agent/nodes.py)
+    when the current one stops answering: a hung impalad accepts the TCP connection and never
+    answers, so only another coordinator helps. Returns the new host, or None when the database
+    has no spare coordinator. Raises RuntimeError when the next one is unreachable too (the
+    caller moves on to the one after).
+    """
+    db_cfg = cfg.get_db(db_name)
+    if len(db_cfg.coordinators) < 2:
+        return None
+    with _failover_lock:
+        host = db_cfg.switch_host()
+        old = db_registry[db_name]._engine
+        db = build_database(db_cfg)   # probes the new coordinator (scope listing): unreachable raises
+        install_engine(db._engine)
+        db_registry[db_name] = db
+    old.dispose()
+    return host
 
 # The Stop button of the app cancels the turn's running query on the cluster (lib/query_cancel.py).
 # Inert for a query run without a cancel event: the eval and the generators are untouched

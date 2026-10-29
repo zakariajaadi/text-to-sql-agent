@@ -18,4 +18,5 @@ sys.modules.setdefault("resources", types.SimpleNamespace(
     fk_graphs=defaultdict(dict),
     schema_store=defaultdict(dict),
     metrics_store=defaultdict(dict),
+    switch_coordinator=MagicMock(),
 ))

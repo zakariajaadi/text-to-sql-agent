@@ -66,6 +66,7 @@ from resources import (
     metrics_store,
     model,
     schema_store,
+    switch_coordinator,
 )
 
 # What format_answer is told when no query was run, by unavailable_reason: the information exists
@@ -772,18 +773,41 @@ def sql_validator(state: AgentState) -> dict:
 
 def _run_with_reconnect(db_name: str, query: str, max_rows: int, cancel_key: str | None = None):
     """
-    run_capped_query, run again once on fresh connections when the database was unreachable:
-    a connection of the pool may have died (cluster restart, network change) while a new one works.
+    run_capped_query, retried when the database was unreachable. With a single coordinator, once
+    on fresh connections to the same host: a connection of the pool may have died (cluster restart,
+    network change) while a new one works. With several (IMPALA_COORDINATORS), once per spare
+    coordinator instead: a hung impalad accepts the TCP connection and never answers, so only
+    another coordinator helps (resources.switch_coordinator; the app then stays on it).
     """
     try:
         return run_capped_query(db_name, query, max_rows, cancel_key)
     except Exception as e:
         if not is_unreachable(e):
             raise
+        failure = e
+
+    spares = len(cfg.get_db(db_name).coordinators) - 1
+    if spares < 1:
         logger.info(f"sql_validator: {db_name} unreachable, retrying on fresh connections in {RECONNECT_DELAY_S}s")
         db_registry[db_name]._engine.dispose()   # drop the pooled connections
         time.sleep(RECONNECT_DELAY_S)
         return run_capped_query(db_name, query, max_rows, cancel_key)
+
+    for _ in range(spares):
+        try:
+            host = switch_coordinator(db_name)
+        except RuntimeError as e:
+            logger.warning(f"sql_validator: the next coordinator of {db_name} is unreachable too")
+            failure = e
+            continue
+        logger.warning(f"sql_validator: {db_name} unreachable, switched to coordinator {host}")
+        try:
+            return run_capped_query(db_name, query, max_rows, cancel_key)
+        except Exception as e:
+            if not is_unreachable(e):
+                raise
+            failure = e
+    raise failure
 
 
 def report_unreachable(state: AgentState) -> dict:

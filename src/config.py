@@ -68,6 +68,9 @@ class DatabaseConfig:
     uri: str = ""
     connect_args: dict = field(default_factory=dict, init=False)  # driver options (authentication), from the environment
     query_options: dict = field(default_factory=dict, init=False) # options set on every query (limits), from the environment
+    coordinators: list = field(default_factory=list, init=False)     # impala coordinator hostnames (IMPALA_COORDINATORS)
+    coordinator_ips: dict = field(default_factory=dict, init=False)  # their host→ip, resolved in-process (lib/database.py)
+    current_host: str = field(default="", init=False)                # the coordinator the uri points at
 
     def __post_init__(self):
 
@@ -84,6 +87,8 @@ class DatabaseConfig:
             host = os.getenv("IMPALA_HOST", "localhost")
             port = os.getenv("IMPALA_PORT", "21050")
             self.uri = f"impala4://{host}:{port}/{self.name.lower()}"
+            self.coordinators, self.coordinator_ips = _impala_coordinators(host)
+            self.current_host = host
             self.connect_args = {
                 "auth_mechanism":        os.getenv("IMPALA_AUTH_MECHANISM", "GSSAPI"),
                 "kerberos_service_name": os.getenv("IMPALA_KERBEROS_SERVICE", "impala"),
@@ -124,6 +129,36 @@ class DatabaseConfig:
             # Each query opens and closes its own connection; the Kerberos handshake costs ~0.2s
             args["poolclass"] = NullPool
         return args
+
+    def switch_host(self) -> str:
+        """
+        Point the uri at the next coordinator of the list, round robin (impala only). Called by the
+        failover (resources.switch_coordinator, lib/database.py at startup) when the current one
+        stops answering; the next engine built from this config connects there.
+        """
+        index = (self.coordinators.index(self.current_host) + 1) % len(self.coordinators)
+        self.current_host = self.coordinators[index]
+        port = os.getenv("IMPALA_PORT", "21050")
+        self.uri = f"impala4://{self.current_host}:{port}/{self.name.lower()}"
+        return self.current_host
+
+
+def _impala_coordinators(preferred: str) -> tuple[list[str], dict[str, str]]:
+    """
+    The failover candidates from IMPALA_COORDINATORS ("host=ip,host=ip", the list doctor probes):
+    the coordinator hostnames (always holding the .env host), and host→ip for the names the
+    container's DNS doesn't know — only the .env host has an extra_hosts entry, and the IPs can't
+    go in the uri because Kerberos checks the host name. Without the variable: the .env host alone.
+    """
+    pairs = []
+    for entry in os.getenv("IMPALA_COORDINATORS", "").split(","):
+        host, _, ip = entry.strip().partition("=")
+        if host.strip() and ip.strip():
+            pairs.append((host.strip(), ip.strip()))
+    hosts = [host for host, _ in pairs]
+    if preferred not in hosts:
+        hosts.insert(0, preferred)
+    return hosts, dict(pairs)
 
 @dataclass
 class RetrievalConfig:
