@@ -12,8 +12,10 @@ the studio proposes one from the data, never writes it (a wrong LAST silently dr
   (none)  the table read as it is
 
 Proposed: last when the key of the table comes back in about every partition (one snapshot each), all when it
-comes once over several partitions (increments). A partitioned table without a mode is a warning unless each of
-its rows is stored once: the agent would count a row as many times as it is repeated.
+comes once over several partitions (increments), live when it comes back a few times (several versions per key,
+the CDC profile) — the studio then pre-fills the key, the version column stays a human choice. A partitioned
+table without a mode is a warning unless each of its rows is stored once: the agent would count a row as many
+times as it is repeated.
 """
 
 READ_MODES     = ("last", "all", "live")
@@ -26,11 +28,20 @@ def _number(n: float) -> str:
     return f"{n:,.1f}".replace(",", " ").replace(".", ",").removesuffix(",0")
 
 
+def _best_key(facts: dict) -> str | None:
+    """The key the suggestion reads: the identifier of the table with the most distinct values."""
+    keys = facts.get("keys") or {}
+    key  = max(keys, key=lambda k: keys[k]["distinct"], default=None)
+    return key if key and keys[key]["distinct"] else None
+
+
 def suggest(facts: dict) -> tuple[str | None, str]:
     """
     The mode the data of a partitioned table points to, and why; (None, why) when it says nothing. The key of
-    the table is its identifier with the most values; its rows over its values tell in how many partitions a
-    value comes back.
+    the table is its identifier with the most values (_best_key); its rows over its values tell in how many
+    partitions a value comes back. In between a snapshot per partition (last) and keys stored once (all), the
+    key comes back a few times: several versions per key, the CDC profile — live is proposed, the version
+    column left to the human.
     """
     by, partitions = facts.get("partitioned_by") or [], facts.get("partitions") or 0
     keys = facts.get("keys") or {}
@@ -40,8 +51,8 @@ def suggest(facts: dict) -> tuple[str | None, str]:
         return None, f"partitionnée par plusieurs colonnes ({', '.join(by)}) : un mode de lecture n'en suit qu'une"
     if partitions <= 1:
         return None, "une seule partition : photo complète ou ajout, rien ne permet encore de trancher"
-    key = max(keys, key=lambda k: keys[k]["distinct"], default=None)
-    if not key or not keys[key]["distinct"]:
+    key = _best_key(facts)
+    if not key:
         return None, "pas de clé mesurée : rien ne dit si les lignes se répètent d'une partition à l'autre"
     back = keys[key]["non_null"] / keys[key]["distinct"]
     if back >= SNAPSHOT_SHARE * partitions:
@@ -49,8 +60,8 @@ def suggest(facts: dict) -> tuple[str | None, str]:
                         "chaque partition est une photo complète")
     if keys[key]["distinct"] == keys[key]["non_null"]:
         return "all", f"chaque {key} n'apparaît qu'une fois sur les {partitions} partitions : chacune ajoute des lignes"
-    return None, (f"{key} revient {_number(back)} fois en moyenne sur {partitions} partitions : "
-                  "ni une photo par partition, ni des ajouts nets")
+    return "live", (f"{key} revient {_number(back)} fois en moyenne sur {partitions} partitions : "
+                    f"plusieurs versions par {key}, l'agent doit garder la plus récente")
 
 
 def reading(entry: dict | None, facts: dict | None, columns: list[str] | None = None,
@@ -85,6 +96,7 @@ def reading(entry: dict | None, facts: dict | None, columns: list[str] | None = 
         "partitioned_by":   list(facts.get("partitioned_by") or []),
         "unread":           partitioned_engine and bool(facts) and "partitions" not in facts,
         "suggested":        suggested,
+        "suggested_key":    _best_key(facts) if suggested == "live" else None,   # pre-fills the key in the studio
         "why":              why,
         "warn":             partitioned and mode is None and suggested != "all",
     }

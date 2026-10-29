@@ -1112,7 +1112,10 @@ function readBand(r) {
   if (!r) return "";
   const band = (tone, title, text, action) => `<div class="band ${tone}" role="status">
       <div class="band-text">${BANG}<div><b>${title}</b><span>${text}</span></div></div>${action}</div>`;
-  const apply = `<button type="button" class="btn small" id="read-apply">Appliquer ${modeName(r.suggested)}</button>`;
+  // LIVE needs the version column, a human choice: its button opens the menu pre-filled instead of saving
+  const apply = r.suggested === "live"
+    ? `<button type="button" class="btn small" data-open-read data-pick="live">Compléter LIVE</button>`
+    : `<button type="button" class="btn small" id="read-apply">Appliquer ${modeName(r.suggested)}</button>`;
   const choose = (label) => `<button type="button" class="btn small" data-open-read>${label}</button>`;
   if (r.problems.length) {
     return band("bad", `Mode ${modeName(r.mode)} incomplet`, `${esc(r.problems.join(", "))} : l'agent ne peut pas construire la fiche de la table.`,
@@ -1143,7 +1146,8 @@ function readFields(mode, d) {
         ${choices(chosen, r.partitioned_by)}</select></label>
       <button type="button" class="btn primary small" id="read-save">Choisir</button>`;
   }
-  const keys = new Set(r.key_columns);
+  // No key chosen yet: the one the data suggests (live proposed), for the human to confirm or change
+  const keys = new Set(r.key_columns.length ? r.key_columns : (r.suggested_key ? [r.suggested_key] : []));
   const version = r.version_column || d.column_facts.find((c) => c.kind === "date" && !r.partitioned_by.includes(c.column))?.column || "";
   return `<span class="read-field">Clé : la ou les colonnes d'une même ligne d'une version à l'autre</span>
     <div class="read-keys">${columns.map((c) => `<label><input type="checkbox" value="${esc(c)}"${keys.has(c) ? " checked" : ""}>${esc(c)}</label>`).join("")}</div>
@@ -1206,7 +1210,8 @@ function setupProps(d) {
       b.onclick = () => (b.dataset.mode ? pick(b.dataset.mode) : chooseProperty(d, "read_mode", readModeOf(null)));
     });
     $("detail").querySelectorAll("[data-open-read]").forEach((b) => {
-      b.onclick = (e) => { e.stopPropagation(); toggleProp("read", true); if (shown.reading.mode) pick(shown.reading.mode); };
+      b.onclick = (e) => { e.stopPropagation(); toggleProp("read", true);
+        if (b.dataset.pick) pick(b.dataset.pick); else if (shown.reading.mode) pick(shown.reading.mode); };
     });
     if ($("read-apply")) $("read-apply").onclick = () => savePropertiesNow({ read_mode: { mode: shown.reading.suggested, partition_column: shown.reading.partitioned_by[0] } });
   }

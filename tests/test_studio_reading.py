@@ -17,9 +17,14 @@ COLUMNS    = ["id_client", "nom", "date_maj", "date_technique"]
 def test_the_data_proposes_the_mode_of_a_partitioned_table():
     assert suggest(SNAPSHOT) == ("last", "id_client revient dans 4 partitions sur 4 en moyenne : chaque partition est une photo complète")
     assert suggest(INCREMENTS) == ("all", "chaque id_operation n'apparaît qu'une fois sur les 30 partitions : chacune ajoute des lignes")
-    # a key coming back in a few partitions only: neither one, a human decides
+    # a key coming back a few times: several versions per key (CDC) — live proposed, the studio
+    # pre-fills the key (suggested_key), the version column stays a human choice
     mixed = {**INCREMENTS, "keys": {"id_operation": {"non_null": 50_000, "distinct": 35_000}}}
-    assert suggest(mixed) == (None, "id_operation revient 1,4 fois en moyenne sur 30 partitions : ni une photo par partition, ni des ajouts nets")
+    assert suggest(mixed) == ("live", "id_operation revient 1,4 fois en moyenne sur 30 partitions : "
+                                      "plusieurs versions par id_operation, l'agent doit garder la plus récente")
+    assert reading({}, mixed)["suggested_key"] == "id_operation"
+    assert reading({}, mixed)["warn"] is True        # rows still repeat while no mode is chosen
+    assert reading({}, SNAPSHOT)["suggested_key"] is None
     assert suggest({**SNAPSHOT, "partitions": 1})[0] is None
     assert suggest({**SNAPSHOT, "partitioned_by": ["annee", "mois"]})[0] is None
     assert suggest({**SNAPSHOT, "keys": {}})[0] is None
