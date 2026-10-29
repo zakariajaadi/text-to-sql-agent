@@ -47,7 +47,7 @@ check:  ## Show the settings of DB as the app reads them, then connect and list 
 	from resources import db_registry; tables = sorted(db_registry['$(DB)'].get_usable_table_names()); \
 	print(len(tables), 'tables visible:', ', '.join(tables))"
 
-doctor:  ## Can Windows, then the container, reach Impala and Kerberos? (Docker Desktop loses the network after a VPN change)
+doctor:  ## Can Windows and the container reach the cluster, and which coordinators answer a real query? (TCP alone misses a hung impalad)
 	@impala_ip=$$(grep -E '^IMPALA_IP=' .env | cut -d= -f2 | tr -d '\r'); \
 	kdc_ip=$$(grep -E '^KDC_IP=' .env | cut -d= -f2 | tr -d '\r'); \
 	echo "Windows:"; \
@@ -57,8 +57,7 @@ doctor:  ## Can Windows, then the container, reach Impala and Kerberos? (Docker 
 		printf '  %-9s %s:%s  %s\n' "$$1" "$$2" "$$3" "$$([ "$$ok" = True ] && echo OK || echo KO)"; \
 	done; \
 	echo "Container:"; \
-	$(RUN_T) python -m offline.doctor && echo "Network OK." || \
-	echo "The container can't reach the cluster: if Windows can, restart Docker Desktop (Quit, then start it), else check the VPN."
+	$(RUN_T) python -m offline.doctor || true
 
 # The UBI image activates its own Python (/opt/app-root) in every bash: at each prompt (PROMPT_COMMAND)
 # and in scripts (BASH_ENV, ENV). The shell activates the project's instead, so python is /app/.venv's

@@ -11,6 +11,8 @@
 #   KERBEROS_DIR    host folder holding krb5.conf and the keytab, outside the project (mounted read-only)
 #   KDC_HOST, KDC_IP          the Kerberos KDC of the cluster realm
 #   IMPALA_HOST, IMPALA_IP    the Impala coordinator (its host name: Kerberos checks it)
+#   IMPALA_COORDINATORS       every coordinator, "host=ip,host=ip": doctor runs SELECT 1 on each
+#                             to name the one to switch to (optional; no extra_hosts needed)
 #   KRB5_CONFIG=/kerberos/krb5.conf, KRB5_CLIENT_KTNAME=/kerberos/<keytab>, GOOGLE_API_KEY...
 #   IMPALA_EXEC_TIME_LIMIT_S (120), IMPALA_MEM_LIMIT (2g): limits of every query, optional
 # The databases of this machine are in config/config.local.yaml.
