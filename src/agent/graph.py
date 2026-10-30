@@ -1,10 +1,13 @@
 # src/agent/graph.py
 
+import time
+from functools import wraps
 from pathlib import Path
 
 from langchain_core.runnables.graph_mermaid import draw_mermaid_png
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from loguru import logger
 
 from agent.nodes import (
     ask_clarification,
@@ -66,22 +69,28 @@ class TrimmedMemorySaver(MemorySaver):
         return result
 
 
+def timed(node):
+    """
+    The node, logging how long it ran (debug): the latency of a turn, node by node, in the app
+    and in the eval — a slow turn names its slow step instead of a total.
+    """
+    @wraps(node)
+    def run(state):
+        started = time.perf_counter()
+        result  = node(state)
+        logger.debug(f"{node.__name__}: {time.perf_counter() - started:.1f}s")
+        return result
+    return run
+
+
 def build_graph():
     builder = StateGraph(AgentState)
 
-    # Nodes 
-    builder.add_node(condense_question)
-    builder.add_node(resolve_database)
-    builder.add_node(retrieve_schema)
-    builder.add_node(rerank_tables)
-    builder.add_node(match_values)
-    builder.add_node(prune_columns)
-    builder.add_node(planner)
-    builder.add_node(sql_coder)
-    builder.add_node(sql_validator)
-    builder.add_node(format_answer)
-    builder.add_node(report_unreachable)
-    builder.add_node(ask_clarification)
+    # Nodes, each logging its duration
+    for node in (condense_question, resolve_database, retrieve_schema, rerank_tables, match_values,
+                 prune_columns, planner, sql_coder, sql_validator, format_answer, report_unreachable,
+                 ask_clarification):
+        builder.add_node(timed(node))
 
     # Edges
     builder.add_edge(START,                "condense_question")
