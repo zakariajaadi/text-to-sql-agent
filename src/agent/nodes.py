@@ -301,6 +301,9 @@ def rerank_tables(state: AgentState) -> dict:
     # ── 1. LLM selection on the catalog: tables, metrics, filter values, scope ──
     catalog = render_catalog(candidates, store, fk_graphs[db_name])
 
+    # The catalog grows with the width of the tables, not only their number: its size and the
+    # time of the call say whether the selector is slow because of the prompt or of the API
+    started        = time.perf_counter()
     structured_llm = fast_model.with_structured_output(RankedTablesAndScope)
     response = structured_llm.invoke([
         SystemMessage(content=RERANK_TABLES_PROMPT.format(
@@ -311,6 +314,8 @@ def rerank_tables(state: AgentState) -> dict:
         )),
         HumanMessage(content=question),
     ])
+    logger.debug(f"rerank_tables: catalog of {len(candidates)} tables, {len(catalog):,} chars "
+                 f"(~{len(catalog) // 4:,} tokens) — LLM answered in {time.perf_counter() - started:.1f}s")
 
     # Metric names are exact keys of metrics.yaml: anything else is ignored
     selected_metrics = [m for m in dict.fromkeys(response.metrics) if m in db_metrics]
