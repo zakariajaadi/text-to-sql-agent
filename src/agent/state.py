@@ -7,9 +7,9 @@ class AgentState(MessagesState):
      selected_db: str                    # target database name (output of route_database)
      is_in_scope: bool                   # whether the question can be answered (output of rerank_tables; set to False by sql_coder and sql_validator when the information is in no column)
      unavailable_reason: str             # why a question gets no query: "restricted" (withheld, confidential), "absent" (in no data), empty otherwise (rerank_tables, sql_coder, sql_validator)
-     candidate_schemas: dict[str, str]   # table_name → DDL from vector search (output of retrieve_schema)
-     selected_schemas: dict[str, str]    # table_name → full DDL of the tables kept by rerank_tables, FK-expanded (output of rerank_tables, extended by planner)
-     retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns, extended by planner)
+     candidate_tables: list[str]         # tables of the database the selector reads, the closest to the question first: all of them up to retrieval.catalog_max (output of retrieve_schema)
+     selected_schemas: dict[str, str]    # table_name → full DDL of the tables kept by rerank_tables, FK-expanded, from the schema store (output of rerank_tables)
+     retrieved_schema: str               # DDL sent to planner and sql_coder, columns pruned (output of prune_columns)
      llm_selected_tables: list[str]      # tables selected by reranker LLM, before FK expansion, used by eval for precision/recall
      selected_metrics: list[str]         # business metrics the question asks for, from semantic_layer/<db>/metrics.yaml (output of rerank_tables)
      clarify_criteria: list[str]         # metrics that could define the question's criterionless superlative, offered as clarification options; their tables are not loaded (output of rerank_tables, clarify only)

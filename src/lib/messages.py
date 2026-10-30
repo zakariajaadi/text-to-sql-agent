@@ -113,19 +113,6 @@ def not_available_reason(text: str) -> str | None:
     return None
 
 
-def extract_plan_tables(plan: str, tables) -> list[str]:
-    """
-    Tables of the database named on the "Tables:" line of the planner's free-text plan.
-    Only the line is located; table names are then matched against the known tables,
-    so the line's formatting (bold, brackets, quotes, backticks) does not matter.
-    """
-    line = next((line for line in plan.splitlines() if "tables:" in line.lower()), "")
-    return [
-        table for table in tables
-        if re.search(rf"(?<![\w.]){re.escape(table)}(?!\w)", line, re.IGNORECASE)
-    ]
-
-
 def get_question(state: dict) -> str:
     """Return the standalone question (post-condensation) or fall back to last HumanMessage."""
     return state.get("standalone_question") or next(

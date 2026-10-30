@@ -165,7 +165,8 @@ class RetrievalConfig:
     embedding_model: str
     persist_directory: str
     schemas_directory: str
-    top_k: int
+    catalog_max: int = 150   # tables shown to the table selector (the whole database when it has fewer, else the closest ones)
+    top_k: int = 8           # tables kept, closest first, when the selector names none
     fk_neighbors: bool = False
 
     def __post_init__(self):

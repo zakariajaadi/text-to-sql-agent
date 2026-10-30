@@ -7,7 +7,6 @@ import lib.sqlite_compat  # noqa: F401
 from lib.fk_graph import expand_fk
 from lib.messages import (
     clarify_question,
-    extract_plan_tables,
     extract_sql,
     extract_text_content,
     get_last_cycle,

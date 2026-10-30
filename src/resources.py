@@ -157,18 +157,14 @@ fk_graphs: dict[str, dict[str, list[str]]] = {
 schema_store = build_schema_store()
 
 
-def get_schema_retriever(db_name: str, k: int | None = None):
+def rank_tables(db_name: str, question: str, k: int) -> list[str]:
     """
-    Return a retriever scoped to a specific database via metadata filtering.
-
-    All schemas from all databases are stored in a single Chroma store.
-    The db_name filter ensures only tables belonging to the target database
-    are returned, preventing cross-database schema leakage.
+    The k tables of the database closest to the question, closest first (vector search on the
+    indexed documents). All databases share one Chroma store: the db_name filter keeps the
+    tables of the others out.
     """
-    return vector_store.as_retriever(
-        k=k or cfg.retrieval.top_k,
-        filter={"db_name": db_name},
-    )
+    docs = vector_store.get_store().similarity_search(question, k=k, filter={"db_name": db_name})
+    return [doc.metadata["table_name"] for doc in docs]
 
 
 # Business metrics of each database, validated against the indexed schemas — an invalid one stops the app.

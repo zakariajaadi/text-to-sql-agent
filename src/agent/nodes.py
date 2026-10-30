@@ -31,7 +31,6 @@ from config import cfg
 from lib import (
     clarify_question,
     expand_fk,
-    extract_plan_tables,
     extract_sql,
     extract_text_content,
     get_last_cycle,
@@ -40,6 +39,7 @@ from lib import (
     normalize_sql,
     not_available_reason,
 )
+from lib.catalog import render_catalog
 from lib.column_pruning import get_column_names, get_structural_columns, prune_ddl
 from lib.db_errors import is_unreachable
 from lib.metrics import (
@@ -62,9 +62,9 @@ from resources import (
     db_registry,
     fast_model,
     fk_graphs,
-    get_schema_retriever,
     metrics_store,
     model,
+    rank_tables,
     schema_store,
     switch_coordinator,
 )
@@ -247,61 +247,66 @@ def resolve_database(state: AgentState) -> dict:
 
 def retrieve_schema(state: AgentState) -> dict:
     """
-    Deterministic node — broad vector search for candidate table schemas.
-    First stage of the two-step schema selection (retrieve → rerank).
+    Deterministic node — orders the tables of the database for the selector (rerank_tables): the
+    vector search ranks the whole catalog, the closest to the question first, and the selector
+    reads it entire. Only a database larger than retrieval.catalog_max is cut to its closest
+    catalog_max tables: a table past them is invisible to the selector.
 
-    Scoped to selected_db via Chroma metadata filter — only tables
-    belonging to the routed database are returned as candidates.
+    On a database that fits, the ranking is only an order: a failed vector search (API quota,
+    network) leaves the catalog in its stored order instead of failing the question.
     """
-    # Get question
     question = get_question(state)
+    db_name  = state["selected_db"]
+    store    = schema_store[db_name]
+    cap      = cfg.retrieval.catalog_max
+    fits     = len(store) <= cap
 
-    # Retriever scoped to the database selected by route_database
-    db_name          = state["selected_db"]
-    schema_retriever = get_schema_retriever(db_name=db_name, k=cfg.retrieval.top_k)
+    try:
+        ranked = [t for t in rank_tables(db_name, question, k=min(cap, len(store))) if t in store]
+    except Exception as e:
+        if not fits:
+            raise
+        logger.warning(f"retrieve_schema: vector search failed, catalog in stored order — {e}")
+        ranked = []
 
-    # Vector similarity search against the schema index
-    docs = schema_retriever.invoke(question)
+    if fits:
+        ranked += [t for t in store if t not in ranked]   # every table, the closest first
 
-    # Build a dict {table_name: DDL} for downstream LLM re-ranking
-    candidates = {doc.metadata["table_name"]: doc.page_content for doc in docs}
-
-    return {"candidate_schemas": candidates}
+    logger.debug(f"retrieve_schema: {len(ranked)}/{len(store)} tables, closest {ranked[:5]}")
+    return {"candidate_tables": ranked}
 
 
 def rerank_tables(state: AgentState) -> dict:
     """
-    LLM-driven node — narrows candidates to only the tables needed,
-    picks the business metrics the question asks for, and checks if the question is in scope.
+    LLM-driven node — reads the catalog of the database (every table in a compact form, the
+    closest to the question first) and names the tables needed, picks the business metrics
+    the question asks for, and checks if the question is in scope.
 
-    Three-pass table resolution after LLM selection:
-        Pass 1 — load LLM-selected tables and the tables of the selected metrics
-                 missing from vector retrieval
-        Pass 2 — FK expansion to recover bridge/fact tables
-        Pass 3 — load FK-expanded tables missing from candidates (schema store)
+    Then, deterministic:
+        1. the tables of the selected metrics are added
+        2. FK expansion adds the bridge tables between two selected tables (lib/fk_graph.py)
+        3. the full DDL of every table comes from the schema store
 
     Outputs selected_schemas ({table: full DDL}); columns are pruned downstream by prune_columns.
     """
     # Fetch user question
     question = get_question(state)
 
-    # Work on a copy — candidates may be extended with store-loaded schemas
-    candidates = state["candidate_schemas"].copy()
     db_name    = state["selected_db"]
     db_cfg     = cfg.get_db(db_name)
     db_metrics = metrics_store[db_name]
+    store      = schema_store[db_name]
+    candidates = [t for t in state["candidate_tables"] if t in store]
 
-    # ── 1. LLM reranking: table and metric selection + scope check ────────────
-    schemas_text = "\n\n".join(
-        f"### {name}\n{ddl}" for name, ddl in candidates.items()
-    )
+    # ── 1. LLM selection on the catalog: tables, metrics, filter values, scope ──
+    catalog = render_catalog(candidates, store, fk_graphs[db_name])
 
     structured_llm = fast_model.with_structured_output(RankedTablesAndScope)
     response = structured_llm.invoke([
         SystemMessage(content=RERANK_TABLES_PROMPT.format(
             dialect=db_cfg.dialect,
             metrics=render_metric_catalog(db_metrics),
-            schemas=schemas_text,
+            schemas=catalog,
             criteria_request=RERANK_CRITERIA_REQUEST if state.get("clarify") else "",
         )),
         HumanMessage(content=question),
@@ -333,33 +338,18 @@ def rerank_tables(state: AgentState) -> dict:
                  f"criteria={clarify_criteria} (entity={response.ranked_entity or '?'}) | "
                  f"filter_values={filter_values} | in_scope={response.is_in_scope} — {response.reason}")
 
-    # ── 2. Load LLM-selected and metric tables missing from candidates ────────
-    # LLM may select tables known via schema descriptions but not returned by Chroma
-    loaded = []
-    for table in [*response.tables, *metric_tables]:
-        if table not in candidates and table in schema_store[db_name]:
-            candidates[table] = schema_store[db_name][table]
-            loaded.append(table)
-            logger.debug(f"[rerank_tables] Loaded selected table from store: {table}")
-
-    # Override scope when the LLM judged out of scope for want of tables it named, now loaded:
-    # not when it saw them all (the information asked for is in none of their columns)
-    if (not response.is_in_scope and any(t in loaded for t in response.tables)
-            and all(t in candidates for t in response.tables)):
-        response.is_in_scope = True
-        logger.debug("[rerank_tables] Overrode is_in_scope → True (all tables resolved from store)")
-
     # Why no query will answer it: withheld (confidential) or in no data, the default
     reason = "" if response.is_in_scope else (
         "restricted" if response.unavailable.strip().lower() == "restricted" else "absent")
 
-    # Metric tables come right after the LLM's choice, before FK expansion bridges them
-    selected_names = [t for t in dict.fromkeys([*response.tables, *metric_tables]) if t in candidates]
+    # The tables the LLM named, then the ones of its metrics, before FK expansion bridges them
+    selected_names = [t for t in dict.fromkeys([*response.tables, *metric_tables]) if t in store]
 
     if not selected_names:
-        logger.warning("LLM returned no valid tables — fallback to all candidates.")
+        fallback = candidates[:cfg.retrieval.top_k]
+        logger.warning(f"LLM returned no valid tables — fallback to the closest candidates: {fallback}")
         return {
-            "selected_schemas":    candidates,
+            "selected_schemas":    {t: store[t] for t in fallback},
             "selected_metrics":    selected_metrics,
             "clarify_criteria":    clarify_criteria,
             "filter_values":       filter_values,
@@ -368,24 +358,13 @@ def rerank_tables(state: AgentState) -> dict:
             "llm_selected_tables": list(response.tables),
         }
 
-    # ── 3. FK expansion — recover bridge/fact tables ──────────────────────────
+    # ── 2. FK expansion — the bridge tables between two selected tables ───────
     expanded_names = expand_fk(selected_names, fk_graphs[db_name],
                                include_neighbors=cfg.retrieval.fk_neighbors)
     logger.debug(f"rerank_tables: FK expansion {selected_names} → {expanded_names}")
 
-    # ── 4. Load FK-expanded tables missing from candidates ────────────────────
-    for table in expanded_names:
-        if table not in candidates and table in schema_store[db_name]:
-            candidates[table] = schema_store[db_name][table]
-            logger.debug(f"[rerank_tables] FK-expanded from store: {table}")
-
-    # ── 5. Build final schemas — preserve LLM order, deduplicate ─────────────
-    final_tables     = list(dict.fromkeys(selected_names + expanded_names))
-    selected_schemas = {t: candidates[t] for t in final_tables if t in candidates}
-
-    if not selected_schemas:
-        logger.warning("No valid tables after FK expansion — fallback to all candidates.")
-        selected_schemas = candidates
+    # ── 3. Full DDL of every table, from the store (LLM order, bridges last) ──
+    selected_schemas = {t: store[t] for t in expanded_names if t in store}
 
     return {
         "selected_schemas":    selected_schemas,
@@ -523,11 +502,7 @@ def render_clarification(criteria: list[Metric]) -> str:
 def planner(state: AgentState) -> dict:
     """
     LLM node — produces a structured execution plan for sql_coder.
-    Runs on fast_model. Skipped when validation_feedback is set (retry loop).
-
-    The "-- Joins:" hints of a DDL name tables rerank_tables may have left out
-    (e.g. order_details for a revenue question). When the plan uses such a table,
-    its full DDL is loaded so sql_coder writes its columns from the schema, not from memory.
+    Skipped when validation_feedback is set (retry loop).
     """
 
     schema = state["retrieved_schema"]
@@ -536,7 +511,7 @@ def planner(state: AgentState) -> dict:
     question = get_question(state)
 
     # Free-text plan: a structured output would constrain the planner's reasoning
-    response = fast_model.invoke([
+    response = model.invoke([
         SystemMessage(content=PLANNER_PROMPT.format(
             dialect=db_cfg.dialect,
             clarification_section=render_clarification(
@@ -552,24 +527,7 @@ def planner(state: AgentState) -> dict:
 
     plan = extract_text_content(response)
     logger.debug(f"planner: {plan[:200]}")
-
-    # ── Load the plan's tables missing from the schema ────────────────────────
-    selected_schemas = state["selected_schemas"]
-    missing = [
-        table for table in extract_plan_tables(plan, schema_store[db_name])
-        if table not in selected_schemas
-    ]
-
-    if not missing:
-        return {"query_plan": plan}
-
-    logger.debug(f"planner: tables of the plan loaded from store: {missing}")
-    added = {table: schema_store[db_name][table] for table in missing}
-    return {
-        "query_plan":       plan,
-        "selected_schemas": {**selected_schemas, **added},   # retries use the full schema too
-        "retrieved_schema": "\n\n".join([schema, *added.values()]),
-    }
+    return {"query_plan": plan}
 
 def sql_coder(state: AgentState) -> dict:
     """

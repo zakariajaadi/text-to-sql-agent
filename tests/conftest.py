@@ -14,7 +14,7 @@ sys.modules.setdefault("resources", types.SimpleNamespace(
     vector_store=None,
     model=MagicMock(),
     fast_model=MagicMock(),
-    get_schema_retriever=MagicMock(),
+    rank_tables=MagicMock(),
     fk_graphs=defaultdict(dict),
     schema_store=defaultdict(dict),
     metrics_store=defaultdict(dict),

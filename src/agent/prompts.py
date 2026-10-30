@@ -93,19 +93,24 @@ RERANK_TABLES_PROMPT = """
 You are working with a {dialect} database.
 
 ## TASK
-Given a user question and a list of candidate table schemas:
+Given a user question and the catalog of the database — every table with its description, its
+column names and the tables it joins, the closest to the question first:
 1. Select ONLY the tables needed to answer the question.
 2. Determine if the question can be answered from those tables.
 
 ## STRICT RULES
 1. Include all tables in the JOIN path, even intermediate/bridge tables.
 2. For aggregation queries, include the most granular fact table, not summary tables.
-3. Build the JOIN path from the "-- Joins:" lines in the table headers.
-4. Return ONLY the relevant table names.
+3. Build the JOIN path from the "Joins:" line of each table: the tables it joins directly.
+4. Return ONLY the relevant table names, exactly as written in the catalog. Several tables
+   may look alike (orders, order_returns, order_shipments...): pick the one whose description
+   holds the rows the question counts or sums, never a table about a related event.
 5. Set is_in_scope=True if the selected tables can answer the question.
 6. Set is_in_scope=False if no table or column relates to the question, or if the information the
-   question asks for is in no column of the candidate schemas: a table about the right entity is
+   question asks for is in no column of the catalog: a table about the right entity is
    not enough, and another column (an identifier, a code, a label) never stands in for it.
+   The catalog lists column names without their description: a column whose name can hold
+   the information is enough to stay in scope, the planner reads its description after you.
    Then set unavailable to "restricted" when a table or column description says that information
    exists but was withheld (excluded, confidential), to "absent" otherwise. A table with no rows
    is still in scope: a count over it is 0, and an empty table is never "absent".
@@ -140,7 +145,7 @@ Question: "What do passengers think of the meals?"
 ## BUSINESS METRICS
 {metrics}
 
-## CANDIDATE SCHEMAS:
+## TABLE CATALOG
 {schemas}
 """
 

@@ -33,7 +33,8 @@ retrieval:
   embedding_model: "google_genai:gemini-embedding-001"
   persist_directory: "data/chroma_schema"
   schemas_directory: "data/schemas"
-  top_k: 8
+  catalog_max: 150      # tables shown to the table selector: the whole database when it has fewer, else the closest ones
+  top_k: 8              # tables kept, closest first, when the selector names none
   fk_neighbors: false   # FK expansion pass 1: add all direct neighbors of selected tables
   
 value_search:

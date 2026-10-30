@@ -2,7 +2,7 @@
 
 """
 Builds the indexes read by the agent at query time:
-    - the Chroma schema index (resources.get_schema_retriever)
+    - the Chroma schema index (resources.rank_tables)
     - the value index of the categorical columns (lib/value_index.py)
 
 Each table becomes one document (DDL + description header + inline column comments)

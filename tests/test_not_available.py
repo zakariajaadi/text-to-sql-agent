@@ -94,27 +94,23 @@ def test_a_query_goes_to_the_validator(coder):
 
 @pytest.fixture
 def rerank(monkeypatch):
-    """rerank_tables with the candidates person and account; returns a function setting the LLM's answer."""
+    """rerank_tables on the catalog person, account; returns a function setting the LLM's answer."""
     llm = MagicMock()
     monkeypatch.setattr(nodes, "fast_model", llm)
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala"),
-                                                      retrieval=SimpleNamespace(fk_neighbors=False)))
+                                                      retrieval=SimpleNamespace(fk_neighbors=False, top_k=8)))
     monkeypatch.setattr(nodes, "schema_store", {"bank": {"person": "ddl", "account": "ddl", "loan": "ddl"}})
 
     def run(tables: list[str], in_scope: bool, **unavailable) -> dict:
         llm.with_structured_output.return_value.invoke.return_value = RankedTablesAndScope(
             tables=tables, is_in_scope=in_scope, reason="", **unavailable)
         return nodes.rerank_tables({"selected_db": "bank", "messages": [HumanMessage(content="q")],
-                                    "candidate_schemas": {"person": "ddl", "account": "ddl"}})
+                                    "candidate_tables": ["person", "account"]})
     return run
 
 
 def test_out_of_scope_on_tables_it_saw_is_kept(rerank):
     assert rerank(["person"], in_scope=False)["is_in_scope"] is False
-
-
-def test_out_of_scope_for_want_of_a_table_loaded_since_is_overridden(rerank):
-    assert rerank(["person", "loan"], in_scope=False)["is_in_scope"] is True
 
 
 def test_in_scope_stays_in_scope(rerank):

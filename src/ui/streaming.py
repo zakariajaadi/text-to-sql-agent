@@ -63,6 +63,9 @@ LATE_STAGES = {"condense_question", "match_values"}
 # Values named in the title of the match_values step, the others are counted
 MAX_TITLE_VALUES = 3
 
+# Tables left out named under the agent's context, the closest to the question first: the rest is a count
+MAX_DROPPED_TABLES = 8
+
 # A question that gets no query (state unavailable_reason): label of the steps, and what they say.
 # Business words only, never the name of the withheld column nor any value
 UNAVAILABLE_LABELS = {
@@ -226,7 +229,7 @@ class TurnRenderer:
         return f"Question reformulée : « {condensed} »", f"**Question :** {original}\n\n**Reformulée :** {condensed}"
 
     async def _end_rerank_tables(self, input: dict, output: dict) -> tuple:
-        candidates = list(input.get("candidate_schemas", {}))
+        candidates = list(input.get("candidate_tables") or [])   # the whole catalog, closest first
         selected   = list(output.get("selected_schemas", {}))
         chosen     = output.get("llm_selected_tables") or []
         metrics    = output.get("selected_metrics") or []
@@ -257,12 +260,13 @@ class TurnRenderer:
             (f"Ajoutée{'s' if len(by_metric) > 1 else ''} pour {metric_label}", by_metric),
             (f"Ajoutée{'s' if len(by_link) > 1 else ''} par les liens entre tables", by_link),
         ]
-        if not picked:  # no valid table from the LLM: rerank_tables falls back to all the candidates
-            reasons = [("Toutes les candidates", selected)]
+        if not picked:  # no valid table from the LLM: rerank_tables falls back to the closest candidates
+            reasons = [("Les plus proches de la question", selected)]
         given = "\n".join(f"- {reason} : {', '.join(tables)}" for reason, tables in reasons if tables)
         detail = [f"**Fournies à l'agent ({len(selected)}) :**\n{given}"]
-        if dropped:
-            detail.append(f"**Écartées ({len(dropped)}) :** {', '.join(dropped)}")
+        if dropped:   # the closest ones left out, not the whole database
+            shown = ", ".join(dropped[:MAX_DROPPED_TABLES]) + (" …" if len(dropped) > MAX_DROPPED_TABLES else "")
+            detail.append(f"**Écartées ({len(dropped)}) :** {shown}")
         return title, "\n\n".join(detail)
 
     async def _end_match_values(self, input: dict, output: dict) -> tuple | None:

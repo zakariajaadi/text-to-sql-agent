@@ -64,6 +64,7 @@ def prompts(monkeypatch):
         return AIMessage(content="- Tables: person")
 
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala")))
+    monkeypatch.setattr(nodes, "model", SimpleNamespace(invoke=invoke))
     monkeypatch.setattr(nodes, "fast_model", SimpleNamespace(invoke=invoke))
     monkeypatch.setattr(nodes, "schema_store", {"bank": {}})
     monkeypatch.setattr(nodes, "metrics_store", {"bank": {}})
@@ -112,7 +113,7 @@ def rerank_env(monkeypatch):
     llm = MagicMock()
     monkeypatch.setattr(nodes, "fast_model", llm)
     monkeypatch.setattr(nodes, "cfg", SimpleNamespace(get_db=lambda name: SimpleNamespace(dialect="impala"),
-                                                      retrieval=SimpleNamespace(fk_neighbors=False)))
+                                                      retrieval=SimpleNamespace(fk_neighbors=False, top_k=8)))
     monkeypatch.setattr(nodes, "schema_store", {"bank": {"person": "ddl", "savings": "ddl"}})
     monkeypatch.setattr(nodes, "metrics_store",
                         {"bank": {"total_savings": SAVINGS, "incoming_flows": FLOWS, "company_revenue": REVENUE}})
@@ -120,7 +121,7 @@ def rerank_env(monkeypatch):
 
 
 RERANK_STATE = {"selected_db": "bank", "messages": [HumanMessage("meilleurs ?")],
-                "candidate_schemas": {"person": "ddl"}}
+                "candidate_tables": ["person"]}
 
 
 def test_the_rerank_chooses_the_criteria_from_the_catalog(rerank_env):
